@@ -47,7 +47,12 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 keyring = "3"
 dirs = "6"
 redb = "4"
-tantivy = "0.27"
+# sin zstd (zstd-sys es C): solo lz4 (lz4_flex, Rust puro) para el almacén de documentos
+tantivy = { version = "0.27", default-features = false, features = ["mmap", "lz4-compression"] }
+# blobs: zstd en Rust puro (ver crates/store/src/blob.rs)
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+tempfile = "3"
 mail-parser = "1"
 mail-builder = "0.4"
 proptest = "1"
