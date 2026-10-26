@@ -13,3 +13,9 @@ Ids `F<fase>.<n>`. Estado: ☐ pendiente · ◐ en curso · ☑ hecho.
 | F0.5 | `autoconfig` + `accounts`: ISPDB, autoconfig del dominio, Autodiscover, SRV/MX; llavero; sesión compartida Iurefficient; prueba de conexión IMAP/SMTP | ☑ |
 | F0.6 | `engine` + `ui` + app: riel + 3 paneles, densidades, tema, paleta, i18n, asistente de alta, buzón de ejemplo, `ui_shot` | ☐ |
 | F0.7 | IureProject migra a egui 0.37 + `iurefficient-ui` (rama `ui-kit` en su repo) | ☐ |
+
+## F3 · Iurefficient
+
+| Id | Tarea | Estado |
+|---|---|---|
+| F3.0 | Inventario de la API de la instancia para el PIM y propuesta de lo que falta (REST + CalDAV/CardDAV, vincular correo) en `docs/iurefficient-api.md`; módulo `pim` en `iurefficient-connect` (rama `iuredesk`, sin publicar) | ◐ |
