@@ -5,6 +5,7 @@ members = [
     "crates/store",
     "crates/autoconfig",
     "crates/accounts",
+    "crates/oauth",
     "crates/engine",
     "crates/html-view",
     "crates/ui",
@@ -26,6 +27,7 @@ iuredesk-model = { path = "crates/model" }
 iuredesk-store = { path = "crates/store" }
 iuredesk-autoconfig = { path = "crates/autoconfig" }
 iuredesk-accounts = { path = "crates/accounts" }
+iuredesk-oauth = { path = "crates/oauth" }
 iuredesk-engine = { path = "crates/engine" }
 iuredesk-html-view = { path = "crates/html-view" }
 iuredesk-ui = { path = "crates/ui" }
@@ -61,6 +63,11 @@ webpki-roots = "1"
 base64 = "0.22"
 md-5 = "0.10"
 tempfile = "3"
+# oauth: azar para PKCE, abrir el navegador del sistema, URL, cancelación (Rust puro)
+getrandom = "0.2"
+open = "5"
+url = "2"
+tokio-util = { version = "0.7", default-features = false }
 # xtask: paquetes de publicación
 sha2 = "0.10"
 flate2 = "1"
