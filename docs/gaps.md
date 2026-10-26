@@ -13,3 +13,9 @@ Ids `F<fase>.<n>`. Estado: ☐ pendiente · ◐ en curso · ☑ hecho.
 | F0.5 | `autoconfig` + `accounts`: ISPDB, autoconfig del dominio, Autodiscover, SRV/MX; llavero; sesión compartida Iurefficient; prueba de conexión IMAP/SMTP | ☑ |
 | F0.6 | `engine` + `ui` + app: riel + 3 paneles, densidades, tema, paleta, i18n, asistente de alta, buzón de ejemplo, `ui_shot` | ☐ |
 | F0.7 | IureProject migra a egui 0.37 + `iurefficient-ui` (rama `ui-kit` en su repo) | ☐ |
+
+## F2 · OAuth + Calendario + Contactos
+
+| Id | Tarea | Estado |
+|---|---|---|
+| F2.2 | `dav` (L3): iCalendar/vCard sin pérdida (parser propio; `calcard` e `icalendar` evaluados), zonas IANA + Windows + `VTIMEZONE`, recurrencias con `rrule` y topes, iTIP/iMIP (REQUEST/REPLY/CANCEL/COUNTER, nuevo vs. actualización), cliente CalDAV/CardDAV (descubrimiento, colecciones, sync RFC 6578 con caída a ctag+ETag, `calendar-query`, `multiget`, `PUT`/`DELETE` con ETag, free/busy RFC 6638), servidor falso de pruebas, `dav_probe`. Pendiente: mapear a `model`; `RANGE=THISANDFUTURE`; `VTIMEZONE` propio con horario de verano sin nombre IANA (hoy desfase fijo); probar contra iCloud/Google/Fastmail reales y la instancia Iurefficient | ◐ |

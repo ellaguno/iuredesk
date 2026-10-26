@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Respuesta escrita a mano con la forma de iCloud (PROPFIND Depth:1 sobre el hogar). -->
+<multistatus xmlns="DAV:">
+  <response xmlns="DAV:">
+    <href>/1234567890/calendars/</href>
+    <propstat>
+      <prop>
+        <resourcetype xmlns="DAV:"><collection/></resourcetype>
+      </prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+    <propstat>
+      <prop>
+        <displayname xmlns="DAV:"/>
+        <getctag xmlns="http://calendarserver.org/ns/"/>
+      </prop>
+      <status>HTTP/1.1 404 Not Found</status>
+    </propstat>
+  </response>
+  <response xmlns="DAV:">
+    <href>/1234567890/calendars/home/</href>
+    <propstat>
+      <prop>
+        <resourcetype xmlns="DAV:"><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+        <displayname xmlns="DAV:">Casa</displayname>
+        <calendar-color xmlns="http://apple.com/ns/ical/" symbolic-color="custom">#FF2968FF</calendar-color>
+        <getctag xmlns="http://calendarserver.org/ns/">HwoQEgwAAJmWYW1qAAAAABgCGAAiFgiQqqm6lZ3Q7xEQq4KZnNWG3qcBKAA=</getctag>
+        <sync-token xmlns="DAV:">HwoQEgwAAJmWYW1qAAAAABgCGAAiFgiQqqm6lZ3Q7xEQq4KZnNWG3qcBKAA=</sync-token>
+        <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name="VEVENT"/></supported-calendar-component-set>
+        <current-user-privilege-set xmlns="DAV:">
+          <privilege><read/></privilege><privilege><write/></privilege><privilege><write-properties/></privilege>
+        </current-user-privilege-set>
+      </prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+  <response xmlns="DAV:">
+    <href>/1234567890/calendars/B2A6D5F0-1C9E-4C5B-9C73-6B1F1F2E3A4B/</href>
+    <propstat>
+      <prop>
+        <resourcetype xmlns="DAV:"><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+        <displayname xmlns="DAV:">Recordatorios ⚠️</displayname>
+        <calendar-color xmlns="http://apple.com/ns/ical/">#1BADF8FF</calendar-color>
+        <getctag xmlns="http://calendarserver.org/ns/">FT=-@RU=a1b2@S=12</getctag>
+        <supported-calendar-component-set xmlns="urn:ietf:params:xml:ns:caldav"><comp name="VTODO"/></supported-calendar-component-set>
+      </prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+  <response xmlns="DAV:">
+    <href>/1234567890/calendars/inbox/</href>
+    <propstat>
+      <prop>
+        <resourcetype xmlns="DAV:"><collection/><schedule-inbox xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+      </prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+  <response xmlns="DAV:">
+    <href>/1234567890/calendars/outbox/</href>
+    <propstat>
+      <prop>
+        <resourcetype xmlns="DAV:"><collection/><schedule-outbox xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype>
+      </prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+  <response xmlns="DAV:">
+    <href>/1234567890/calendars/notification/</href>
+    <propstat>
+      <prop>
+        <resourcetype xmlns="DAV:"><collection/><notification xmlns="http://calendarserver.org/ns/"/></resourcetype>
+      </prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+</multistatus>

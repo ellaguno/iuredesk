@@ -5,6 +5,7 @@ members = [
     "crates/store",
     "crates/autoconfig",
     "crates/accounts",
+    "crates/dav",
     "crates/engine",
     "crates/html-view",
     "crates/ui",
@@ -26,6 +27,7 @@ iuredesk-model = { path = "crates/model" }
 iuredesk-store = { path = "crates/store" }
 iuredesk-autoconfig = { path = "crates/autoconfig" }
 iuredesk-accounts = { path = "crates/accounts" }
+iuredesk-dav = { path = "crates/dav" }
 iuredesk-engine = { path = "crates/engine" }
 iuredesk-html-view = { path = "crates/html-view" }
 iuredesk-ui = { path = "crates/ui" }
@@ -52,6 +54,8 @@ mail-parser = "1"
 mail-builder = "0.4"
 proptest = "1"
 anyhow = "1"
+# recurrencias RFC 5545 (Rust puro; ver la elección en crates/dav/src/lib.rs)
+rrule = { version = "0.14", default-features = false }
 # red de autoconfig y cuentas (Rust puro; TLS con rustls + ring, ver docs/excepciones.md)
 hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"] }
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls"] }
