@@ -4,3 +4,4 @@
 /plan/
 /dist/
 /.claude/worktrees/
+/.claude/settings.local.json
