@@ -8,6 +8,8 @@ use iuredesk_model::{AccountId, Flags, FolderId, MessageId};
 use iuredesk_store::{NewMessage, Store};
 use serde::{Deserialize, Serialize};
 
+pub use iuredesk_compose::ops::{OP_SEND, OP_SYNC, SyncOp};
+
 use crate::error::{Result, SyncError};
 use crate::parse::{envelope_from_raw, imap_flags};
 use crate::state::add_adopt;
@@ -108,8 +110,35 @@ pub fn pending_messages(store: &Store, account: AccountId) -> HashSet<MessageId>
         .unwrap_or_default()
         .into_iter()
         .filter(|o| o.account == account)
-        .filter_map(|o| MailOp::decode(&o.payload).and_then(|m| m.message()))
+        .filter_map(|o| match classify(&o.kind, &o.payload) {
+            Some(Some(QueueWork::Mail(m))) => m.message(),
+            Some(Some(QueueWork::Compose(SyncOp::MarkAnswered { message } | SyncOp::MarkForwarded { message }))) => {
+                Some(message)
+            }
+            _ => None,
+        })
         .collect()
+}
+
+/// Trabajo de la cola que le toca a `sync`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum QueueWork {
+    /// Operación de esta capa ([`MailOp`]).
+    Mail(MailOp),
+    /// Operación del redactor (`mail.sync`, contrato en `iuredesk_compose::ops`).
+    Compose(SyncOp),
+}
+
+/// Clasifica una operación de la cola: `None` si no es de `sync` (p. ej. `outbox.send`, que
+/// consume la bandeja de salida: se deja en la cola); `Some(None)` si es nuestra pero está
+/// dañada (se descarta).
+pub fn classify(kind: &str, payload: &[u8]) -> Option<Option<QueueWork>> {
+    match kind {
+        OP_SEND => None,
+        OP_SYNC => Some(SyncOp::decode(payload).map(QueueWork::Compose)),
+        "flags" | "move" | "expunge" | "append" => Some(MailOp::decode(payload).map(QueueWork::Mail)),
+        _ => None,
+    }
 }
 
 /// Cambia las banderas en local y encola el cambio.

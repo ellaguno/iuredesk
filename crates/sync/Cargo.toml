@@ -14,6 +14,8 @@ iuredesk-imap = { workspace = true }
 iuredesk-pop3 = { workspace = true }
 iuredesk-oauth = { workspace = true }
 iuredesk-accounts = { workspace = true }
+# Contrato de la cola con el redactor (`mail.sync` / `outbox.send`).
+iuredesk-compose = { workspace = true }
 mail-parser = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

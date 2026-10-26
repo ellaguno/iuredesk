@@ -85,6 +85,10 @@ impl Worker {
             Worker::Pop3(w) => {
                 let ctx = &w.ctx;
                 for op in ctx.store.peek_ops(10_000)?.into_iter().filter(|o| o.account == ctx.acct) {
+                    // `outbox.send` es de la bandeja de salida: no se toca.
+                    if ops::classify(&op.kind, &op.payload).is_none() {
+                        continue;
+                    }
                     ctx.store.ack_op(op.seq)?;
                 }
                 Ok(())

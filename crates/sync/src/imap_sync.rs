@@ -9,13 +9,14 @@ use chrono::Utc;
 use iuredesk_imap::{
     FetchData, IdleOutcome, MailboxInfo, Qresync, SelectOptions, SelectResult, SeqSet, StoreMode, fetch_items,
 };
+use iuredesk_model::account::AccountKind;
 use iuredesk_model::{Folder, FolderId, FolderRole, MessageEnvelope, MessageId};
 use iuredesk_store::NewMessage;
 use tokio::sync::{mpsc, watch};
 
 use crate::engine::{Cmd, Ctx};
 use crate::error::{Result, SyncError};
-use crate::ops::{MailOp, pending_messages};
+use crate::ops::{MailOp, QueueWork, SyncOp, classify, pending_messages};
 use crate::parse::{enrich, envelope_from_fetch, flags_from_imap, parse_body};
 use crate::pool::{Conn, ImapPool};
 use crate::state::{self, BackfillState, FolderState, adopt_list, backfill_key, folder_key, set_adopt};
@@ -649,11 +650,20 @@ impl ImapAccount {
             if wait.is_some_and(|w| Instant::now() < w) {
                 break;
             }
-            let Some(mop) = MailOp::decode(&op.payload) else {
-                ctx.store.ack_op(op.seq)?;
-                continue;
+            let work = match classify(&op.kind, &op.payload) {
+                // No es nuestra (p. ej. `outbox.send`): se deja para su dueño.
+                None => continue,
+                Some(None) => {
+                    ctx.store.ack_op(op.seq)?;
+                    continue;
+                }
+                Some(Some(w)) => w,
             };
-            match self.apply_op(conn, &mop).await {
+            let r = match &work {
+                QueueWork::Mail(m) => self.apply_op(conn, m).await,
+                QueueWork::Compose(c) => self.apply_compose(conn, c).await,
+            };
+            match r {
                 Ok(()) => {
                     ctx.store.ack_op(op.seq)?;
                     self.backoff.lock().unwrap_or_else(PoisonError::into_inner).remove(&op.seq);
@@ -751,6 +761,47 @@ impl ImapAccount {
                 if let Some((_, uid)) = r {
                     self.set_remote(*msg, *folder_id, uid)?;
                 }
+                Ok(())
+            }
+        }
+    }
+
+    /// Operaciones del redactor: guardar el enviado en Enviados y marcar el original.
+    async fn apply_compose(&self, conn: &mut Conn, op: &SyncOp) -> Result<()> {
+        let ctx = &self.ctx;
+        match op {
+            SyncOp::AppendToSent { raw, message_id, .. } => {
+                // Gmail y Microsoft 365 ya guardan lo enviado por SMTP: no se duplica.
+                let host = ctx.account.outgoing.host.to_ascii_lowercase();
+                let auto_saves = matches!(ctx.account.kind, AccountKind::Gmail | AccountKind::Microsoft365)
+                    || host.ends_with("gmail.com")
+                    || host.ends_with("office365.com")
+                    || host.ends_with("outlook.com");
+                if auto_saves {
+                    return Ok(());
+                }
+                let Some(sent) = ctx.store.folders(ctx.acct)?.into_iter().find(|f| f.role == FolderRole::Sent) else {
+                    return Ok(());
+                };
+                let Ok(bytes) = ctx.store.blobs().get(raw) else { return Ok(()) };
+                self.ensure_rw(conn, &sent.remote_path).await?;
+                let mid = message_id.trim();
+                let safe = !mid.is_empty()
+                    && mid.len() <= 500
+                    && mid.bytes().all(|b| b.is_ascii_graphic() && b != b'"' && b != b'\\');
+                if safe && !conn.c.uid_search(&format!("HEADER Message-ID \"{mid}\"")).await?.is_empty() {
+                    return Ok(());
+                }
+                conn.c.append(&sent.remote_path, &["\\Seen".to_string()], None, &bytes).await?;
+                Ok(())
+            }
+            SyncOp::MarkAnswered { message } | SyncOp::MarkForwarded { message } => {
+                let flag = if matches!(op, SyncOp::MarkAnswered { .. }) { "\\Answered" } else { "$Forwarded" };
+                let Some(env) = ctx.store.get_envelope(*message)? else { return Ok(()) };
+                let Some(uid) = uid_of(&env) else { return Ok(()) };
+                let Some(f) = ctx.store.get_folder(env.folder)? else { return Ok(()) };
+                self.ensure_rw(conn, &f.remote_path).await?;
+                conn.c.uid_store(&SeqSet::single(uid), StoreMode::Add, &[flag.to_string()], true, None).await?;
                 Ok(())
             }
         }

@@ -2268,6 +2268,7 @@ version = "0.1.0-alpha.0"
 dependencies = [
  "chrono",
  "iuredesk-accounts",
+ "iuredesk-compose",
  "iuredesk-imap",
  "iuredesk-model",
  "iuredesk-oauth",

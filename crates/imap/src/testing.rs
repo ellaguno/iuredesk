@@ -1101,6 +1101,7 @@ fn mailbox_command(sh: &Shared, sess: &mut Session, mbox: &str, name: &str, args
             let mut uid_ranges: Option<Vec<(u32, u32)>> = None;
             let mut since: Option<NaiveDate> = None;
             let mut before: Option<NaiveDate> = None;
+            let mut header_eq: Option<(String, String)> = None;
             while let Some(a) = args.get(i) {
                 let k = a.text().unwrap_or_default().to_ascii_uppercase();
                 match k.as_str() {
@@ -1116,6 +1117,10 @@ fn mailbox_command(sh: &Shared, sess: &mut Session, mbox: &str, name: &str, args
                         before = parse_date(&text(i.saturating_add(1)));
                         i = i.saturating_add(2);
                     }
+                    "HEADER" => {
+                        header_eq = Some((text(i.saturating_add(1)).to_ascii_lowercase(), text(i.saturating_add(2))));
+                        i = i.saturating_add(3);
+                    }
                     _ => i = i.saturating_add(1),
                 }
             }
@@ -1125,6 +1130,11 @@ fn mailbox_command(sh: &Shared, sess: &mut Session, mbox: &str, name: &str, args
                 .filter(|m| uid_ranges.as_ref().is_none_or(|r| in_ranges(r, m.uid)))
                 .filter(|m| since.is_none_or(|d| m.internal_date.date_naive() >= d))
                 .filter(|m| before.is_none_or(|d| m.internal_date.date_naive() < d))
+                .filter(|m| {
+                    header_eq.as_ref().is_none_or(|(k, v)| {
+                        headers(&m.raw).iter().any(|(hk, hv, _)| hk == k && hv.contains(v.as_str()))
+                    })
+                })
                 .map(|m| m.uid)
                 .collect();
             if esearch {

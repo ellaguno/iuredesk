@@ -304,6 +304,42 @@ async fn ops_replay_with_fallbacks() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn consumes_compose_ops_and_leaves_outbox() {
+    use iuredesk_sync::ops::{OP_SEND, OP_SYNC, SyncOp};
+    let s = FakeImap::start(FakeCaps::default()).await.unwrap();
+    s.deliver("INBOX", &msg(1, 1), &[], None);
+    let e = start(s.port(), Protocol::Imap, opts(), PASSWORD);
+    e.handle.sync_now_wait("t1").await.unwrap();
+    let acct = e.store.account_labels().unwrap()[0].id;
+    let original = by_uid(&e.store, inbox(&e.store), 1).unwrap();
+    let raw = sample_message(
+        "Yo <yo@example.org>",
+        "Ana <ana@example.com>",
+        "Re: Tema hilo0",
+        "sent1@example.org",
+        Some("m1@example.com"),
+        Utc.with_ymd_and_hms(2026, 10, 2, 9, 0, 0).unwrap().fixed_offset(),
+        "respuesta",
+        None,
+    );
+    let hash = e.store.blobs().put(&raw).unwrap();
+    let append = SyncOp::AppendToSent { raw: hash, size: raw.len() as u64, message_id: "sent1@example.org".into() };
+    e.store.enqueue_op(acct, OP_SEND, b"{\"de la bandeja de salida\":1}").unwrap();
+    e.store.enqueue_op(acct, OP_SYNC, &append.encode()).unwrap();
+    e.store.enqueue_op(acct, OP_SYNC, &append.encode()).unwrap();
+    e.store.enqueue_op(acct, OP_SYNC, &SyncOp::MarkAnswered { message: original }.encode()).unwrap();
+    e.handle.sync_now_wait("t1").await.unwrap();
+    let sent = s.messages("Sent");
+    assert_eq!(sent.len(), 1, "sin duplicar por Message-ID");
+    assert!(sent[0].1.contains(&"\\Seen".to_string()));
+    assert!(s.messages("INBOX")[0].1.contains(&"\\Answered".to_string()));
+    let left = e.store.peek_ops(10).unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].kind, OP_SEND, "outbox.send no se toca");
+    e.handle.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pending_local_change_wins_over_server() {
     let s = FakeImap::start(FakeCaps::bare()).await.unwrap();
     for i in 0..3 {
