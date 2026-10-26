@@ -279,9 +279,13 @@ pub fn render_rfc822_html(e: &MessageEnvelope, text: &str, html: &str) -> Vec<u8
         "Content-Type: multipart/alternative; boundary=\"iuredesk-alt\"",
     );
     let mut s = head;
-    s.push_str("\r\n\r\n--iuredesk-alt\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n");
+    s.push_str(
+        "\r\n\r\n--iuredesk-alt\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n",
+    );
     s.push_str(text);
-    s.push_str("\r\n--iuredesk-alt\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n");
+    s.push_str(
+        "\r\n--iuredesk-alt\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n",
+    );
     s.push_str(html);
     s.push_str("\r\n--iuredesk-alt--\r\n");
     s.into_bytes()

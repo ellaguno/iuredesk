@@ -163,8 +163,7 @@ pub fn build_account(id: String, name: &str, email: &str, cand: &Candidate, auth
     let mut incoming = cand.incoming.clone();
     incoming.auth = auth;
     let domain = email.rsplit_once('@').map_or("", |(_, d)| d);
-    let mut outgoing =
-        cand.outgoing.clone().unwrap_or_else(|| fallback_outgoing(domain, &incoming.username, auth));
+    let mut outgoing = cand.outgoing.clone().unwrap_or_else(|| fallback_outgoing(domain, &incoming.username, auth));
     outgoing.auth = auth;
     let display = if name.trim().is_empty() {
         email.split('@').next().unwrap_or(email).to_string()
@@ -229,7 +228,8 @@ mod tests {
 
     #[test]
     fn account_from_candidate() {
-        let a = build_account("acct7".into(), "", "ana@example.com", &cand(AccountKind::Generic), AuthMethod::AppPassword);
+        let a =
+            build_account("acct7".into(), "", "ana@example.com", &cand(AccountKind::Generic), AuthMethod::AppPassword);
         assert_eq!(a.display_name, "ana");
         assert_eq!(a.incoming.auth, AuthMethod::AppPassword);
         assert_eq!(a.outgoing.host, "smtp.example.com");

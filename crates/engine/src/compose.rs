@@ -183,7 +183,10 @@ impl ComposeDraft {
 
     /// `true` si no hay nada escrito.
     pub fn is_blank(&self) -> bool {
-        self.to.trim().is_empty() && self.cc.trim().is_empty() && self.subject.trim().is_empty() && self.body.trim().is_empty()
+        self.to.trim().is_empty()
+            && self.cc.trim().is_empty()
+            && self.subject.trim().is_empty()
+            && self.body.trim().is_empty()
     }
 }
 
@@ -200,7 +203,11 @@ fn b64(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk.first().copied().unwrap_or(0), chunk.get(1).copied().unwrap_or(0), chunk.get(2).copied().unwrap_or(0)];
+        let b = [
+            chunk.first().copied().unwrap_or(0),
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         for (k, shift) in [18u32, 12, 6, 0].into_iter().enumerate() {
             if k <= chunk.len() {
@@ -239,7 +246,9 @@ pub fn render_rfc822(from: &Mailbox, d: &ComposeDraft, date: chrono::DateTime<ch
     if let Some(r) = &d.in_reply_to {
         s.push_str(&format!("In-Reply-To: <{}>\r\n", header_value(r)));
     }
-    s.push_str("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n");
+    s.push_str(
+        "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n",
+    );
     for line in d.body.lines() {
         s.push_str(line);
         s.push_str("\r\n");
@@ -253,8 +262,9 @@ mod tests {
 
     #[test]
     fn mailto() {
-        let d = ComposeDraft::from_mailto("mailto:ana@example.com?subject=Hola%20Ana&body=L%C3%ADnea+1&cc=b@example.com")
-            .unwrap();
+        let d =
+            ComposeDraft::from_mailto("mailto:ana@example.com?subject=Hola%20Ana&body=L%C3%ADnea+1&cc=b@example.com")
+                .unwrap();
         assert_eq!(d.to, "ana@example.com");
         assert_eq!(d.subject, "Hola Ana");
         assert_eq!(d.body, "Línea+1", "en mailto «+» es literal");
@@ -294,7 +304,12 @@ mod tests {
         assert_eq!(a[0].name.as_deref(), Some("Ana López"));
         assert_eq!(b64(b"Ma"), "TWE=");
         assert_eq!(b64(b"Man"), "TWFu");
-        let d = ComposeDraft { to: "ana@example.com".into(), subject: "Café".into(), body: "hola".into(), ..Default::default() };
+        let d = ComposeDraft {
+            to: "ana@example.com".into(),
+            subject: "Café".into(),
+            body: "hola".into(),
+            ..Default::default()
+        };
         let raw = render_rfc822(&Mailbox::new("Yo", "yo@example.com"), &d, chrono::Utc::now());
         let body = crate::body::parse(&raw);
         assert!(body.text.contains("hola"));

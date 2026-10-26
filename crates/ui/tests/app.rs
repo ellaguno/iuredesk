@@ -211,7 +211,10 @@ fn welcome_screen_when_there_are_no_accounts() {
     h.state_mut().demo_provider_step("laura@gmail.com");
     settle(&mut h);
     assert!(h.query_all_by_label_contains("Gmail").next().is_some());
-    assert!(h.query_all_by_label_contains("contraseña de app").next().is_some() || h.query_all_by_label_contains("Continuar con Google").next().is_some());
+    assert!(
+        h.query_all_by_label_contains("contraseña de app").next().is_some()
+            || h.query_all_by_label_contains("Continuar con Google").next().is_some()
+    );
 }
 
 #[test]
@@ -242,9 +245,17 @@ fn list_scrolling_over_100k_rows_stays_cheap() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
     let account = AccountId(1);
-    store.put_account_label(&AccountLabel { id: account, name: "Prueba".into(), email: "p@example.com".into() }).unwrap();
+    store
+        .put_account_label(&AccountLabel { id: account, name: "Prueba".into(), email: "p@example.com".into() })
+        .unwrap();
     let inbox = store
-        .put_folder(&Folder { account, name: "Entrada".into(), role: FolderRole::Inbox, remote_path: "INBOX".into(), ..Default::default() })
+        .put_folder(&Folder {
+            account,
+            name: "Entrada".into(),
+            role: FolderRole::Inbox,
+            remote_path: "INBOX".into(),
+            ..Default::default()
+        })
         .unwrap();
     let t = Instant::now();
     let mut rng = sample::Rng::new(7);

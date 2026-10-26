@@ -147,8 +147,7 @@ pub fn occurrences(
                 }
             }
             Some("WEEKLY") => {
-                let days: Vec<Weekday> =
-                    if rule.byday.is_empty() { vec![start.weekday()] } else { rule.byday.clone() };
+                let days: Vec<Weekday> = if rule.byday.is_empty() { vec![start.weekday()] } else { rule.byday.clone() };
                 // Lunes de la semana del inicio, a la hora del inicio.
                 let week0 = start - Duration::days(i64::from(start.weekday().num_days_from_monday()));
                 let mut w = 0i64;

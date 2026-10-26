@@ -35,7 +35,9 @@ impl Zone {
             Zone::Local => {
                 Local.from_local_datetime(&t).earliest().map_or_else(|| t.and_utc(), |d| d.with_timezone(&Utc))
             }
-            Zone::Fixed(o) => o.from_local_datetime(&t).earliest().map_or_else(|| t.and_utc(), |d| d.with_timezone(&Utc)),
+            Zone::Fixed(o) => {
+                o.from_local_datetime(&t).earliest().map_or_else(|| t.and_utc(), |d| d.with_timezone(&Utc))
+            }
         }
     }
 
@@ -141,6 +143,9 @@ mod tests {
         assert_eq!(list_date(Utc.with_ymd_and_hms(2026, 10, 17, 9, 5, 0).unwrap(), now, z), "sáb 17");
         assert_eq!(list_date(Utc.with_ymd_and_hms(2026, 3, 2, 9, 5, 0).unwrap(), now, z), "2 mar");
         assert_eq!(list_date(Utc.with_ymd_and_hms(2025, 3, 2, 9, 5, 0).unwrap(), now, z), "02/03/25");
-        assert_eq!(monday_of(NaiveDate::from_ymd_opt(2026, 10, 21).unwrap()), NaiveDate::from_ymd_opt(2026, 10, 19).unwrap());
+        assert_eq!(
+            monday_of(NaiveDate::from_ymd_opt(2026, 10, 21).unwrap()),
+            NaiveDate::from_ymd_opt(2026, 10, 19).unwrap()
+        );
     }
 }

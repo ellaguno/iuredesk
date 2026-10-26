@@ -14,8 +14,8 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use iuredesk_accounts::{AccountStore, SecretPurpose, SecretStore};
 use iuredesk_model::account::{Account, AuthMethod, OAuthProvider};
 use iuredesk_model::{
-    AccountId, Calendar, Contact, Event as CalEvent, Flags, Folder, FolderId, FolderRole, Mailbox, MessageEnvelope, MessageId,
-    Note, Task, TaskId, TaskList, TaskStatus,
+    AccountId, Calendar, Contact, Event as CalEvent, Flags, Folder, FolderId, FolderRole, Mailbox, MessageEnvelope,
+    MessageId, Note, Task, TaskId, TaskList, TaskStatus,
 };
 use iuredesk_store::{AccountLabel, FolderCount, Store};
 
@@ -160,9 +160,18 @@ pub enum Outcome {
 
 /// Resultados de trabajos de fondo que interpreta la sesión.
 pub enum EngineJob {
-    Rows { generation: u64, rows: Vec<ListRow> },
-    Search { generation: u64, result: std::result::Result<Vec<MessageEnvelope>, Text> },
-    Body { id: MessageId, body: MessageBody },
+    Rows {
+        generation: u64,
+        rows: Vec<ListRow>,
+    },
+    Search {
+        generation: u64,
+        result: std::result::Result<Vec<MessageEnvelope>, Text>,
+    },
+    Body {
+        id: MessageId,
+        body: MessageBody,
+    },
     Discovery(std::result::Result<iuredesk_autoconfig::Discovery, Text>),
     /// Prueba de conexión (y secreto ya guardado) de la cuenta en curso.
     Probe(std::result::Result<(), Text>),
@@ -174,7 +183,10 @@ pub enum EngineJob {
 pub enum Event {
     Notice(Notice),
     /// Resultado de un trabajo encolado por la UI.
-    Custom { id: JobId, value: Box<dyn std::any::Any + Send> },
+    Custom {
+        id: JobId,
+        value: Box<dyn std::any::Any + Send>,
+    },
 }
 
 /// Recursos remotos descargados por [`Session::fetch_remote`].
@@ -468,9 +480,9 @@ impl Session {
             self.loading = true;
             self.rows_job = Some(self.bg.spawn_blocking(move || {
                 let q = format!("{scope}{query}");
-                let result = store.search(&q, 1_000).map_err(|e| {
-                    Text::new(format!("Search failed: {e}"), format!("La búsqueda falló: {e}"))
-                });
+                let result = store
+                    .search(&q, 1_000)
+                    .map_err(|e| Text::new(format!("Search failed: {e}"), format!("La búsqueda falló: {e}")));
                 JobOutput::Engine(EngineJob::Search { generation, result })
             }));
             return;
@@ -642,7 +654,8 @@ impl Session {
         if !env.flags.seen {
             let flags = Flags { seen: true, ..env.flags };
             if self.store.set_flags(id, flags).is_ok() {
-                let _ = self.enqueue(env.account, "flags", &serde_json::json!({ "id": id.get(), "flags": flags.bits() }));
+                let _ =
+                    self.enqueue(env.account, "flags", &serde_json::json!({ "id": id.get(), "flags": flags.bits() }));
                 self.refresh_envelope(id);
                 self.counts.clear();
             }
@@ -709,10 +722,7 @@ impl Session {
             .find(|m| !mine.iter().any(|a| a.eq_ignore_ascii_case(&m.addr)))
             .cloned();
         let contact = other.as_ref().and_then(|m| {
-            self.contacts()
-                .iter()
-                .find(|c| c.emails.iter().any(|e| e.value.eq_ignore_ascii_case(&m.addr)))
-                .cloned()
+            self.contacts().iter().find(|c| c.emails.iter().any(|e| e.value.eq_ignore_ascii_case(&m.addr))).cloned()
         });
         let links = crate::context::detect_links(&env, contact.as_ref());
         ContextCard { contact, links, history: 0 }
@@ -723,11 +733,8 @@ impl Session {
     /// Mensajes a los que se aplica una acción: la selección, o el enfocado. En modo
     /// conversación, incluye los mensajes de cada conversación que están en la vista actual.
     fn targets(&mut self) -> Vec<MessageId> {
-        let base: Vec<MessageId> = if self.selection.is_empty() {
-            self.focused.into_iter().collect()
-        } else {
-            self.selection.clone()
-        };
+        let base: Vec<MessageId> =
+            if self.selection.is_empty() { self.focused.into_iter().collect() } else { self.selection.clone() };
         if !self.prefs.conversations || !self.search.is_empty() || self.folder == FolderSel::Flagged {
             return base;
         }
@@ -896,7 +903,11 @@ impl Session {
     }
 
     /// Mueve `ids` a la carpeta que da `dest(cuenta)`; devuelve cuántos se movieron.
-    fn move_with(&mut self, ids: &[MessageId], dest: impl Fn(&Session, AccountId) -> Option<FolderId>) -> Result<(usize, Vec<(Inverse, Option<u64>)>)> {
+    fn move_with(
+        &mut self,
+        ids: &[MessageId],
+        dest: impl Fn(&Session, AccountId) -> Option<FolderId>,
+    ) -> Result<(usize, Vec<(Inverse, Option<u64>)>)> {
         let mut steps = Vec::new();
         let mut moved = 0usize;
         for &id in ids.iter().take(MAX_BATCH) {
@@ -921,12 +932,8 @@ impl Session {
     fn after_removal(&mut self, ids: &[MessageId]) {
         let gone: HashSet<MessageId> = ids.iter().copied().collect();
         // Las filas pueden representar una conversación: lo que se va es la fila entera.
-        let gone_rows: HashSet<MessageId> = self
-            .rows
-            .iter()
-            .filter(|r| gone.contains(&r.id) || self.selection.contains(&r.id))
-            .map(|r| r.id)
-            .collect();
+        let gone_rows: HashSet<MessageId> =
+            self.rows.iter().filter(|r| gone.contains(&r.id) || self.selection.contains(&r.id)).map(|r| r.id).collect();
         self.focus_request = self.next_focus_after(&gone_rows);
         self.selection.clear();
         self.focused = None;
@@ -966,25 +973,46 @@ impl Session {
         for id in &in_trash {
             if let Some(env) = self.envelope(*id).cloned() {
                 self.store.delete_message(*id).map_err(store_err)?;
-                let _ = self.enqueue(env.account, "expunge", &serde_json::json!({ "id": id.get(), "folder": env.folder.get() }));
+                let _ = self.enqueue(
+                    env.account,
+                    "expunge",
+                    &serde_json::json!({ "id": id.get(), "folder": env.folder.get() }),
+                );
                 self.envelopes.remove(id);
             }
         }
         self.after_removal(&ids);
         if !in_trash.is_empty() && n == 0 {
             return Ok(Outcome::Notice(Notice::info(
-                if in_trash.len() == 1 { "Deleted permanently".to_string() } else { format!("{} deleted permanently", in_trash.len()) },
-                if in_trash.len() == 1 { "Eliminado definitivamente".to_string() } else { format!("{} eliminados definitivamente", in_trash.len()) },
+                if in_trash.len() == 1 {
+                    "Deleted permanently".to_string()
+                } else {
+                    format!("{} deleted permanently", in_trash.len())
+                },
+                if in_trash.len() == 1 {
+                    "Eliminado definitivamente".to_string()
+                } else {
+                    format!("{} eliminados definitivamente", in_trash.len())
+                },
             )));
         }
-        let text = Self::plural(n, "Moved to Trash", "messages moved to Trash", "Enviado a la papelera", "mensajes enviados a la papelera");
+        let text = Self::plural(
+            n,
+            "Moved to Trash",
+            "messages moved to Trash",
+            "Enviado a la papelera",
+            "mensajes enviados a la papelera",
+        );
         self.push_undo(text.clone(), steps);
         Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true }))
     }
 
     fn move_to(&mut self, folder: FolderId) -> Result<Outcome> {
         let Some(dest) = self.folder(folder).cloned() else {
-            return Ok(Outcome::Notice(Notice::error(Text::new("That folder no longer exists.", "Esa carpeta ya no existe."))));
+            return Ok(Outcome::Notice(Notice::error(Text::new(
+                "That folder no longer exists.",
+                "Esa carpeta ya no existe.",
+            ))));
         };
         let ids = self.targets();
         let (n, steps) = self.move_with(&ids, |_, acc| (acc == dest.account).then_some(dest.id))?;
@@ -1056,7 +1084,8 @@ impl Session {
         let Some(entry) = self.undo.pop() else {
             return Ok(Outcome::Notice(Notice::info("Nothing to undo.", "No hay nada que deshacer.")));
         };
-        let pending: HashSet<u64> = self.store.peek_ops(10_000).unwrap_or_default().into_iter().map(|o| o.seq).collect();
+        let pending: HashSet<u64> =
+            self.store.peek_ops(10_000).unwrap_or_default().into_iter().map(|o| o.seq).collect();
         let mut restored = None;
         for (inv, seq) in entry.steps.into_iter().rev() {
             // Si la operación no salió todavía de la máquina, se cancela; si ya se replicó, se
@@ -1068,7 +1097,11 @@ impl Session {
                     match cancel {
                         Some(s) => self.store.ack_op(s).map_err(store_err)?,
                         None => {
-                            let _ = self.enqueue(account, "flags", &serde_json::json!({ "id": id.get(), "flags": flags.bits() }));
+                            let _ = self.enqueue(
+                                account,
+                                "flags",
+                                &serde_json::json!({ "id": id.get(), "flags": flags.bits() }),
+                            );
                         }
                     }
                     self.refresh_envelope(id);
@@ -1103,7 +1136,10 @@ impl Session {
             // cuando lleguen las filas.
             self.focus_request = Some(id);
         }
-        Ok(Outcome::Notice(Notice::success(format!("Undone: {}", entry.text.en), format!("Deshecho: {}", entry.text.es))))
+        Ok(Outcome::Notice(Notice::success(
+            format!("Undone: {}", entry.text.en),
+            format!("Deshecho: {}", entry.text.es),
+        )))
     }
 
     /// Guarda un borrador en «Borradores» de su cuenta.
@@ -1456,7 +1492,11 @@ impl Session {
         }
     }
 
-    fn wizard_on_discovery(&mut self, id: JobId, r: std::result::Result<iuredesk_autoconfig::Discovery, Text>) -> Option<Notice> {
+    fn wizard_on_discovery(
+        &mut self,
+        id: JobId,
+        r: std::result::Result<iuredesk_autoconfig::Discovery, Text>,
+    ) -> Option<Notice> {
         let w = self.wizard.as_mut().filter(|w| w.job == Some(id))?;
         w.job = None;
         match r {
@@ -1536,7 +1576,8 @@ impl Session {
                 }
             },
         };
-        let account = crate::onboarding::build_account(format!("acct{}", aid.get()), &w.name, w.email.trim(), &cand, auth);
+        let account =
+            crate::onboarding::build_account(format!("acct{}", aid.get()), &w.name, w.email.trim(), &cand, auth);
         let password = w.password.clone();
         let secrets = Arc::clone(&self.secrets);
         let acc = account.clone();
@@ -1602,7 +1643,9 @@ impl Session {
                 }
                 .map_err(|e| crate::onboarding::oauth_text(&e))?;
                 let http = iuredesk_oauth::http_client().map_err(|e| crate::onboarding::oauth_text(&e))?;
-                let pending = iuredesk_oauth::start_login(&cfg, Some(&hint)).await.map_err(|e| crate::onboarding::oauth_text(&e))?;
+                let pending = iuredesk_oauth::start_login(&cfg, Some(&hint))
+                    .await
+                    .map_err(|e| crate::onboarding::oauth_text(&e))?;
                 pending.open_browser().map_err(|e| crate::onboarding::oauth_text(&e))?;
                 let tokens = pending
                     .finish(&http, iuredesk_oauth::DEFAULT_LOGIN_TIMEOUT, &token)
@@ -1670,7 +1713,11 @@ impl Session {
             st.upsert(account.clone()).map_err(|e| EngineError::Io(e.to_string()))?;
         }
         self.store
-            .put_account_label(&AccountLabel { id: aid, name: account.display_name.clone(), email: account.email.clone() })
+            .put_account_label(&AccountLabel {
+                id: aid,
+                name: account.display_name.clone(),
+                email: account.email.clone(),
+            })
             .map_err(store_err)?;
         let es = crate::lang::spanish();
         for (role, en, esn, path) in [

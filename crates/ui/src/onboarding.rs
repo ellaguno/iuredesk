@@ -84,7 +84,11 @@ fn body(app: &mut DeskApp, ui: &mut Ui) {
     }
     match step {
         WizardStep::Email => {
-            ui.label(RichText::new(pick("Add your email account", "Agrega tu cuenta de correo")).font(theme::bold_font(&ctx, 17.0)).color(c.text));
+            ui.label(
+                RichText::new(pick("Add your email account", "Agrega tu cuenta de correo"))
+                    .font(theme::bold_font(&ctx, 17.0))
+                    .color(c.text),
+            );
             ui.add_space(2.0);
             ui.label(
                 RichText::new(pick(
@@ -125,10 +129,21 @@ fn body(app: &mut DeskApp, ui: &mut Ui) {
             }
         }
         WizardStep::Detecting => {
-            let domain = app.session.wizard.as_ref().map(|w| w.email.rsplit_once('@').map_or(String::new(), |(_, d)| d.to_string())).unwrap_or_default();
+            let domain = app
+                .session
+                .wizard
+                .as_ref()
+                .map(|w| w.email.rsplit_once('@').map_or(String::new(), |(_, d)| d.to_string()))
+                .unwrap_or_default();
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(16.0));
-                ui.label(RichText::new(format!("{} {domain}…", pick("Looking up the settings for", "Buscando la configuración de"))).color(c.text));
+                ui.label(
+                    RichText::new(format!(
+                        "{} {domain}…",
+                        pick("Looking up the settings for", "Buscando la configuración de")
+                    ))
+                    .color(c.text),
+                );
             });
             ui.add_space(8.0);
             if ui.button(pick("Back", "Atrás")).clicked() {
@@ -155,12 +170,17 @@ fn body(app: &mut DeskApp, ui: &mut Ui) {
             }
         }
         WizardStep::Done => {
-            let email = app.session.wizard.as_ref().and_then(|w| w.saved.as_ref().map(|a| a.email.clone())).unwrap_or_default();
+            let email =
+                app.session.wizard.as_ref().and_then(|w| w.saved.as_ref().map(|a| a.email.clone())).unwrap_or_default();
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), egui::Sense::hover());
                 ui.painter().circle_filled(r.center(), 11.0, c.success);
                 icons::paint(ui.painter(), r.shrink(5.0), Icon::Check, c.on_accent, c.on_accent);
-                ui.label(RichText::new(format!("{email} {}", pick("is ready", "está lista"))).font(theme::bold_font(&ctx, 16.0)).color(c.text));
+                ui.label(
+                    RichText::new(format!("{email} {}", pick("is ready", "está lista")))
+                        .font(theme::bold_font(&ctx, 16.0))
+                        .color(c.text),
+                );
             });
             ui.add_space(6.0);
             ui.label(
@@ -254,7 +274,11 @@ fn provider(app: &mut DeskApp, ui: &mut Ui) {
             }
         }
         Some(Flow::AppPassword { help_url, steps }) => {
-            ui.label(RichText::new(pick("This provider needs an app password", "Este proveedor pide una contraseña de app")).strong().color(c.text));
+            ui.label(
+                RichText::new(pick("This provider needs an app password", "Este proveedor pide una contraseña de app"))
+                    .strong()
+                    .color(c.text),
+            );
             ui.add_space(4.0);
             ui.label(RichText::new(steps.get()).color(c.text_muted));
             if ui.link(pick("Open the page to create it", "Abrir la página para crearla")).clicked() {
@@ -279,7 +303,9 @@ fn password_and_test(app: &mut DeskApp, ui: &mut Ui, label: &str) {
     let mut go = false;
     if let Some(w) = app.session.wizard.as_mut() {
         ui.label(RichText::new(label).color(c.text));
-        let r = ui.add(egui::TextEdit::singleline(&mut w.password).password(true).hint_text(label).desired_width(f32::INFINITY));
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut w.password).password(true).hint_text(label).desired_width(f32::INFINITY),
+        );
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !w.password.is_empty() {
             go = true;
         }

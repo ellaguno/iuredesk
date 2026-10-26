@@ -74,16 +74,31 @@ struct State {
     svg_depth: u32,
     /// El último start tag fue un elemento de texto crudo: su contenido se copia tal cual.
     raw_verbatim: bool,
+    /// Texto crudo pendiente: el tokenizador lo entrega en trozos arbitrarios, así que se
+    /// neutraliza completo al terminar el elemento.
+    raw_buf: String,
     supports_dark: bool,
     removed: usize,
 }
 
 impl State {
-    fn finish(self) -> Sanitized {
+    fn flush_raw(&mut self) {
+        if !self.raw_buf.is_empty() {
+            let buf = std::mem::take(&mut self.raw_buf);
+            if buf.contains("prefers-color-scheme") {
+                self.supports_dark = true;
+            }
+            push_raw_neutralized(&mut self.out, &buf);
+        }
+    }
+
+    fn finish(mut self) -> Sanitized {
+        self.flush_raw();
         Sanitized { html: self.out, supports_dark: self.supports_dark, removed: self.removed }
     }
 
     fn tag(&mut self, tag: Tag) -> TokenSinkResult<()> {
+        self.flush_raw();
         let name: &str = &tag.name;
         // ¿Saltando contenido?
         if let Some((skip_name, depth)) = &mut self.skipping {
@@ -223,10 +238,9 @@ impl State {
         if self.raw_verbatim {
             // Contenido de <style> (o <xmp>): se copia sin escapar; el tokenizador garantiza que no
             // contiene su propia etiqueta de cierre.
-            if text.contains("prefers-color-scheme") {
-                self.supports_dark = true;
+            if self.raw_buf.len() < 4 * 1024 * 1024 {
+                self.raw_buf.push_str(text);
             }
-            self.out.push_str(text);
         } else {
             escape_into(&mut self.out, text, false);
         }
@@ -276,6 +290,29 @@ impl TokenSink for Sink {
             }
         }
     }
+}
+
+/// Copia texto crudo (CSS de `<style>`) cambiando el `<` que abre una etiqueta peligrosa por el
+/// escape CSS `\3C `. Así, aunque un lector posterior no entre en modo texto crudo (p. ej. un
+/// `<style>` sin cerrar tras un `</style>` suelto), nunca ve `<script>` ni un cierre de `<style>`.
+fn push_raw_neutralized(out: &mut String, text: &str) {
+    const DANGEROUS: &[&str] = &["script", "/script", "style", "/style", "iframe", "object", "embed", "svg", "math"];
+    let dangerous = |after: &str| {
+        let lower: String = after.chars().take(8).collect::<String>().to_ascii_lowercase();
+        DANGEROUS.iter().any(|d| lower.starts_with(d))
+    };
+    let mut rest = text;
+    while let Some(pos) = rest.find('<') {
+        out.push_str(rest.get(..pos).unwrap_or(""));
+        let after = rest.get(pos + 1..).unwrap_or("");
+        if dangerous(after) {
+            out.push_str("\\3C ");
+        } else {
+            out.push('<');
+        }
+        rest = after;
+    }
+    out.push_str(rest);
 }
 
 /// Estado de texto crudo que pide el elemento (como haría el constructor de árbol).
@@ -513,6 +550,16 @@ mod tests {
         let r = sanitize("<style>@media (prefers-color-scheme: dark) { body { background: #000 } }</style>");
         assert!(r.supports_dark);
         assert!(!sanitize("<style>body{}</style>").supports_dark);
+    }
+
+    #[test]
+    fn style_text_cannot_smuggle_tags() {
+        // Regresión (proptest): un `<style>` sin cerrar dejaba pasar `<script>` tal cual.
+        let out = s("<table><tr><td></style><style></td></tr></table><script>alert(1)</script>");
+        assert!(!out.to_ascii_lowercase().contains("<script"), "{out}");
+        let mut o = String::new();
+        push_raw_neutralized(&mut o, "a{}</STYLE><b>");
+        assert_eq!(o, "a{}\\3C /STYLE><b>");
     }
 
     #[test]

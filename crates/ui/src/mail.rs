@@ -10,7 +10,7 @@ use iuredesk_engine::{DensityPref, FolderSel, ListRow};
 use iuredesk_model::{AccountId, FolderRole, MessageEnvelope, MessageId};
 use iurefficient_ui::list::{Column, ListState, ListView, RowStyle};
 use iurefficient_ui::{
-    Banner, BadgeKind, EmptyState, Icon, PaneKind, SearchField, Severity, avatar, badge, icons, pick, section_label,
+    BadgeKind, Banner, EmptyState, Icon, PaneKind, SearchField, Severity, avatar, badge, icons, pick, section_label,
     segmented, sidebar_item, split, theme,
 };
 
@@ -154,7 +154,14 @@ fn folders(app: &mut DeskApp, ui: &mut Ui) {
                         .session
                         .account_labels()
                         .iter()
-                        .flat_map(|l| app.session.folders_of(l.id).into_iter().filter(|f| f.role == FolderRole::Drafts).map(|f| f.id).collect::<Vec<_>>())
+                        .flat_map(|l| {
+                            app.session
+                                .folders_of(l.id)
+                                .into_iter()
+                                .filter(|f| f.role == FolderRole::Drafts)
+                                .map(|f| f.id)
+                                .collect::<Vec<_>>()
+                        })
                         .collect();
                     ids.into_iter().map(|f| app.session.count(f).total).sum()
                 }
@@ -197,8 +204,14 @@ fn folders(app: &mut DeskApp, ui: &mut Ui) {
                     ui.horizontal(|ui| {
                         ui.add_space(14.0);
                         let on = !searching && current == FolderSel::Folder(fid);
-                        if sidebar_item(ui, Some(folder_icon(role)), &name, u32::try_from(unread).unwrap_or(u32::MAX), on)
-                            .clicked()
+                        if sidebar_item(
+                            ui,
+                            Some(folder_icon(role)),
+                            &name,
+                            u32::try_from(unread).unwrap_or(u32::MAX),
+                            on,
+                        )
+                        .clicked()
                         {
                             app.session.select_folder(FolderSel::Folder(fid));
                             app.mail.search.clear();
@@ -209,7 +222,15 @@ fn folders(app: &mut DeskApp, ui: &mut Ui) {
             ui.add_space(2.0);
         }
         ui.add_space(8.0);
-        if ui.add(egui::Button::new(RichText::new(pick("+ Add account", "+ Agregar cuenta")).color(theme::colors(ui).accent)).frame(false)).clicked() {
+        if ui
+            .add(
+                egui::Button::new(
+                    RichText::new(pick("+ Add account", "+ Agregar cuenta")).color(theme::colors(ui).accent),
+                )
+                .frame(false),
+            )
+            .clicked()
+        {
             app.run(&ctx, "app.add_account");
         }
     });
@@ -225,7 +246,13 @@ fn account_header(ui: &mut Ui, name: &str, email: &str, open: bool) -> egui::Res
         ui.painter().rect_filled(rect, 6.0, c.hover);
     }
     let ir = Rect::from_center_size(pos2(rect.left() + 12.0, rect.center().y), vec2(12.0, 12.0));
-    icons::paint(ui.painter(), ir, if open { Icon::ChevronDown } else { Icon::ChevronRight }, c.text_muted, c.text_muted);
+    icons::paint(
+        ui.painter(),
+        ir,
+        if open { Icon::ChevronDown } else { Icon::ChevronRight },
+        c.text_muted,
+        c.text_muted,
+    );
     let font = theme::bold_font(ui.ctx(), d.small_size() + 0.5);
     let label = if email.is_empty() { name } else { email };
     let g = iurefficient_ui::widgets::text::elided(ui, label, font, c.text, rect.width() - 30.0);
@@ -290,7 +317,12 @@ fn today_panel(app: &mut DeskApp, ui: &mut Ui) {
                 .horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
-                    ui.painter().rect_stroke(r.shrink(1.0), 3.0, Stroke::new(1.3, if overdue { c.danger } else { c.text_muted }), egui::StrokeKind::Inside);
+                    ui.painter().rect_stroke(
+                        r.shrink(1.0),
+                        3.0,
+                        Stroke::new(1.3, if overdue { c.danger } else { c.text_muted }),
+                        egui::StrokeKind::Inside,
+                    );
                     let w = ui.available_width();
                     let g = iurefficient_ui::widgets::text::elided(
                         ui,
@@ -411,7 +443,12 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
                     true,
                 );
                 if conv_on {
-                    ui.painter().rect_stroke(r.rect.shrink(1.0), 5.0, Stroke::new(1.0, c.accent), egui::StrokeKind::Inside);
+                    ui.painter().rect_stroke(
+                        r.rect.shrink(1.0),
+                        5.0,
+                        Stroke::new(1.0, c.accent),
+                        egui::StrokeKind::Inside,
+                    );
                 }
                 if r.clicked() {
                     app.run(&ctx, "mail.toggle_conversations");
@@ -437,7 +474,10 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         } else {
             (
                 pick("Nothing here", "Nada por aquí"),
-                pick("Messages that arrive in this folder will show up here.", "Los mensajes que lleguen a esta carpeta aparecerán aquí."),
+                pick(
+                    "Messages that arrive in this folder will show up here.",
+                    "Los mensajes que lleguen a esta carpeta aparecerán aquí.",
+                ),
             )
         };
         EmptyState::new(if searching { Icon::Search } else { Icon::Inbox }, title).body(body).show(ui);
@@ -486,7 +526,11 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             env.sender_display().to_string()
         };
         let date = list_date(env.date, now, zone);
-        let subject = if env.subject.trim().is_empty() { pick("(no subject)", "(sin asunto)").to_string() } else { env.subject.clone() };
+        let subject = if env.subject.trim().is_empty() {
+            pick("(no subject)", "(sin asunto)").to_string()
+        } else {
+            env.subject.clone()
+        };
         if unread {
             row.describe(pick("unread", "no leído"));
         }
@@ -554,12 +598,12 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         let mut icons_w = 0.0;
         let icon_side = 14.0;
         let mut ix = line2.right();
-        for (on, ic, ink) in [
-            (env.flags.flagged, Icon::Flag, col.warning),
-            (env.has_attachments, Icon::Attachment, col.text_muted),
-        ] {
+        for (on, ic, ink) in
+            [(env.flags.flagged, Icon::Flag, col.warning), (env.has_attachments, Icon::Attachment, col.text_muted)]
+        {
             if on {
-                let ir = Rect::from_center_size(pos2(ix - icon_side / 2.0, line2.center().y), vec2(icon_side, icon_side));
+                let ir =
+                    Rect::from_center_size(pos2(ix - icon_side / 2.0, line2.center().y), vec2(icon_side, icon_side));
                 icons::paint(row.painter(), ir, ic, ink, ink);
                 ix -= icon_side + 6.0;
                 icons_w += icon_side + 6.0;
@@ -574,7 +618,7 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             Align::Min,
             &subject,
             subj_font,
-            if unread { col.text } else { col.text },
+            col.text,
         );
         let prev_rect = Rect::from_min_max(pos2(text_rect.left() + subj_w + 8.0, text_rect.top()), text_rect.max);
         if prev_rect.width() > 24.0 && !env.preview.is_empty() {
@@ -640,11 +684,17 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<&ContextCard
         let n = app.session.selection().len();
         if n > 1 {
             EmptyState::new(Icon::Mail, &format!("{n} {}", pick("messages selected", "mensajes seleccionados")))
-                .body(pick("Archive, delete or move them all at once from the toolbar or with Ctrl+K.", "Archívalos, elimínalos o muévelos juntos desde la barra o con Ctrl+K."))
+                .body(pick(
+                    "Archive, delete or move them all at once from the toolbar or with Ctrl+K.",
+                    "Archívalos, elimínalos o muévelos juntos desde la barra o con Ctrl+K.",
+                ))
                 .show(ui);
         } else {
             EmptyState::new(Icon::Mail, pick("Select a message", "Selecciona un mensaje"))
-                .body(pick("Pick a message from the list to read it here.", "Elige un mensaje de la lista para leerlo aquí."))
+                .body(pick(
+                    "Pick a message from the list to read it here.",
+                    "Elige un mensaje de la lista para leerlo aquí.",
+                ))
                 .show(ui);
         }
         return;
@@ -659,13 +709,29 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<&ContextCard
             v
         }
     };
-    let Some(subject) = conv.last().map(|e| e.subject.clone()).or_else(|| app.session.envelope(id).map(|e| e.subject.clone())) else {
+    let Some(subject) =
+        conv.last().map(|e| e.subject.clone()).or_else(|| app.session.envelope(id).map(|e| e.subject.clone()))
+    else {
         return;
     };
     let (base, _) = iuredesk_model::normalize_subject(&subject);
-    ui.add(egui::Label::new(RichText::new(if base.is_empty() { subject.clone() } else { base }).font(theme::bold_font(&ctx, 19.0)).color(c.text)).wrap());
+    ui.add(
+        egui::Label::new(
+            RichText::new(if base.is_empty() { subject.clone() } else { base })
+                .font(theme::bold_font(&ctx, 19.0))
+                .color(c.text),
+        )
+        .wrap(),
+    );
     if conv.len() > 1 {
-        ui.label(RichText::new(format!("{} {}", conv.len(), pick("messages in this conversation", "mensajes en esta conversación"))).color(c.text_muted));
+        ui.label(
+            RichText::new(format!(
+                "{} {}",
+                conv.len(),
+                pick("messages in this conversation", "mensajes en esta conversación")
+            ))
+            .color(c.text_muted),
+        );
     }
     ui.add_space(6.0);
     action_bar(app, ui);
@@ -766,9 +832,17 @@ fn message_card(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope, expanded:
                 ui.spacing_mut().item_spacing.y = 1.0;
                 ui.horizontal(|ui| {
                     let name = if from_name.is_empty() { from_addr.clone() } else { from_name.clone() };
-                    ui.label(RichText::new(name).font(theme::bold_font(&ctx, theme::density(&ctx).body_size())).color(c.text));
+                    ui.label(
+                        RichText::new(name)
+                            .font(theme::bold_font(&ctx, theme::density(&ctx).body_size()))
+                            .color(c.text),
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new(long_date(env.date, zone)).color(c.text_muted).size(theme::density(&ctx).small_size()));
+                        ui.label(
+                            RichText::new(long_date(env.date, zone))
+                                .color(c.text_muted)
+                                .size(theme::density(&ctx).small_size()),
+                        );
                         if env.flags.flagged {
                             badge(ui, pick("Flagged", "Seguimiento"), BadgeKind::Warning);
                         }
@@ -790,7 +864,14 @@ fn message_card(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope, expanded:
         })
         .response
         .interact(Sense::click());
-    iurefficient_ui::a11y::button(&header, &format!("{} {}", pick("Message from", "Mensaje de"), if from_name.is_empty() { &from_addr } else { &from_name }));
+    iurefficient_ui::a11y::button(
+        &header,
+        &format!(
+            "{} {}",
+            pick("Message from", "Mensaje de"),
+            if from_name.is_empty() { &from_addr } else { &from_name }
+        ),
+    );
     if header.clicked() {
         if app.mail.expanded.contains(&env.id) {
             app.mail.expanded.remove(&env.id);
@@ -828,7 +909,8 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
         let state = app.html.get(&mut app.session, key, html, &body.inline);
         match state {
             Some(HtmlState::Ready { tex, size_px, links, blocked, scale }) => {
-                let (tex, size_px, links, blocked, scale) = (tex.clone(), *size_px, links.clone(), blocked.clone(), *scale);
+                let (tex, size_px, links, blocked, scale) =
+                    (tex.clone(), *size_px, links.clone(), blocked.clone(), *scale);
                 if !blocked.is_empty() && !app.html.remote_ready(env.id) {
                     let loading = app.html.remote_loading(env.id);
                     let r = Banner::new(
@@ -836,7 +918,10 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
                         if loading {
                             pick("Downloading remote images…", "Descargando imágenes remotas…")
                         } else {
-                            pick("Remote images blocked to protect your privacy.", "Imágenes remotas bloqueadas para proteger tu privacidad.")
+                            pick(
+                                "Remote images blocked to protect your privacy.",
+                                "Imágenes remotas bloqueadas para proteger tu privacidad.",
+                            )
                         },
                     )
                     .action(pick("Show", "Mostrar"))
@@ -858,8 +943,13 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
                     if let Some(l) = links.iter().rev().find(|l| l.rect.contains(px.x, px.y)) {
                         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
                         // Se muestra el destino real del enlace (protección contra phishing).
-                        egui::Tooltip::always_open(ctx.clone(), ui.layer_id(), resp.id.with("link"), egui::PopupAnchor::Pointer)
-                            .show(|ui| ui.label(&l.href));
+                        egui::Tooltip::always_open(
+                            ctx.clone(),
+                            ui.layer_id(),
+                            resp.id.with("link"),
+                            egui::PopupAnchor::Pointer,
+                        )
+                        .show(|ui| ui.label(&l.href));
                         if resp.clicked() {
                             let href = l.href.clone();
                             if href.to_ascii_lowercase().starts_with("mailto:") {
@@ -936,7 +1026,9 @@ fn attachment_chip(ui: &mut Ui, name: &str, size: usize) {
                 let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
                 icons::paint(ui.painter(), r, Icon::Attachment, c.text_muted, c.accent);
                 ui.label(RichText::new(name).color(c.text));
-                ui.label(RichText::new(human_size(size)).color(c.text_muted).size(theme::density(ui.ctx()).small_size()));
+                ui.label(
+                    RichText::new(human_size(size)).color(c.text_muted).size(theme::density(ui.ctx()).small_size()),
+                );
             });
         });
 }
@@ -964,7 +1056,11 @@ fn context_inline(ui: &mut Ui, card: &ContextCard) {
                     avatar(ui, &p.full_name, p.primary_email().unwrap_or(""), 40.0);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(&p.full_name).font(theme::bold_font(ui.ctx(), 15.0)).color(c.text));
-                        let role = [p.title.as_str(), p.org.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
+                        let role = [p.title.as_str(), p.org.as_str()]
+                            .into_iter()
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(" · ");
                         if !role.is_empty() {
                             ui.label(RichText::new(role).color(c.text_muted));
                         }
@@ -1003,14 +1099,19 @@ fn context_inline(ui: &mut Ui, card: &ContextCard) {
                         badge(ui, kind, k);
                         ui.label(RichText::new(&l.title).strong().color(c.text));
                     });
-                    ui.label(RichText::new(l.detail.get()).color(c.text_muted).size(theme::density(ui.ctx()).small_size()));
+                    ui.label(
+                        RichText::new(l.detail.get()).color(c.text_muted).size(theme::density(ui.ctx()).small_size()),
+                    );
                     ui.add_space(4.0);
                 }
                 ui.label(
-                    RichText::new(pick("Live links with your instance arrive in F3.", "Los vínculos en vivo con tu instancia llegan en F3."))
-                        .italics()
-                        .color(c.text_muted)
-                        .size(theme::density(ui.ctx()).small_size()),
+                    RichText::new(pick(
+                        "Live links with your instance arrive in F3.",
+                        "Los vínculos en vivo con tu instancia llegan en F3.",
+                    ))
+                    .italics()
+                    .color(c.text_muted)
+                    .size(theme::density(ui.ctx()).small_size()),
                 );
             });
     }

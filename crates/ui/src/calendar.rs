@@ -4,7 +4,7 @@
 use chrono::{Datelike, Duration, NaiveDate, Timelike};
 use egui::{Align, Align2, Color32, FontId, Layout, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use iuredesk_engine::calendar::{Occurrence, layout_columns};
-use iuredesk_engine::time::{month_name, monday_of, weekday_short};
+use iuredesk_engine::time::{monday_of, month_name, weekday_short};
 use iurefficient_ui::{Icon, PaneKind, icons, pick, section_label, segmented, split, theme};
 
 use crate::app::DeskApp;
@@ -54,7 +54,11 @@ fn sidebar(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate) 
     // Mini mes.
     let first = NaiveDate::from_ymd_opt(anchor.year(), anchor.month(), 1).unwrap_or(anchor);
     ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("{} {}", capitalize(month_name(anchor.month())), anchor.year())).strong().color(c.text));
+        ui.label(
+            RichText::new(format!("{} {}", capitalize(month_name(anchor.month())), anchor.year()))
+                .strong()
+                .color(c.text),
+        );
     });
     ui.add_space(4.0);
     let start = monday_of(first);
@@ -111,7 +115,12 @@ fn sidebar(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate) 
             ui.painter().rect_filled(r, 3.0, rgb(cal.color.unwrap_or(0x3B82F6)));
             ui.label(RichText::new(&cal.name).color(c.text));
             if let Some(l) = labels.iter().find(|l| l.id == cal.account) {
-                ui.add(egui::Label::new(RichText::new(&l.email).color(c.text_muted).size(theme::density(ui.ctx()).small_size())).truncate());
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&l.email).color(c.text_muted).size(theme::density(ui.ctx()).small_size()),
+                    )
+                    .truncate(),
+                );
             }
         });
     }
@@ -142,7 +151,11 @@ fn top_bar(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate) 
         };
         let shift = |d: NaiveDate, fwd: bool| -> NaiveDate {
             if app.calendar.view == CalView::Month {
-                let m = if fwd { d.checked_add_months(chrono::Months::new(1)) } else { d.checked_sub_months(chrono::Months::new(1)) };
+                let m = if fwd {
+                    d.checked_add_months(chrono::Months::new(1))
+                } else {
+                    d.checked_sub_months(chrono::Months::new(1))
+                };
                 m.unwrap_or(d)
             } else if fwd {
                 d + Duration::days(step)
@@ -235,7 +248,13 @@ fn week_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate
     let (ad, _) = ui.allocate_exact_size(vec2(avail.width(), ad_h), Sense::hover());
     let p = ui.painter_at(ad);
     p.hline(ad.x_range(), ad.top(), Stroke::new(1.0, c.separator));
-    p.text(pos2(ad.left() + gutter - 8.0, ad.center().y), Align2::RIGHT_CENTER, pick("all day", "todo el día"), FontId::proportional(10.5), c.text_muted);
+    p.text(
+        pos2(ad.left() + gutter - 8.0, ad.center().y),
+        Align2::RIGHT_CENTER,
+        pick("all day", "todo el día"),
+        FontId::proportional(10.5),
+        c.text_muted,
+    );
     for (lane, o) in all_day.iter().take(3).enumerate() {
         let Some((d0, d1)) = o.days else { continue };
         let s = (d0 - mon).num_days().clamp(0, days);
@@ -250,7 +269,13 @@ fn week_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate
         let col = rgb(o.color);
         p.rect_filled(r, 4.0, mix(c.surface, col, if ui.visuals().dark_mode { 0.35 } else { 0.22 }));
         p.rect_filled(Rect::from_min_max(r.min, pos2(r.left() + 3.0, r.bottom())), 2.0, col);
-        p.with_clip_rect(r).text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, &o.summary, FontId::proportional(12.0), c.text);
+        p.with_clip_rect(r).text(
+            pos2(r.left() + 8.0, r.center().y),
+            Align2::LEFT_CENTER,
+            &o.summary,
+            FontId::proportional(12.0),
+            c.text,
+        );
     }
     hairline(ui);
 
@@ -280,7 +305,13 @@ fn week_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate
             let half = Stroke::new(1.0, mix(c.surface, c.separator, 0.45));
             p.hline((grid.left() + gutter)..=grid.right(), y + hh / 2.0, half);
             if h > 0 {
-                p.text(pos2(grid.left() + gutter - 8.0, y), Align2::RIGHT_CENTER, format!("{h:02}:00"), FontId::proportional(11.0), c.text_muted);
+                p.text(
+                    pos2(grid.left() + gutter - 8.0, y),
+                    Align2::RIGHT_CENTER,
+                    format!("{h:02}:00"),
+                    FontId::proportional(11.0),
+                    c.text_muted,
+                );
             }
         }
         // Eventos con hora, por día y en columnas si se solapan.
@@ -387,9 +418,21 @@ fn month_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDat
         let num = day.day().to_string();
         if day == today {
             p.circle_filled(pos2(r.left() + 16.0, r.top() + 14.0), 11.0, c.accent);
-            p.text(pos2(r.left() + 16.0, r.top() + 14.0), Align2::CENTER_CENTER, num, theme::bold_font(ui.ctx(), 12.0), c.on_accent);
+            p.text(
+                pos2(r.left() + 16.0, r.top() + 14.0),
+                Align2::CENTER_CENTER,
+                num,
+                theme::bold_font(ui.ctx(), 12.0),
+                c.on_accent,
+            );
         } else {
-            p.text(pos2(r.left() + 10.0, r.top() + 14.0), Align2::LEFT_CENTER, num, FontId::proportional(12.0), if day.month() == anchor.month() { c.text } else { c.text_muted });
+            p.text(
+                pos2(r.left() + 10.0, r.top() + 14.0),
+                Align2::LEFT_CENTER,
+                num,
+                FontId::proportional(12.0),
+                if day.month() == anchor.month() { c.text } else { c.text_muted },
+            );
         }
         let todays: Vec<&Occurrence> = occ
             .iter()
@@ -405,11 +448,23 @@ fn month_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDat
             let clip = p.with_clip_rect(er);
             if o.all_day {
                 clip.rect_filled(er, 3.0, mix(c.surface, col, 0.25));
-                clip.text(pos2(er.left() + 4.0, er.center().y), Align2::LEFT_CENTER, &o.summary, FontId::proportional(11.5), c.text);
+                clip.text(
+                    pos2(er.left() + 4.0, er.center().y),
+                    Align2::LEFT_CENTER,
+                    &o.summary,
+                    FontId::proportional(11.5),
+                    c.text,
+                );
             } else {
                 clip.circle_filled(pos2(er.left() + 5.0, er.center().y), 3.0, col);
                 let t = format!("{} {}", zone.local(o.start).format("%H:%M"), o.summary);
-                clip.text(pos2(er.left() + 12.0, er.center().y), Align2::LEFT_CENTER, t, FontId::proportional(11.5), c.text);
+                clip.text(
+                    pos2(er.left() + 12.0, er.center().y),
+                    Align2::LEFT_CENTER,
+                    t,
+                    FontId::proportional(11.5),
+                    c.text,
+                );
             }
         }
         if todays.len() > max {

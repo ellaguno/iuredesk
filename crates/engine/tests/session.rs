@@ -124,7 +124,8 @@ fn flag_and_read_toggles_are_undoable() {
 fn opening_marks_read_and_delete_goes_to_trash() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = session(dir.path(), false);
-    let id = s.rows().iter().map(|r| r.id).find(|&id| !s.store().get_envelope(id).unwrap().unwrap().flags.seen).unwrap();
+    let id =
+        s.rows().iter().map(|r| r.id).find(|&id| !s.store().get_envelope(id).unwrap().unwrap().flags.seen).unwrap();
     let unread_before = s.unified_unread(FolderRole::Inbox);
     select(&mut s, id);
     assert!(s.store().get_envelope(id).unwrap().unwrap().flags.seen);

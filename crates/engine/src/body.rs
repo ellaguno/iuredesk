@@ -69,11 +69,7 @@ pub fn parse(raw: &[u8]) -> MessageBody {
                 None => c.ctype().to_string(),
             })
             .unwrap_or_else(|| "application/octet-stream".into());
-        attachments.push(AttachmentInfo {
-            name: part.attachment_name().unwrap_or("adjunto").to_string(),
-            size,
-            mime,
-        });
+        attachments.push(AttachmentInfo { name: part.attachment_name().unwrap_or("adjunto").to_string(), size, mime });
     }
     MessageBody { text, html, inline, attachments }
 }
@@ -84,7 +80,8 @@ mod tests {
 
     #[test]
     fn plain_and_html() {
-        let plain = b"From: a@example.com\r\nSubject: x\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHola mundo\r\n";
+        let plain =
+            b"From: a@example.com\r\nSubject: x\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHola mundo\r\n";
         let b = parse(plain);
         assert!(b.text.contains("Hola mundo"));
         assert!(b.html.is_none(), "el texto plano no se convierte en HTML");

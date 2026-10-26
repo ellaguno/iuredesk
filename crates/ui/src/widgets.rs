@@ -93,7 +93,8 @@ pub fn tool_button(ui: &mut Ui, ic: Icon, label: &str, tip: &str, enabled: bool)
     if resp.has_focus() {
         ui.painter().rect_stroke(rect, 6.0, Stroke::new(2.0, c.focus), egui::StrokeKind::Inside);
     }
-    let ir = egui::Rect::from_center_size(egui::pos2(rect.left() + 8.0 + side / 2.0, rect.center().y), vec2(side, side));
+    let ir =
+        egui::Rect::from_center_size(egui::pos2(rect.left() + 8.0 + side / 2.0, rect.center().y), vec2(side, side));
     icons::paint(ui.painter(), ir, ic, ink, if enabled { c.accent } else { ink });
     ui.painter().galley(egui::pos2(ir.right() + 6.0, rect.center().y - g.size().y / 2.0), g, ink);
     iurefficient_ui::a11y::button(&resp, label);

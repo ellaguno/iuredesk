@@ -56,8 +56,12 @@ impl EngineError {
                 format!("Your local mailbox could not be updated ({e})."),
                 format!("No se pudo actualizar tu buzón local ({e})."),
             ),
-            EngineError::Io(e) => Text::new(format!("A file could not be saved ({e})."), format!("No se pudo guardar un archivo ({e}).")),
-            EngineError::UnknownCommand(c) => Text::new(format!("Unknown command: {c}"), format!("Comando desconocido: {c}")),
+            EngineError::Io(e) => {
+                Text::new(format!("A file could not be saved ({e})."), format!("No se pudo guardar un archivo ({e})."))
+            }
+            EngineError::UnknownCommand(c) => {
+                Text::new(format!("Unknown command: {c}"), format!("Comando desconocido: {c}"))
+            }
             EngineError::NoSelection => Text::new("Select a message first.", "Primero selecciona un mensaje."),
             EngineError::NoAccount => Text::new("Add an account first.", "Primero agrega una cuenta."),
             EngineError::Invalid(e) => Text::new(format!("Invalid data: {e}"), format!("Dato no válido: {e}")),

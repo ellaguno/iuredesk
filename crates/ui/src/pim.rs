@@ -38,7 +38,8 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
             .iter()
             .enumerate()
             .filter_map(|(i, c)| {
-                let extra = format!("{} {} {}", c.org, c.emails.first().map(|e| e.value.as_str()).unwrap_or(""), c.title);
+                let extra =
+                    format!("{} {} {}", c.org, c.emails.first().map(|e| e.value.as_str()).unwrap_or(""), c.title);
                 fuzzy::score_with_extra(&filter, &c.full_name, &extra).map(|s| (s, i))
             })
             .collect();
@@ -49,14 +50,20 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
         ui.add_space(4.0);
         pane_title(ui, pick("Contacts", "Contactos"), &all.len().to_string());
         ui.add_space(6.0);
-        SearchField::new(&mut app.pim.contact_filter).id_salt("contact-search").hint(pick("Find a person", "Buscar una persona")).show(ui);
+        SearchField::new(&mut app.pim.contact_filter)
+            .id_salt("contact-search")
+            .hint(pick("Find a person", "Buscar una persona"))
+            .show(ui);
         ui.add_space(6.0);
         if app.pim.contact_cols.is_empty() {
             app.pim.contact_cols = vec![Column::new(pick("Name", "Nombre"), 200.0).grow()];
         }
         if shown.is_empty() {
             EmptyState::new(Icon::Contacts, pick("No contacts", "Sin contactos"))
-                .body(pick("People you write to will appear here.", "Las personas con quienes te escribes aparecerán aquí."))
+                .body(pick(
+                    "People you write to will appear here.",
+                    "Las personas con quienes te escribes aparecerán aquí.",
+                ))
                 .show(ui);
             return;
         }
@@ -92,7 +99,8 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
                     let l2 = Rect::from_min_max(pos2(x, r.center().y - 1.0), pos2(r.right() - 8.0, r.bottom() - 4.0));
                     let bold = theme::bold_font(&ctx, theme::density(&ctx).body_size());
                     row.text_in(l1, Align::Min, &ct.full_name, bold, col.text);
-                    let sub = if ct.org.is_empty() { ct.primary_email().unwrap_or("").to_string() } else { ct.org.clone() };
+                    let sub =
+                        if ct.org.is_empty() { ct.primary_email().unwrap_or("").to_string() } else { ct.org.clone() };
                     row.text_in(l2, Align::Min, &sub, theme::small_font(&ctx), col.text_muted);
                     let _ = selected;
                 },
@@ -104,7 +112,11 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
             app.pim.contact = Some(ct.id);
         }
     });
-    let current = app.pim.contact.and_then(|id| all.iter().find(|c| c.id == id)).or_else(|| shown.first().and_then(|&k| all.get(k)));
+    let current = app
+        .pim
+        .contact
+        .and_then(|id| all.iter().find(|c| c.id == id))
+        .or_else(|| shown.first().and_then(|&k| all.get(k)));
     split::center(ui, PaneKind::Detail, |ui| {
         let Some(ct) = current else {
             EmptyState::new(Icon::Person, pick("Select a contact", "Selecciona un contacto")).show(ui);
@@ -120,7 +132,11 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
                 ui.vertical(|ui| {
                     ui.add_space(6.0);
                     ui.label(RichText::new(&ct.full_name).font(theme::bold_font(ui.ctx(), 22.0)).color(c.text));
-                    let role = [ct.title.as_str(), ct.org.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
+                    let role = [ct.title.as_str(), ct.org.as_str()]
+                        .into_iter()
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" · ");
                     if !role.is_empty() {
                         ui.label(RichText::new(role).color(c.text_muted));
                     }
@@ -220,10 +236,23 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                 if n.pinned {
                     title = format!("{title}  ·  {}", pick("pinned", "fijada"));
                 }
-                let gt = iurefficient_ui::widgets::text::elided(ui, &title, title_font, c.text, inner.width() - dw - 8.0);
+                let gt =
+                    iurefficient_ui::widgets::text::elided(ui, &title, title_font, c.text, inner.width() - dw - 8.0);
                 ui.painter().galley(inner.min, gt, c.text);
-                let snippet: String = n.body.lines().map(|l| l.trim_start_matches(['#', '-', '*', ' ', '>']).replace('*', "")).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
-                let gs = iurefficient_ui::widgets::text::elided(ui, &snippet, theme::body_font(ui.ctx()), c.text_muted, inner.width());
+                let snippet: String = n
+                    .body
+                    .lines()
+                    .map(|l| l.trim_start_matches(['#', '-', '*', ' ', '>']).replace('*', ""))
+                    .filter(|l| !l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let gs = iurefficient_ui::widgets::text::elided(
+                    ui,
+                    &snippet,
+                    theme::body_font(ui.ctx()),
+                    c.text_muted,
+                    inner.width(),
+                );
                 ui.painter().galley(pos2(inner.left(), inner.top() + 24.0), gs, c.text_muted);
                 iurefficient_ui::a11y::toggle(&resp, &n.title, selected);
                 if resp.clicked() {
@@ -246,9 +275,13 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             ui.label(RichText::new(&n.title).font(theme::bold_font(ui.ctx(), 24.0)).color(c.text));
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(format!("{} {}", pick("Edited", "Editada"), iuredesk_engine::time::long_date(n.updated, zone)))
-                        .color(c.text_muted)
-                        .size(theme::density(ui.ctx()).small_size()),
+                    RichText::new(format!(
+                        "{} {}",
+                        pick("Edited", "Editada"),
+                        iuredesk_engine::time::long_date(n.updated, zone)
+                    ))
+                    .color(c.text_muted)
+                    .size(theme::density(ui.ctx()).small_size()),
                 );
                 for t in &n.tags {
                     badge(ui, t, BadgeKind::Neutral);
@@ -314,7 +347,11 @@ fn inline(ui: &mut Ui, text: &str, size: f32, color: egui::Color32) {
     let mut job = egui::text::LayoutJob::default();
     for (i, part) in text.split("**").enumerate() {
         let font = if i % 2 == 1 { theme::bold_font(ui.ctx(), size) } else { egui::FontId::proportional(size) };
-        job.append(part, 0.0, egui::TextFormat { font_id: font, color, line_height: Some(size * 1.45), ..Default::default() });
+        job.append(
+            part,
+            0.0,
+            egui::TextFormat { font_id: font, color, line_height: Some(size * 1.45), ..Default::default() },
+        );
     }
     job.wrap.max_width = ui.available_width();
     ui.add(egui::Label::new(job).wrap().selectable(true));
@@ -334,7 +371,9 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 1.0;
         for l in &lists {
             let open = app.session.tasks(l.id).iter().filter(|t| !t.is_done()).count();
-            if sidebar_item(ui, Some(Icon::Tasks), &l.name, u32::try_from(open).unwrap_or(0), selected == Some(l.id)).clicked() {
+            if sidebar_item(ui, Some(Icon::Tasks), &l.name, u32::try_from(open).unwrap_or(0), selected == Some(l.id))
+                .clicked()
+            {
                 app.pim.task_list = Some(l.id);
             }
         }

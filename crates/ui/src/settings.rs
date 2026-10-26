@@ -53,7 +53,10 @@ pub fn show(app: &mut DeskApp, ctx: &Context) {
             }
             ui.add_space(14.0);
             section_label(ui, pick("Keyboard shortcuts", "Atajos de teclado"));
-            ui.label(RichText::new(pick("Use the keys you already know.", "Usa las teclas que ya conoces.")).color(c.text_muted));
+            ui.label(
+                RichText::new(pick("Use the keys you already know.", "Usa las teclas que ya conoces."))
+                    .color(c.text_muted),
+            );
             let mut s = app.session.prefs.scheme;
             if segmented(ui, &mut s, &ShortcutScheme::ALL.map(|s| (s, s.label()))).changed() {
                 run = Some(format!("view.scheme.{}", s.key()));

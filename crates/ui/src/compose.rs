@@ -70,13 +70,25 @@ fn form(ui: &mut Ui, d: &mut ComposeDraft) -> (bool, bool) {
     let mut discard = false;
     egui::Grid::new("compose-head").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
         ui.label(RichText::new(pick("To", "Para")).color(c.text_muted));
-        ui.add(egui::TextEdit::singleline(&mut d.to).hint_text(pick("Recipients", "Destinatarios")).desired_width(f32::INFINITY));
+        ui.add(
+            egui::TextEdit::singleline(&mut d.to)
+                .hint_text(pick("Recipients", "Destinatarios"))
+                .desired_width(f32::INFINITY),
+        );
         ui.end_row();
         ui.label(RichText::new("Cc").color(c.text_muted));
-        ui.add(egui::TextEdit::singleline(&mut d.cc).hint_text(pick("Copy to", "Con copia a")).desired_width(f32::INFINITY));
+        ui.add(
+            egui::TextEdit::singleline(&mut d.cc)
+                .hint_text(pick("Copy to", "Con copia a"))
+                .desired_width(f32::INFINITY),
+        );
         ui.end_row();
         ui.label(RichText::new(pick("Subject", "Asunto")).color(c.text_muted));
-        ui.add(egui::TextEdit::singleline(&mut d.subject).hint_text(pick("Subject", "Asunto")).desired_width(f32::INFINITY));
+        ui.add(
+            egui::TextEdit::singleline(&mut d.subject)
+                .hint_text(pick("Subject", "Asunto"))
+                .desired_width(f32::INFINITY),
+        );
         ui.end_row();
     });
     ui.add_space(6.0);
