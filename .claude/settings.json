@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git push:*)",
+      "Bash(git -C /home/ellaguno/MEGA/Proyectos/Iurefficient/Proyectos/iuredesk push:*)"
+    ]
+  }
+}

@@ -14,6 +14,12 @@ Ids `F<fase>.<n>`. Estado: ☐ pendiente · ◐ en curso · ☑ hecho.
 | F0.6 | `engine` + `ui` + app: riel + 3 paneles, densidades, tema, paleta, i18n, asistente de alta, buzón de ejemplo, `ui_shot` | ☐ |
 | F0.7 | IureProject migra a egui 0.37 + `iurefficient-ui` (rama `ui-kit` en su repo) | ☐ |
 
+## F2 · OAuth + Calendario + Contactos
+
+| Id | Tarea | Estado |
+|---|---|---|
+| F2.1 | `oauth`: código + PKCE con receptor loopback (RFC 8252), Google y Microsoft v2 (+ genérico), client id por compilación/entorno/ajustes, tokens (refresco en llavero, acceso en memoria, rotación, `invalid_grant` → volver a iniciar sesión), SASL XOAUTH2/OAUTHBEARER; servidor falso de pruebas; `docs/oauth.md` | ☑ |
+
 ## F3 · Iurefficient
 
 | Id | Tarea | Estado |
