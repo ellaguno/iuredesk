@@ -28,7 +28,7 @@ pub use command::{COMMANDS, Chord, CommandSpec};
 pub use compose::ComposeDraft;
 pub use lang::{Text, pick};
 pub use prefs::{DensityPref, Prefs, ShortcutScheme, ThemePref};
-pub use session::{Event, FolderSel, ListRow, Module, Notice, NoticeKind, Outcome, Session, SessionConfig};
+pub use session::{Event, Fetched, FolderSel, ListRow, Module, Notice, NoticeKind, Outcome, Session, SessionConfig};
 pub use time::Zone;
 
 /// Error del motor.

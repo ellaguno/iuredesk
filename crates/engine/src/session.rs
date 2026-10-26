@@ -177,6 +177,13 @@ pub enum Event {
     Custom { id: JobId, value: Box<dyn std::any::Any + Send> },
 }
 
+/// Recursos remotos descargados por [`Session::fetch_remote`].
+#[derive(Debug, Clone, Default)]
+pub struct Fetched {
+    pub tag: u64,
+    pub items: Vec<(String, Vec<u8>)>,
+}
+
 /// Paso inverso de una acción.
 #[derive(Clone, Debug)]
 enum Inverse {
@@ -219,7 +226,7 @@ pub struct Session {
     prefs_path: Option<PathBuf>,
     pub module: Module,
     folder: FolderSel,
-    rows: Vec<ListRow>,
+    rows: Arc<Vec<ListRow>>,
     generation: u64,
     rows_job: Option<JobId>,
     loading: bool,
@@ -269,7 +276,7 @@ impl Session {
             prefs_path: cfg.prefs_path,
             module: Module::Mail,
             folder: FolderSel::default(),
-            rows: Vec::new(),
+            rows: Arc::new(Vec::new()),
             generation: 0,
             rows_job: None,
             loading: false,
@@ -425,6 +432,16 @@ impl Session {
         &self.rows
     }
 
+    /// Filas compartidas (la UI las guarda sin copiar mientras pinta la lista).
+    pub fn rows_shared(&self) -> Arc<Vec<ListRow>> {
+        Arc::clone(&self.rows)
+    }
+
+    /// Cambia cada vez que se recalculan las filas (clave de caché para la UI).
+    pub fn list_generation(&self) -> u64 {
+        self.generation
+    }
+
     /// Se está calculando la lista (búsqueda o conversaciones).
     pub fn is_loading(&self) -> bool {
         self.loading
@@ -473,7 +490,7 @@ impl Session {
             return;
         }
         let order = self.merged_order();
-        self.rows = order.iter().map(|&id| ListRow { id, count: 1 }).collect();
+        self.rows = Arc::new(order.iter().map(|&id| ListRow { id, count: 1 }).collect());
         if self.prefs.conversations && !order.is_empty() {
             let store = Arc::clone(&self.store);
             self.loading = true;
@@ -593,11 +610,27 @@ impl Session {
         self.focused
     }
 
+    /// Pide a la UI que seleccione y muestre este mensaje (atajos, capturas, enlaces).
+    pub fn request_focus(&mut self, id: MessageId) {
+        self.focus_request = Some(id);
+    }
+
     /// Fila que la UI debe seleccionar (tras archivar, deshacer…). Se consume al leerla.
     pub fn take_focus_request(&mut self) -> Option<(usize, MessageId)> {
-        let id = self.focus_request.take()?;
-        let idx = self.rows.iter().position(|r| r.id == id)?;
-        Some((idx, id))
+        let id = self.focus_request?;
+        match self.rows.iter().position(|r| r.id == id) {
+            Some(idx) => {
+                self.focus_request = None;
+                Some((idx, id))
+            }
+            None => {
+                // Mientras se recalculan las filas, la petición espera.
+                if !self.loading {
+                    self.focus_request = None;
+                }
+                None
+            }
+        }
     }
 
     fn on_open(&mut self, id: MessageId) {
@@ -1126,6 +1159,33 @@ impl Session {
         self.bg.spawn_blocking(f)
     }
 
+    /// Descarga en segundo plano los recursos remotos que el usuario decidió ver (imágenes de un
+    /// correo). Responde con [`Event::Custom`] y un [`Fetched`] con la misma `tag`. Acotado: 40
+    /// recursos, 5 MB cada uno, 10 s por petición, solo `http`/`https`.
+    pub fn fetch_remote(&mut self, tag: u64, urls: Vec<String>) -> JobId {
+        self.bg.spawn(async move {
+            let mut items = Vec::new();
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .user_agent(concat!("IureDesk/", env!("CARGO_PKG_VERSION")))
+                .build();
+            if let Ok(client) = client {
+                for url in urls.into_iter().filter(|u| u.starts_with("https://") || u.starts_with("http://")).take(40) {
+                    let Ok(resp) = client.get(&url).send().await else { continue };
+                    if !resp.status().is_success() || resp.content_length().is_some_and(|l| l > 5 * 1024 * 1024) {
+                        continue;
+                    }
+                    if let Ok(bytes) = resp.bytes().await
+                        && bytes.len() <= 5 * 1024 * 1024
+                    {
+                        items.push((url, bytes.to_vec()));
+                    }
+                }
+            }
+            JobOutput::Custom(Box::new(Fetched { tag, items }))
+        })
+    }
+
     /// No hay trabajos en curso (capturas deterministas).
     pub fn is_idle(&self) -> bool {
         self.bg.pending() == 0
@@ -1152,7 +1212,7 @@ impl Session {
         match job {
             EngineJob::Rows { generation, rows } => {
                 if generation == self.generation {
-                    self.rows = rows;
+                    self.rows = Arc::new(rows);
                     self.loading = false;
                     self.fix_focus_request();
                 }
@@ -1165,14 +1225,14 @@ impl Session {
                 self.loading = false;
                 match result {
                     Ok(envs) => {
-                        self.rows = envs.iter().map(|e| ListRow { id: e.id, count: 1 }).collect();
+                        self.rows = Arc::new(envs.iter().map(|e| ListRow { id: e.id, count: 1 }).collect());
                         for e in envs {
                             self.envelopes.insert(e.id, e);
                         }
                         None
                     }
                     Err(t) => {
-                        self.rows.clear();
+                        self.rows = Arc::new(Vec::new());
                         Some(Notice::error(t))
                     }
                 }
@@ -1401,14 +1461,7 @@ impl Session {
         w.job = None;
         match r {
             Ok(d) if d.best().is_some() => {
-                let flow = crate::onboarding::flow_for(d.kind);
-                w.oauth_ready = match &flow {
-                    Flow::OAuth(p) => crate::onboarding::oauth_available(*p),
-                    _ => false,
-                };
-                w.flow = Some(flow);
-                w.discovery = Some(d);
-                w.step = WizardStep::Provider;
+                self.wizard_apply_discovery(d);
             }
             Ok(_) => {
                 w.step = WizardStep::Email;
@@ -1423,6 +1476,24 @@ impl Session {
             }
         }
         None
+    }
+
+    /// Usa un descubrimiento ya hecho (p. ej. [`crate::onboarding::known_provider_discovery`]) y
+    /// pasa a la tarjeta del proveedor.
+    pub fn wizard_apply_discovery(&mut self, d: iuredesk_autoconfig::Discovery) {
+        let w = self.wizard.get_or_insert_with(Wizard::default);
+        let flow = crate::onboarding::flow_for(d.kind);
+        w.oauth_ready = match &flow {
+            Flow::OAuth(p) => crate::onboarding::oauth_available(*p),
+            _ => false,
+        };
+        if w.email.trim().is_empty() {
+            w.email = d.email.clone();
+        }
+        w.flow = Some(flow);
+        w.discovery = Some(d);
+        w.step = WizardStep::Provider;
+        w.message = None;
     }
 
     /// Cambia a contraseña de app (cuando el OAuth no está disponible).

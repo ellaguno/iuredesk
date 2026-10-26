@@ -19,6 +19,7 @@ chrono = { workspace = true }
 open = { workspace = true }
 
 [dev-dependencies]
+iuredesk-accounts = { workspace = true }
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
 tempfile = { workspace = true }
 

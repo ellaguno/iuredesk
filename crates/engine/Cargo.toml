@@ -19,6 +19,8 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 dirs = { workspace = true }
 mail-parser = { workspace = true }
+# Descarga de imágenes remotas que el usuario permite ver (rustls, Rust puro).
+reqwest = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macros"] }
 
 [dev-dependencies]

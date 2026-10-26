@@ -127,6 +127,25 @@ pub fn oauth_available(p: OAuthProvider) -> bool {
     }
 }
 
+/// Descubrimiento sin red: solo la tabla de proveedores conocidos (vista previa del asistente,
+/// demos y pruebas). `None` si el dominio no es de un proveedor conocido.
+pub fn known_provider_discovery(email: &str) -> Option<Discovery> {
+    let addr = iuredesk_autoconfig::EmailAddress::parse(email).ok()?;
+    let p = iuredesk_autoconfig::providers::by_domain(&addr.domain)?;
+    let candidates = p.candidates(&addr, iuredesk_autoconfig::Source::KnownProvider, 95);
+    let kind = candidates.first().map(|c| c.kind)?;
+    Some(Discovery {
+        email: addr.address.clone(),
+        domain: addr.domain.clone(),
+        kind,
+        candidates,
+        notes: p.notes(),
+        caldav: None,
+        carddav: None,
+        timed_out: false,
+    })
+}
+
 /// SMTP razonable cuando el descubrimiento no trajo uno.
 fn fallback_outgoing(domain: &str, username: &str, auth: AuthMethod) -> ServerConfig {
     ServerConfig {
@@ -216,6 +235,15 @@ mod tests {
         assert_eq!(a.outgoing.host, "smtp.example.com");
         assert_eq!(a.outgoing.port, 587);
         assert_eq!(a.primary_identity().email, "ana@example.com");
+    }
+
+    #[test]
+    fn known_providers_without_network() {
+        let d = known_provider_discovery("ana@gmail.com").unwrap();
+        assert_eq!(d.kind, AccountKind::Gmail);
+        assert!(d.best().is_some());
+        assert!(known_provider_discovery("ana@despacho.example.org").is_none());
+        assert!(known_provider_discovery("no es correo").is_none());
     }
 
     #[test]
