@@ -29,14 +29,14 @@ XDG (no GTK), Blitz para HTML (no webview).
 | L2 | `store`, `autoconfig` | redb + blobs + tantivy; descubrimiento de servidores |
 | L3 | `accounts` (y luego `sync`, `provider-*`) | Cuentas, llavero, protocolos |
 | L4 | `engine` | `Session`, comandos, deshacer, i18n |
-| L5 | `html-view` | Blitz → textura egui |
+| L5 | `html-view` | Blitz → imagen RGBA + mapa de enlaces (sin egui) |
 | L6 | `ui` | Interfaz egui (usa `iurefficient-ui`, el ui-kit compartido con IureProject) |
 | L7 | `apps/iuredesk` | Binario |
 
 - **Todo es un comando** (id, etiquetas en/es, atajo, `run`); menús, atajos, paleta, CLI y MCP
   despachan por id. Las llamadas programáticas nunca abren diálogos.
 - Capas verificadas por `cargo xtask layers`; un crate nuevo se registra en `LAYERS`
-  (`xtask/src/main.rs`) y en `members` de `Cargo.toml`. Nada bajo L5 depende de egui/eframe/winit/rfd.
+  (`xtask/src/main.rs`) y en `members` de `Cargo.toml`. Nada por debajo de L6 depende de egui/eframe/winit/rfd (`html-view` entrega píxeles RGBA; la textura la sube `ui`).
 - La UI nunca bloquea: la red y el disco viven en un runtime tokio de fondo; la UI lee *snapshots*.
 - Offline-first: la UI lee del almacén local; las acciones van a una cola que `sync` replica.
 - Dependencias nuevas: decláralas en `[workspace.dependencies]` y úsalas con `{ workspace = true }`.
