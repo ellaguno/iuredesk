@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fixture: lo que publicaría un dominio propio en
+     https://autoconfig.example.com/mail/config-v1.1.xml (formato v1.1 de Thunderbird). -->
+<!DOCTYPE clientConfig [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>
+<clientConfig version="1.1">
+  <emailProvider id="example.com">
+    <domain>example.com</domain>
+    <domain>%EMAILDOMAIN%</domain>
+    <displayName>Example &amp; Co</displayName>
+    <displayShortName>Example</displayShortName>
+    <incomingServer type="imap">
+      <hostname>mail.%EMAILDOMAIN%</hostname>
+      <port>993</port>
+      <socketType>SSL</socketType>
+      <username>%EMAILLOCALPART%</username>
+      <authentication>password-cleartext</authentication>
+    </incomingServer>
+    <incomingServer type="exchange">
+      <hostname>outlook.example.com</hostname>
+      <username>%EMAILADDRESS%</username>
+      <authentication>NTLM</authentication>
+    </incomingServer>
+    <incomingServer type="imap">
+      <hostname>bad host name</hostname>
+      <port>993</port>
+      <socketType>SSL</socketType>
+    </incomingServer>
+    <incomingServer type="pop3">
+      <hostname>pop.example.com</hostname>
+      <port>995</port>
+      <socketType>SSL</socketType>
+      <username>%EMAILADDRESS%</username>
+      <authentication>password-cleartext</authentication>
+    </incomingServer>
+    <outgoingServer type="smtp">
+      <hostname>smtp.example.com</hostname>
+      <port>587</port>
+      <socketType>STARTTLS</socketType>
+      <username>%EMAILADDRESS%</username>
+      <authentication>password-cleartext</authentication>
+    </outgoingServer>
+  </emailProvider>
+</clientConfig>

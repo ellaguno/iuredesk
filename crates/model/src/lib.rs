@@ -7,3 +7,5 @@
     clippy::todo,
     clippy::unreachable
 )]
+
+pub mod account;
