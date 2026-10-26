@@ -1,0 +1,32 @@
+[package]
+name = "iuredesk-sync"
+description = "Orquestador offline-first por cuenta: IMAP/POP3 → almacén local, cola de operaciones, IDLE"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+iuredesk-model = { workspace = true }
+iuredesk-store = { workspace = true }
+iuredesk-imap = { workspace = true }
+iuredesk-pop3 = { workspace = true }
+iuredesk-oauth = { workspace = true }
+iuredesk-accounts = { workspace = true }
+mail-parser = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
+
+[dev-dependencies]
+iuredesk-imap = { workspace = true, features = ["test-server"] }
+iuredesk-pop3 = { workspace = true, features = ["test-server"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
+tempfile = { workspace = true }
+proptest = { workspace = true }
+
+[lints]
+workspace = true

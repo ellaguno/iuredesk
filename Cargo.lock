@@ -2079,20 +2079,18 @@ dependencies = [
  "dirs",
  "iuredesk-autoconfig",
  "iuredesk-model",
+ "iuredesk-net",
  "iurefficient-connect",
  "keyring",
  "lettre",
  "md-5",
  "proptest",
  "reqwest",
- "rustls",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
- "tokio-rustls",
- "webpki-roots",
 ]
 
 [[package]]
@@ -2175,6 +2173,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "iuredesk-imap"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "flate2",
+ "iuredesk-imap",
+ "iuredesk-model",
+ "iuredesk-net",
+ "proptest",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "iuredesk-model"
 version = "0.1.0-alpha.0"
 dependencies = [
@@ -2184,6 +2197,17 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "iuredesk-net"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "rustls",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -2208,6 +2232,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "iuredesk-pop3"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "base64 0.22.1",
+ "iuredesk-model",
+ "iuredesk-net",
+ "iuredesk-pop3",
+ "md-5",
+ "proptest",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "iuredesk-store"
 version = "0.1.0-alpha.0"
 dependencies = [
@@ -2222,6 +2260,26 @@ dependencies = [
  "tantivy",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "iuredesk-sync"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "chrono",
+ "iuredesk-accounts",
+ "iuredesk-imap",
+ "iuredesk-model",
+ "iuredesk-oauth",
+ "iuredesk-pop3",
+ "iuredesk-store",
+ "mail-parser",
+ "proptest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
