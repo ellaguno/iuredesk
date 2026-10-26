@@ -14,6 +14,12 @@ Ids `F<fase>.<n>`. Estado: ☐ pendiente · ◐ en curso · ☑ hecho.
 | F0.6 | `engine` + `ui` + app: riel + 3 paneles, densidades, tema, paleta, i18n, asistente de alta, buzón de ejemplo, `ui_shot` | ☐ |
 | F0.7 | IureProject migra a egui 0.37 + `iurefficient-ui` (rama `ui-kit` en su repo) | ☐ |
 
+## F1 · Correo MVP
+
+| Id | Tarea | Estado |
+|---|---|---|
+| F1.2 | `compose` (L3): borrador (`Draft`: identidad, Para/CC/CCO validados con IDNA, prioridad, acuse de lectura, envío programado, invitación iMIP); `RichBody` → HTML apto para correo (estilos en línea, sin tablas, enlaces/imágenes filtrados) y `text/plain; format=flowed`, importación HTML (html5ever, a lo mejor posible) y Markdown (pulldown-cmark) ida y vuelta; responder/responder a todos/reenviar (Re:/RE:/RV:/Fwd:, `Reply-To`, `Mail-Followup-To`, identidades propias, atribución es/en, reenvío en línea con adjuntos o como `message/rfc822`); MIME con mail-builder (alternative/related/mixed, RFC 2047/2231, Message-ID por dominio, Bcc fuera, `text/calendar` en alternative para Outlook, aviso > 25 MB); firmas por identidad y plantillas en el almacén; `Transport` + SMTP lettre (465/587, PLAIN/LOGIN/XOAUTH2); bandeja de salida sobre la cola (deshacer 0–30 s, programado, reintentos exponenciales, errores es/en, `mail.sync` → `AppendToSent`/marcar original). Pendiente: transportes Graph `sendMail` y Gmail API; partes locales no ASCII (SMTPUTF8); que `sync` consuma `mail.sync`; edición de las firmas en la UI | ◐ |
+
 ## F2 · OAuth + Calendario + Contactos
 
 | Id | Tarea | Estado |
