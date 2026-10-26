@@ -1,0 +1,17 @@
+<div dir="ltr" style="font-family:arial,sans-serif;font-size:13px;">
+<p>Hola equipo, el despliegue falló anoche. Pego el registro:</p>
+<pre style="background:#272822;color:#f8f8f2;padding:12px;border-radius:4px;font-family:'DejaVu Sans Mono',Consolas,monospace;font-size:12px;line-height:1.4;overflow:auto;">2026-10-25T23:41:07Z INFO  sync: conectando a imap.example.com:993
+2026-10-25T23:41:08Z WARN  sync: IDLE no soportado, usando sondeo cada 120 s
+2026-10-25T23:41:09Z ERROR store: redb: espacio insuficiente (quedan 12 MiB)
+    at iuredesk_store::blobs::write (crates/store/src/blobs.rs:88)
+    at iuredesk_sync::fetch::body (crates/sync/src/fetch.rs:214)
+</pre>
+<p>Y el diff propuesto:</p>
+<pre style="font-family:monospace;font-size:12px;border:1px solid #ddd;padding:8px;"><span style="color:#a00">-    let limit = 64 * 1024 * 1024;</span>
+<span style="color:#080">+    let limit = config.max_blob_bytes.unwrap_or(256 * 1024 * 1024);</span>
+     store.write(id, &amp;bytes, limit)?;</pre>
+<p>Texto con <code style="background:#eee;padding:1px 4px;">código en línea</code>, <kbd>Ctrl</kbd>+<kbd>K</kbd>, y <tt>teletype</tt>.</p>
+<p style="white-space:pre-wrap;font-family:monospace;">Columnas    alineadas
+con espacios    y	tabuladores	aquí</p>
+<p>-- <br>Sistemas</p>
+</div>

@@ -15,7 +15,7 @@ members = [
 [workspace.package]
 version = "0.1.0-alpha.0"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.91"
 license = "FSL-1.1-ALv2"
 authors = ["Eduardo Llaguno"]
 repository = "https://github.com/ellaguno/iuredesk"
@@ -70,6 +70,20 @@ md-5 = "0.10"
 sha2 = "0.10"
 flate2 = "1"
 tar = { version = "0.4", default-features = false }
+
+# html-view (F0.3): Blitz + rasterizador en CPU, todo Rust puro (ver docs/html-view.md)
+blitz-dom = { version = "=0.3.0-beta.4", default-features = false }
+blitz-html = { version = "=0.3.0-beta.4", default-features = false }
+blitz-paint = { version = "=0.3.0-beta.4", default-features = false }
+blitz-traits = { version = "=0.3.0-beta.4", default-features = false }
+anyrender = "0.14"
+anyrender_vello_cpu = { version = "0.18", default-features = false }
+parley = { version = "0.12", default-features = false, features = ["std"] }
+peniko = "0.6"
+glifo = { version = "0.4", default-features = false, features = ["std", "png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
+html5ever = "0.40"
+png = "0.18"
 
 # ui: versión unificada en toda la suite (decisión 2026-10-26)
 egui = "0.37"

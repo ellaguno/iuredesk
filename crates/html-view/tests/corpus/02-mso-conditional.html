@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--[if mso]>
+<noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+<style>td,th,div,p,a,h1,h2 {font-family: Arial, sans-serif; mso-line-height-rule: exactly;}</style>
+<![endif]-->
+<style>
+  .col { display:inline-block; width:100%; max-width:290px; vertical-align:top; }
+  @media screen and (max-width: 480px) { .col { max-width:100% !important; } }
+</style>
+</head>
+<body style="margin:0;padding:0;word-spacing:normal;background-color:#e8eef3;">
+<div role="article" aria-roledescription="email" lang="es" style="text-size-adjust:100%;background-color:#e8eef3;">
+<!--[if mso]><table role="presentation" align="center" style="width:600px;"><tr><td><![endif]-->
+<div style="max-width:600px;margin:0 auto;background:#ffffff;">
+  <div style="padding:30px;font-family:Arial,sans-serif;">
+    <h2 style="margin:0 0 10px 0;font-size:24px;color:#163a5f;">Dos columnas «fantasma»</h2>
+    <p style="margin:0;font-size:15px;line-height:22px;color:#444;">Este patrón usa <code>inline-block</code> para clientes modernos y una tabla dentro de comentarios condicionales para Outlook en Windows.</p>
+  </div>
+  <div style="font-size:0;text-align:center;padding:0 10px 20px 10px;">
+    <!--[if mso]><table role="presentation" width="100%"><tr><td style="width:290px;" valign="top"><![endif]-->
+    <div class="col">
+      <div style="padding:10px;font-size:14px;line-height:20px;text-align:left;font-family:Arial,sans-serif;">
+        <img src="cid:card-270x160@mso" width="270" alt="" style="width:100%;height:auto;display:block;border-radius:6px;">
+        <p style="margin:10px 0 0 0;color:#163a5f;font-weight:bold;">Columna izquierda</p>
+        <p style="margin:4px 0 0 0;color:#555;">Texto de ejemplo que debe quedar a la izquierda, a la par de la otra columna.</p>
+      </div>
+    </div>
+    <!--[if mso]></td><td style="width:290px;" valign="top"><![endif]-->
+    <div class="col">
+      <div style="padding:10px;font-size:14px;line-height:20px;text-align:left;font-family:Arial,sans-serif;">
+        <img src="cid:card2-270x160@mso" width="270" alt="" style="width:100%;height:auto;display:block;border-radius:6px;">
+        <p style="margin:10px 0 0 0;color:#163a5f;font-weight:bold;">Columna derecha</p>
+        <p style="margin:4px 0 0 0;color:#555;">Si esta columna cae debajo de la otra en 600 px, el render falla.</p>
+      </div>
+    </div>
+    <!--[if mso]></td></tr></table><![endif]-->
+  </div>
+  <!--[if mso]>
+  <table role="presentation" width="100%"><tr><td bgcolor="#ff0000" style="color:#fff">SOLO OUTLOOK: esto no debe verse</td></tr></table>
+  <![endif]-->
+  <!--[if !mso]><!-->
+  <div style="padding:16px 30px;background:#163a5f;color:#ffffff;font-family:Arial,sans-serif;font-size:13px;">Bloque solo para clientes que no son Outlook (debe verse).</div>
+  <!--<![endif]-->
+</div>
+<!--[if mso]></td></tr></table><![endif]-->
+</div>
+</body>
+</html>

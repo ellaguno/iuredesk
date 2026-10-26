@@ -1,0 +1,17 @@
+<html><body style="margin:0;font-family:Arial,sans-serif;">
+<p style="padding:0 10px;">Tabla fija de 1000 px en un viewport de 800: el búfer se ensancha (hasta 2×) en lugar de cortar.</p>
+<table width="1000" cellpadding="8" cellspacing="0" border="1" style="border-collapse:collapse;">
+  <tr bgcolor="#ddeeff"><th>Cuenta</th><th>Enero</th><th>Febrero</th><th>Marzo</th><th>Abril</th><th>Mayo</th><th>Junio</th><th>Julio</th><th>Agosto</th><th>Total</th></tr>
+  <tr><td>Honorarios</td><td>10,000</td><td>12,500</td><td>9,800</td><td>11,200</td><td>13,000</td><td>12,100</td><td>14,300</td><td>15,000</td><td><b>97,900</b></td></tr>
+  <tr><td>Gastos</td><td>2,000</td><td>2,100</td><td>1,900</td><td>2,400</td><td>2,600</td><td>2,500</td><td>2,700</td><td>2,900</td><td><b>19,100</b></td></tr>
+</table>
+<p style="padding:0 10px;">Imagen más ancha que su contenedor con <code>max-width:100%</code>:</p>
+<div style="width:400px;border:2px solid #888;">
+  <img src="cid:wide-900x200@ovf" style="max-width:100%;height:auto;display:block;" alt="ancha">
+</div>
+<p style="padding:0 10px;">Imagen ancha sin límite dentro de un div de 400 px (se desborda):</p>
+<div style="width:400px;border:2px solid #c00;">
+  <img src="cid:wide2-900x120@ovf" width="900" height="120" alt="desborda">
+</div>
+<p style="padding:0 10px;">Unidades de viewport: <span style="display:inline-block;width:50vw;background:#cfc;">50vw</span></p>
+</body></html>

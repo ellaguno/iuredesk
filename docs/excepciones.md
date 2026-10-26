@@ -10,6 +10,7 @@ PLAN.md D1. Cada excepción tiene su línea en `xtask/purity-allow.txt`. Solo la
 | `rayon-core` | Todas | Declara `links` solo para impedir dos versiones en un mismo binario; es Rust puro. Llega por las dependencias de pruebas (`egui_kittest`). | 2026-10-23 |
 | `wasm-bindgen-shared` | Web | Declara `links` solo para impedir dos versiones de wasm-bindgen; Rust puro. | 2026-10-23 |
 | `prettyplease` | Todas | Declara `links = "prettyplease03"` solo para publicar su versión a otros *build scripts*; Rust puro, no compila C. Llega por `tantivy` → `bon` → `bon-macros` (macro de compilación, no va en el binario). Pendiente de visto bueno del dueño (F0.4). | 2026-10-26 |
+| `stylo` | Todas | **Pendiente de aprobación del dueño (F0.3).** Motor CSS de Servo/Firefox que usa Blitz. Declara `links = "servo_style_crate"` solo para impedir dos copias; no enlaza nada nativo y `bindgen` solo se usa con la feature `gecko` (no activa). Ojo: su `build.rs` ejecuta **`python3`** (plantillas Mako → código Rust), así que compilar exige Python en la máquina; el binario resultante es Rust puro. Ver `docs/html-view.md`. | 2026-10-26 |
 
 Pendiente al llegar a Windows y macOS (Fase 7): revisar `windows-sys`/`windows-targets` (Win32) y
 `objc2` (Cocoa), que son bindings del SO.

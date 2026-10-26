@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://cdn.example-esp.com/css/campaign-7781.css">
+<link rel="preconnect" href="https://tracker.example-esp.com">
+<style>
+  @import url("https://fonts.example-cdn.com/css?family=Brand+Sans");
+  @font-face { font-family: BrandSans; src: url(https://fonts.example-cdn.com/brand-sans.woff2) format("woff2"); }
+  .hero { background-image: url('https://img.example-esp.com/hero-bg.jpg'); background-color:#334; color:#fff; padding:40px; font-family: BrandSans, Arial, sans-serif; }
+</style>
+</head>
+<body style="margin:0;font-family:Arial,sans-serif;">
+<img src="https://tracker.example-esp.com/open?u=8f14e45fceea167a5a36dedd4bea2543&amp;c=7781" width="1" height="1" alt="" style="display:block;border:0;">
+<div class="hero"><h1 style="margin:0;">Remote images blocked</h1><p>The background image, web font, linked CSS and pixel above are remote; with default options none must be fetched and all must be listed as blocked.</p></div>
+<table width="600" cellpadding="0" cellspacing="0" style="margin:16px auto;">
+  <tr><td><img src="https://img.example-esp.com/banner-600x200.png" width="600" height="200" alt="Banner (remote — should show alt/empty box)" style="display:block;background:#ddd;"></td></tr>
+  <tr><td style="padding:12px 0;"><img src="http://img.example-esp.com/insecure-http.gif" width="300" height="100" alt="HTTP image"></td></tr>
+  <tr><td background="https://img.example-esp.com/td-bg.png" bgcolor="#f0f0f0" style="padding:20px;">Cell with remote <code>background</code> attribute.</td></tr>
+  <tr><td style="padding:12px 0;"><picture><source srcset="https://img.example-esp.com/a.webp 1x, https://img.example-esp.com/a@2x.webp 2x"><img src="https://img.example-esp.com/a.png" srcset="https://img.example-esp.com/a@2x.png 2x" width="200" height="80" alt="picture/srcset"></picture></td></tr>
+</table>
+<img src="https://tracker2.example.net/pixel.gif?id=42" width="0" height="0" style="display:none">
+</body>
+</html>

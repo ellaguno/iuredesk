@@ -7,3 +7,4 @@ rayon-core       # «links» solo evita dos versiones en un binario; no enlaza n
 wasm-bindgen-shared  # «links» solo evita dos versiones de wasm-bindgen en un binario; Rust puro
 prettyplease      # «links» solo para exponer su versión a otros build scripts; Rust puro, sin C (llega por tantivy → bon-macros, en compilación)
 ring              # proveedor criptográfico de rustls (TLS hacia Iurefficient y servidores de correo: reqwest, tokio-rustls, lettre); primitivas en C/ensamblador; decisión del dueño 2026-10-24
+stylo             # «links» solo evita dos copias del motor CSS; Rust puro. Su build.rs ejecuta python3 (plantillas Mako → Rust). PENDIENTE de aprobación del dueño (F0.3, docs/html-view.md)
