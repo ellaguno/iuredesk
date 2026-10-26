@@ -8,6 +8,23 @@ license.workspace = true
 publish = false
 
 [dependencies]
+iuredesk-model = { workspace = true }
+iuredesk-store = { workspace = true }
+iuredesk-accounts = { workspace = true }
+iuredesk-autoconfig = { workspace = true }
+iuredesk-oauth = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
+mail-parser = { workspace = true }
+# Descarga de imágenes remotas que el usuario permite ver (rustls, Rust puro).
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macros"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

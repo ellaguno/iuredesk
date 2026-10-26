@@ -269,6 +269,53 @@ pub fn render_rfc822(e: &MessageEnvelope, body: &str) -> Vec<u8> {
     s.into_bytes()
 }
 
+/// Mensaje RFC 822 `multipart/alternative` con texto plano y HTML.
+pub fn render_rfc822_html(e: &MessageEnvelope, text: &str, html: &str) -> Vec<u8> {
+    let plain = render_rfc822(e, "");
+    // Se reutilizan los encabezados del texto plano y se cambia el cuerpo.
+    let head_end = plain.windows(4).position(|w| w == b"\r\n\r\n").unwrap_or(plain.len());
+    let head = String::from_utf8_lossy(plain.get(..head_end).unwrap_or(&[])).replace(
+        "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit",
+        "Content-Type: multipart/alternative; boundary=\"iuredesk-alt\"",
+    );
+    let mut s = head;
+    s.push_str(
+        "\r\n\r\n--iuredesk-alt\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n",
+    );
+    s.push_str(text);
+    s.push_str(
+        "\r\n--iuredesk-alt\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n",
+    );
+    s.push_str(html);
+    s.push_str("\r\n--iuredesk-alt--\r\n");
+    s.into_bytes()
+}
+
+/// HTML de un boletín de ejemplo: tablas, estilos en línea, una imagen remota (se bloquea por
+/// omisión) y enlaces. Los dominios son de RFC 2606.
+fn newsletter_html(n: usize, to: &str) -> String {
+    format!(
+        r#"<!doctype html><html><head><meta charset="utf-8"><title>Boletín semanal #{n}</title></head>
+<body style="margin:0;background:#f3f5f9;font-family:Helvetica,Arial,sans-serif;color:#1f2933">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f5f9"><tr><td align="center" style="padding:24px 12px">
+<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:10px;border:1px solid #e1e6ee">
+<tr><td style="padding:20px 28px;background:#11284c;border-radius:10px 10px 0 0;color:#ffffff">
+<div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;opacity:.8">Boletín semanal · número {n}</div>
+<div style="font-size:24px;font-weight:bold;margin-top:6px">Novedades del sector legal</div></td></tr>
+<tr><td style="padding:0"><img src="https://updates.example.org/img/portada-{n}.png" width="560" height="160" alt="Portada del boletín" style="display:block;width:100%;height:auto;background:#dbe4f3"></td></tr>
+<tr><td style="padding:24px 28px;font-size:15px;line-height:1.55">
+<p style="margin:0 0 12px">Hola {to},</p>
+<p style="margin:0 0 12px">Esta semana: la reforma al <b>código de procedimientos</b> entra en vigor, tres criterios nuevos de la Suprema Corte y una guía práctica para firmar contratos en línea.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0">
+<tr><td width="50%" style="padding:12px;background:#eef3fb;border-radius:8px;vertical-align:top"><div style="font-weight:bold;color:#0650ec">Reforma procesal</div><div style="font-size:13px;color:#52606d">Qué cambia en plazos y notificaciones.</div></td>
+<td width="12"></td>
+<td width="50%" style="padding:12px;background:#eefaf3;border-radius:8px;vertical-align:top"><div style="font-weight:bold;color:#15803d">Firma electrónica</div><div style="font-size:13px;color:#52606d">Checklist para contratos válidos.</div></td></tr></table>
+<p style="margin:16px 0"><a href="https://updates.example.org/boletin/{n}" style="display:inline-block;background:#0650ec;color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:6px;font-weight:bold">Leer el boletín completo</a></p>
+<p style="margin:0;font-size:12px;color:#7b8794">Recibes este correo porque te suscribiste en updates.example.org. <a href="https://updates.example.org/baja" style="color:#7b8794">Darte de baja</a>.</p>
+</td></tr></table></td></tr></table></body></html>"#
+    )
+}
+
 struct AccountSpec {
     name: &'static str,
     email: &'static str,
@@ -521,7 +568,12 @@ pub fn populate(store: &Store, seed: u64, now: DateTime<Utc>) -> Result<SampleSu
                 preview: make_preview(&body),
                 ..Default::default()
             };
-            let raw = render_rfc822(&env, &body);
+            // Los boletines llegan en HTML (multipart/alternative), como los reales.
+            let raw = if junk_msg {
+                render_rfc822(&env, &body)
+            } else {
+                render_rfc822_html(&env, &body, &newsletter_html(n, me.display()))
+            };
             batch.push(NewMessage { envelope: env, raw: Some(raw), body_text: Some(body) });
         }
         // Un par de borradores.

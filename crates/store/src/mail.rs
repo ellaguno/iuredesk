@@ -525,6 +525,13 @@ impl Store {
         Ok(self.folder_keys(folder)?.iter().map(|&(_, id)| MessageId(id)).collect())
     }
 
+    /// Orden completo de la carpeta como pares `(clave de fecha invertida, mensaje)` ascendentes, es
+    /// decir, del más nuevo al más viejo. Sale de la caché (sin leer sobres) y permite mezclar
+    /// varias carpetas por fecha, como la bandeja unificada.
+    pub fn list_order(&self, folder: FolderId) -> Result<Arc<Vec<(u64, u64)>>> {
+        self.folder_keys(folder)
+    }
+
     /// Orden de la carpeta desde la caché (construyéndola si hace falta).
     pub(crate) fn folder_keys(&self, folder: FolderId) -> Result<FolderKeys> {
         if let Some(v) = self.folder_cache.read().unwrap_or_else(PoisonError::into_inner).get(&folder.get()) {

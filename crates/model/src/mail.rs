@@ -45,7 +45,7 @@ impl Mailbox {
 }
 
 /// Función especial de una carpeta (RFC 6154 `SPECIAL-USE`).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FolderRole {
     /// Bandeja de entrada.
     Inbox,
