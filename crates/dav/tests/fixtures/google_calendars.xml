@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Respuesta escrita a mano con la forma de Google CalDAV v2 (hogar con calendarios propios y suscritos). -->
+<D:multistatus xmlns:D="DAV:" xmlns:caldav="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:ical="http://apple.com/ns/ical/">
+<D:response>
+<D:href>/caldav/v2/ana%40gmail.com/</D:href>
+<D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat>
+</D:response>
+<D:response>
+<D:href>/caldav/v2/ana%40gmail.com/events/</D:href>
+<D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop>
+<D:resourcetype><D:collection/><caldav:calendar/></D:resourcetype>
+<D:displayname>ana@gmail.com</D:displayname>
+<ical:calendar-color>#9fc6e7</ical:calendar-color>
+<cs:getctag>63896745210</cs:getctag>
+<D:sync-token>https://www.google.com/calendar/dav/ana%40gmail.com/events/sync/CPjF0Kq9oIkDEPjF0Kq9oIkDGAU=</D:sync-token>
+<caldav:supported-calendar-component-set><caldav:comp name="VEVENT"/></caldav:supported-calendar-component-set>
+<D:current-user-privilege-set><D:privilege><D:all/></D:privilege><D:privilege><D:read/></D:privilege></D:current-user-privilege-set>
+</D:prop></D:propstat>
+</D:response>
+<D:response>
+<D:href>/caldav/v2/es.mexican%23holiday%40group.v.calendar.google.com/events/</D:href>
+<D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop>
+<D:resourcetype><D:collection/><caldav:calendar/></D:resourcetype>
+<D:displayname>Días festivos en México</D:displayname>
+<ical:calendar-color>#16a765</ical:calendar-color>
+<cs:getctag>63896000000</cs:getctag>
+<caldav:supported-calendar-component-set><caldav:comp name="VEVENT"/></caldav:supported-calendar-component-set>
+<D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><caldav:read-free-busy/></D:privilege></D:current-user-privilege-set>
+</D:prop></D:propstat>
+</D:response>
+</D:multistatus>

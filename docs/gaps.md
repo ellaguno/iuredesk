@@ -19,6 +19,7 @@ Ids `F<fase>.<n>`. Estado: ☐ pendiente · ◐ en curso · ☑ hecho.
 | Id | Tarea | Estado |
 |---|---|---|
 | F2.1 | `oauth`: código + PKCE con receptor loopback (RFC 8252), Google y Microsoft v2 (+ genérico), client id por compilación/entorno/ajustes, tokens (refresco en llavero, acceso en memoria, rotación, `invalid_grant` → volver a iniciar sesión), SASL XOAUTH2/OAUTHBEARER; servidor falso de pruebas; `docs/oauth.md` | ☑ |
+| F2.2 | `dav` (L3): iCalendar/vCard sin pérdida (parser propio; `calcard` e `icalendar` evaluados), zonas IANA + Windows + `VTIMEZONE`, recurrencias con `rrule` y topes, iTIP/iMIP (REQUEST/REPLY/CANCEL/COUNTER, nuevo vs. actualización), cliente CalDAV/CardDAV (descubrimiento, colecciones, sync RFC 6578 con caída a ctag+ETag, `calendar-query`, `multiget`, `PUT`/`DELETE` con ETag, free/busy RFC 6638), servidor falso de pruebas, `dav_probe`. Pendiente: mapear a `model`; `RANGE=THISANDFUTURE`; `VTIMEZONE` propio con horario de verano sin nombre IANA (hoy desfase fijo); probar contra iCloud/Google/Fastmail reales y la instancia Iurefficient | ◐ |
 
 ## F3 · Iurefficient
 

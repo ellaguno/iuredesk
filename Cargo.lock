@@ -613,8 +613,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -2097,6 +2099,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "iuredesk-dav"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "chrono-tz",
+ "proptest",
+ "quick-xml",
+ "reqwest",
+ "rrule",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "iuredesk-engine"
 version = "0.1.0-alpha.0"
 
@@ -3524,6 +3541,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9da7f59328b09405b181fee1018925fad50f157afb43c0c0f5c522c256dd5907"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "rrule"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "720acfb4980b9d8a6a430f6d7a11933e701ebbeba5eee39cc9d8c5f932aaff74"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "log",
+ "regex",
+ "thiserror",
 ]
 
 [[package]]
