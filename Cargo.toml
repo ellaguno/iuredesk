@@ -15,7 +15,7 @@ members = [
 [workspace.package]
 version = "0.1.0-alpha.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.90"
 license = "FSL-1.1-ALv2"
 authors = ["Eduardo Llaguno"]
 repository = "https://github.com/ellaguno/iuredesk"
@@ -32,8 +32,8 @@ iuredesk-ui = { path = "crates/ui" }
 
 # suite Iurefficient (repos hermanos)
 iurefficient-connect = { git = "https://github.com/ellaguno/iurefficient-connect", tag = "v0.7.1", default-features = false }
-# ui-kit compartido con IureProject. Ruta local mientras se publica el repo (PLAN.md §2 D10).
-iurefficient-ui = { path = "../iurefficient-ui" }
+# ui-kit compartido con IureProject (PLAN.md D11). Para desarrollo local: [patch] en .cargo/config.toml.
+iurefficient-ui = { git = "https://github.com/ellaguno/iurefficient-ui", branch = "main" }
 
 # base (todo Rust puro; ver docs/excepciones.md)
 thiserror = "2"
@@ -47,8 +47,14 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 keyring = { version = "3", default-features = false }
 dirs = "6"
 redb = "4"
-tantivy = "0.27"
-mail-parser = "1"
+# sin zstd (zstd-sys es C): solo lz4 (lz4_flex, Rust puro) para el almacén de documentos
+tantivy = { version = "0.27", default-features = false, features = ["mmap", "lz4-compression"] }
+# blobs: zstd en Rust puro (ver crates/store/src/blob.rs)
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+tempfile = "3"
+# 1.x exige Rust 1.98; la cadena actual es 1.97
+mail-parser = "0.11"
 mail-builder = "0.4"
 proptest = "1"
 anyhow = "1"
@@ -60,7 +66,6 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 webpki-roots = "1"
 base64 = "0.22"
 md-5 = "0.10"
-tempfile = "3"
 # xtask: paquetes de publicación
 sha2 = "0.10"
 flate2 = "1"

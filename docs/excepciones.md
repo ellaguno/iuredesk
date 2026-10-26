@@ -9,6 +9,7 @@ PLAN.md D1. Cada excepción tiene su línea en `xtask/purity-allow.txt`. Solo la
 | `x11-dl` | Linux | Abre Xlib del sistema en tiempo de ejecución; X11 es el servidor gráfico del SO. `pkg-config` solo localiza la biblioteca. | 2026-10-23 |
 | `rayon-core` | Todas | Declara `links` solo para impedir dos versiones en un mismo binario; es Rust puro. Llega por las dependencias de pruebas (`egui_kittest`). | 2026-10-23 |
 | `wasm-bindgen-shared` | Web | Declara `links` solo para impedir dos versiones de wasm-bindgen; Rust puro. | 2026-10-23 |
+| `prettyplease` | Todas | Declara `links = "prettyplease03"` solo para publicar su versión a otros *build scripts*; Rust puro, no compila C. Llega por `tantivy` → `bon` → `bon-macros` (macro de compilación, no va en el binario). Pendiente de visto bueno del dueño (F0.4). | 2026-10-26 |
 
 Pendiente al llegar a Windows y macOS (Fase 7): revisar `windows-sys`/`windows-targets` (Win32) y
 `objc2` (Cocoa), que son bindings del SO.

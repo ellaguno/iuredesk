@@ -7,7 +7,29 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+default = ["sample"]
+# Generador del buzón de demostración (`iuredesk --sample`).
+sample = []
+
 [dependencies]
+iuredesk-model.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+chrono.workspace = true
+redb.workspace = true
+tantivy.workspace = true
+ruzstd.workspace = true
+postcard.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true
+
+[[example]]
+name = "bench"
+required-features = ["sample"]
 
 [lints]
 workspace = true
