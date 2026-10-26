@@ -5,4 +5,4 @@ wayland-backend   # su shim en C solo se compila con la feature «log», que no 
 x11-dl            # abre Xlib del sistema en tiempo de ejecución; es el servidor gráfico del SO
 rayon-core       # «links» solo evita dos versiones en un binario; no enlaza nada nativo (llega por las dependencias de pruebas)
 wasm-bindgen-shared  # «links» solo evita dos versiones de wasm-bindgen en un binario; Rust puro
-ring              # proveedor criptográfico de rustls (TLS hacia Iurefficient); primitivas en C/ensamblador; decisión del dueño 2026-10-24
+ring              # proveedor criptográfico de rustls (TLS hacia Iurefficient y servidores de correo: reqwest, tokio-rustls, lettre); primitivas en C/ensamblador; decisión del dueño 2026-10-24

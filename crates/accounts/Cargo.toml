@@ -8,6 +8,41 @@ license.workspace = true
 publish = false
 
 [dependencies]
+iuredesk-model = { workspace = true }
+iuredesk-autoconfig = { workspace = true }
+# Sin su feature «keyring» (la de Linux usa libdbus, C): la entrada compartida `iurefficient` del
+# llavero la leemos aquí con zbus, con los mismos nombres, igual que IureProject.
+iurefficient-connect = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util", "time", "macros", "rt"] }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+webpki-roots = { workspace = true }
+lettre = { workspace = true }
+base64 = { workspace = true }
+md-5 = { workspace = true }
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+keyring = { workspace = true }
+
+# Llavero del sistema: Secret Service por D-Bus con zbus (Rust puro, ejecutor async-io propio) y
+# cifrado de la sesión con RustCrypto; administrador de credenciales en Windows; llavero en macOS.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { workspace = true, features = ["async-secret-service", "async-io", "crypto-rust"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "net", "io-util"] }
+tempfile = { workspace = true }
+proptest = { workspace = true }
 
 [lints]
 workspace = true
