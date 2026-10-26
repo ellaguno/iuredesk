@@ -1,0 +1,13 @@
+[package]
+name = "iuredesk-model"
+description = "Modelo de datos del PIM: cuentas, carpetas, mensajes, eventos, contactos, notas, tareas"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true

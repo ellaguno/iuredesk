@@ -1,0 +1,13 @@
+[package]
+name = "iuredesk-autoconfig"
+description = "Descubrimiento de servidores: ISPDB, Autodiscover, SRV, MX"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true

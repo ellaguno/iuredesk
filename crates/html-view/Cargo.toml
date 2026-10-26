@@ -1,0 +1,13 @@
+[package]
+name = "iuredesk-html-view"
+description = "Render de correo HTML con Blitz hacia texturas egui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true

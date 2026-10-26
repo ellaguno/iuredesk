@@ -1,0 +1,83 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/model",
+    "crates/store",
+    "crates/autoconfig",
+    "crates/accounts",
+    "crates/engine",
+    "crates/html-view",
+    "crates/ui",
+    "apps/iuredesk",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0-alpha.0"
+edition = "2024"
+rust-version = "1.88"
+license = "FSL-1.1-ALv2"
+authors = ["Eduardo Llaguno"]
+repository = "https://github.com/ellaguno/iuredesk"
+
+[workspace.dependencies]
+# internos
+iuredesk-model = { path = "crates/model" }
+iuredesk-store = { path = "crates/store" }
+iuredesk-autoconfig = { path = "crates/autoconfig" }
+iuredesk-accounts = { path = "crates/accounts" }
+iuredesk-engine = { path = "crates/engine" }
+iuredesk-html-view = { path = "crates/html-view" }
+iuredesk-ui = { path = "crates/ui" }
+
+# suite Iurefficient (repos hermanos)
+iurefficient-connect = { git = "https://github.com/ellaguno/iurefficient-connect", tag = "v0.7.1", default-features = false }
+# ui-kit compartido con IureProject. Ruta local mientras se publica el repo (PLAN.md §2 D10).
+iurefficient-ui = { path = "../iurefficient-ui" }
+
+# base (todo Rust puro; ver docs/excepciones.md)
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "serde", "clock"] }
+chrono-tz = "0.10"
+quick-xml = "0.41"
+tokio = { version = "1", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+keyring = "3"
+dirs = "6"
+redb = "4"
+tantivy = "0.27"
+mail-parser = "1"
+mail-builder = "0.4"
+proptest = "1"
+# xtask: paquetes de publicación
+sha2 = "0.10"
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
+
+# ui: versión unificada en toda la suite (decisión 2026-10-26)
+egui = "0.37"
+egui_extras = { version = "0.37", default-features = false }
+eframe = { version = "0.37", default-features = false }
+egui_kittest = "0.37"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "allow"
+type_complexity = "allow"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+
+[profile.dist]
+inherits = "release"
+strip = true
