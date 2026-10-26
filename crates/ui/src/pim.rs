@@ -60,6 +60,11 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
                 .show(ui);
             return;
         }
+        if app.pim.contact_list.selection.is_empty()
+            && let Some(ct) = shown.first().and_then(|&k| all.get(k))
+        {
+            app.pim.contact_list.selection.select_only(0, ct.id.get());
+        }
         let selected = app.pim.contact;
         let shown_k = shown.clone();
         let all_k = all.clone();
@@ -217,7 +222,7 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                 }
                 let gt = iurefficient_ui::widgets::text::elided(ui, &title, title_font, c.text, inner.width() - dw - 8.0);
                 ui.painter().galley(inner.min, gt, c.text);
-                let snippet: String = n.body.lines().map(|l| l.trim_start_matches(['#', '-', '*', ' '])).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+                let snippet: String = n.body.lines().map(|l| l.trim_start_matches(['#', '-', '*', ' ', '>']).replace('*', "")).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
                 let gs = iurefficient_ui::widgets::text::elided(ui, &snippet, theme::body_font(ui.ctx()), c.text_muted, inner.width());
                 ui.painter().galley(pos2(inner.left(), inner.top() + 24.0), gs, c.text_muted);
                 iurefficient_ui::a11y::toggle(&resp, &n.title, selected);

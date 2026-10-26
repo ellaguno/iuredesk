@@ -158,6 +158,11 @@ impl DeskApp {
         }
     }
 
+    /// Fila del cursor de la lista de correo (pruebas).
+    pub fn mail_cursor(&self) -> Option<usize> {
+        self.mail.list.selection.cursor()
+    }
+
     /// Calendario en vista de mes.
     pub fn set_calendar_month(&mut self) {
         self.calendar.view = crate::calendar::CalView::Month;
@@ -430,7 +435,12 @@ pub fn set_language(l: lang::Lang) {
 
 /// ¿La tecla y los modificadores son exactamente la combinación?
 fn chord_matches(c: &Chord, key: Key, m: Modifiers) -> bool {
-    let Some(want) = Key::from_name(c.key) else { return false };
+    // Los dígitos se nombran «Num1» en el motor; egui los reconoce como «Digit1».
+    let name = match c.key.strip_prefix("Num") {
+        Some(d) if d.len() == 1 => format!("Digit{d}"),
+        _ => c.key.to_string(),
+    };
+    let Some(want) = Key::from_name(&name) else { return false };
     if want != key {
         return false;
     }

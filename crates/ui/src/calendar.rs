@@ -111,7 +111,7 @@ fn sidebar(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate) 
             ui.painter().rect_filled(r, 3.0, rgb(cal.color.unwrap_or(0x3B82F6)));
             ui.label(RichText::new(&cal.name).color(c.text));
             if let Some(l) = labels.iter().find(|l| l.id == cal.account) {
-                ui.label(RichText::new(&l.email).color(c.text_muted).size(theme::density(ui.ctx()).small_size()));
+                ui.add(egui::Label::new(RichText::new(&l.email).color(c.text_muted).size(theme::density(ui.ctx()).small_size())).truncate());
             }
         });
     }
@@ -198,7 +198,7 @@ fn week_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate
     let from = zone.day_start(mon);
     let to = zone.day_start(mon + Duration::days(days));
     let occ: Vec<Occurrence> = app.session.occurrences(from, to).to_vec();
-    let gutter = 56.0;
+    let gutter = 66.0;
     let avail = ui.available_rect_before_wrap();
     let col_w = ((avail.width() - gutter - 8.0) / days as f32).max(40.0);
     let hh = hour_height(ui);

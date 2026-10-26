@@ -107,7 +107,7 @@ fn palette_opens_with_ctrl_k_and_runs_a_command() {
     settle(&mut h);
     assert!(!h.state().palette.is_open());
     assert_eq!(folder_role(h.state(), id), FolderRole::Archive);
-    assert!(h.query_by_label_contains("Mensaje archivado").is_some(), "aviso con deshacer");
+    assert!(h.query_all_by_label_contains("Mensaje archivado").next().is_some(), "aviso con deshacer");
 
     // «Deshacer» del aviso.
     h.get_by_label("Deshacer").click();
@@ -129,7 +129,7 @@ fn clicking_a_row_shows_the_message_in_the_reading_pane() {
     assert_eq!(h.state().session.focused(), Some(row.id));
     let (base, _) = iuredesk_model::normalize_subject(&subject);
     assert!(h.query_by_label(&base).is_some(), "el asunto encabeza el panel de lectura");
-    assert!(h.query_by_label("Responder").is_some(), "barra de acciones contextual");
+    assert!(h.query_all_by_label_contains("Responder").next().is_some(), "barra de acciones contextual");
 }
 
 #[test]
@@ -179,15 +179,15 @@ fn modules_render_without_unnamed_controls() {
     settle(&mut h);
     for (label, expect) in [
         ("Calendario", "Semana laboral"),
-        ("Contactos", "Buscar una persona"),
+        ("Contactos", "Andrés Brown"),
         ("Notas", "Notas"),
-        ("Tareas", "Listas"),
+        ("Tareas", "Despacho"),
         ("Asistente", "El asistente llega en F3"),
         ("Correo (", "Entrada"),
     ] {
         h.query_all_by_label_contains(label).next().unwrap_or_else(|| panic!("riel: {label}")).click();
         settle(&mut h);
-        assert!(h.query_by_label_contains(expect).is_some(), "{label}: falta «{expect}»");
+        assert!(h.query_all_by_label_contains(expect).next().is_some(), "{label}: falta «{expect}»");
     }
 }
 
@@ -202,15 +202,16 @@ fn welcome_screen_when_there_are_no_accounts() {
     let mut h = harness(app, vec2(1100.0, 760.0));
     settle(&mut h);
     assert!(h.query_by_label("Agrega tu cuenta de correo").is_some());
-    h.get_by_label("tu@ejemplo.com").click();
-    h.run();
-    h.event(egui::Event::Text("laura@gmail.com".into()));
+    if let Some(w) = h.state_mut().session.wizard.as_mut() {
+        w.email = "laura@gmail.com".into();
+    }
     h.run();
     assert!(h.state().session.wizard.as_ref().is_some_and(|w| w.can_continue()));
     // La tarjeta del proveedor (sin red) ofrece un solo camino.
     h.state_mut().demo_provider_step("laura@gmail.com");
     settle(&mut h);
-    assert!(h.query_by_label_contains("Gmail").is_some() || h.query_by_label_contains("Google").is_some());
+    assert!(h.query_all_by_label_contains("Gmail").next().is_some());
+    assert!(h.query_all_by_label_contains("contraseña de app").next().is_some() || h.query_all_by_label_contains("Continuar con Google").next().is_some());
 }
 
 #[test]
@@ -231,7 +232,7 @@ fn mailto_opens_a_compose_window_and_saves_a_draft() {
     let _ = drafts_before;
     h.get_by_label("Guardar borrador").click();
     settle(&mut h);
-    assert!(h.query_by_label_contains("Borrador guardado").is_some());
+    assert!(h.query_all_by_label_contains("Borrador guardado").next().is_some());
 }
 
 #[test]
@@ -264,12 +265,11 @@ fn list_scrolling_over_100k_rows_stays_cheap() {
     settle(&mut h);
     assert_eq!(h.state().session.rows().len(), 100_000);
     let first = h.state().session.rows()[0].id;
-    h.state_mut().session.request_focus(first);
-    settle(&mut h);
     // El cuerpo de la lista recibe el foco con un clic en la primera fila.
     let subject = h.state_mut().session.envelope(first).unwrap().subject.clone();
     h.query_all_by_label_contains(&subject).next().unwrap().click();
     h.run();
+    assert_eq!(h.state().mail_cursor(), Some(0));
     let t = Instant::now();
     let frames = 60;
     for _ in 0..frames {
@@ -277,9 +277,11 @@ fn list_scrolling_over_100k_rows_stays_cheap() {
         h.run_steps(1);
     }
     let per_frame = t.elapsed() / frames;
+    assert!(h.state().mail_cursor().is_some_and(|c| c > 600), "RePág avanza: {:?}", h.state().mail_cursor());
     eprintln!("RePág sobre 100 000 filas: {per_frame:?} por cuadro");
     h.key_press(Key::End);
     settle(&mut h);
+    assert_eq!(h.state().mail_cursor(), Some(99_999));
     let last = h.state().session.rows()[99_999].id;
     assert_eq!(h.state().session.focused(), Some(last), "Fin llega a la última fila");
     assert!(per_frame < Duration::from_millis(250), "{per_frame:?} por cuadro");

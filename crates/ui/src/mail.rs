@@ -72,22 +72,35 @@ pub fn folder_icon(r: FolderRole) -> Icon {
 
 /// La vista de correo completa.
 pub fn show(app: &mut DeskApp, ui: &mut Ui) {
-    let ctx = ui.ctx().clone();
     split::left(ui, "folders", PaneKind::Sidebar, 244.0, 190.0..=380.0, |ui| folders(app, ui));
     split::top_bar(ui, "mail-top", |ui| top_bar(app, ui));
 
     let focused = app.session.focused();
     let card = focused.map(|id| context_card(app, id)).unwrap_or_default();
-    let full = ctx.content_rect().width();
-    let wide = full >= 1360.0;
+    // Ancho mínimo de la lista: la densa lleva columnas (De, Asunto, Recibido).
+    let dense = app.session.prefs.density == DensityPref::Dense;
+    let list_min = if dense { 560.0 } else { 400.0 };
+    let avail = ui.available_width();
+    // El panel contextual solo aparece si deja sitio a la lista y a la lectura.
+    let wide = avail - 264.0 >= list_min + 460.0;
     if wide && !card.is_empty() {
         split::right(ui, "context", PaneKind::Detail, 264.0, 220.0..=380.0, |ui| context_panel(app, ui, &card));
     }
     let avail = ui.available_width();
-    let reading_w = if app.session.prefs.density == DensityPref::Dense { avail * 0.46 } else { avail * 0.55 };
-    split::right(ui, "reading", PaneKind::Detail, reading_w, 340.0..=1200.0, |ui| {
-        reading_pane(app, ui, if wide { None } else { Some(&card) })
-    });
+    let reading_w = avail - list_min;
+    // La lista conserva siempre su mínimo: el panel de lectura no puede comérsela aunque su
+    // contenido pida más ancho.
+    let max_reading = (avail - list_min).max(340.0);
+    let frame = split::frame(ui, PaneKind::Detail);
+    egui::Panel::right("reading")
+        .frame(frame)
+        .resizable(true)
+        .default_size(reading_w.clamp(340.0, max_reading))
+        .size_range(340.0..=max_reading)
+        .show(ui, |ui| {
+            ui.set_max_width(ui.available_width());
+            reading_pane(app, ui, if wide { None } else { Some(&card) })
+        });
     split::center(ui, PaneKind::Content, |ui| message_list(app, ui));
 }
 
@@ -330,6 +343,21 @@ fn top_bar(app: &mut DeskApp, ui: &mut Ui) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let r = ui.add(egui::Button::new(pick("Commands", "Comandos")).frame(true));
             iurefficient_ui::keycap(ui, "Ctrl+K");
+            ui.add_space(12.0);
+            let mut d = app.session.prefs.density;
+            let seg = segmented(
+                ui,
+                &mut d,
+                &[
+                    (DensityPref::Comfortable, pick("Comfortable", "Cómoda")),
+                    (DensityPref::Compact, pick("Compact", "Compacta")),
+                    (DensityPref::Dense, pick("Dense", "Densa")),
+                ],
+            );
+            if seg.changed() {
+                let id = format!("view.density.{}", d.key());
+                app.run(&ctx, &id);
+            }
             if r.on_hover_text(pick("Everything IureDesk can do", "Todo lo que IureDesk puede hacer")).clicked() {
                 app.run(&ctx, "app.palette");
             }
@@ -371,20 +399,6 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                let mut d = app.session.prefs.density;
-                let r = segmented(
-                    ui,
-                    &mut d,
-                    &[
-                        (DensityPref::Comfortable, pick("Comfortable", "Cómoda")),
-                        (DensityPref::Compact, pick("Compact", "Compacta")),
-                        (DensityPref::Dense, pick("Dense", "Densa")),
-                    ],
-                );
-                if r.changed() {
-                    let id = format!("view.density.{}", d.key());
-                    app.run(&ctx, &id);
-                }
                 let conv_on = app.session.prefs.conversations;
                 let r = icons::icon_button(
                     ui,
@@ -753,9 +767,6 @@ fn message_card(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope, expanded:
                 ui.horizontal(|ui| {
                     let name = if from_name.is_empty() { from_addr.clone() } else { from_name.clone() };
                     ui.label(RichText::new(name).font(theme::bold_font(&ctx, theme::density(&ctx).body_size())).color(c.text));
-                    if expanded && !from_name.is_empty() {
-                        ui.label(RichText::new(format!("<{from_addr}>")).color(c.text_muted));
-                    }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(RichText::new(long_date(env.date, zone)).color(c.text_muted).size(theme::density(&ctx).small_size()));
                         if env.flags.flagged {
@@ -765,7 +776,7 @@ fn message_card(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope, expanded:
                 });
                 if expanded {
                     let to: Vec<String> = env.to.iter().map(|m| m.display().to_string()).collect();
-                    let mut line = format!("{} {}", pick("To:", "Para:"), to.join(", "));
+                    let mut line = format!("{from_addr}  ·  {} {}", pick("To:", "Para:"), to.join(", "));
                     if !env.cc.is_empty() {
                         let cc: Vec<String> = env.cc.iter().map(|m| m.display().to_string()).collect();
                         line.push_str(&format!("   Cc: {}", cc.join(", ")));
@@ -805,7 +816,8 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
         return;
     };
     if let Some(html) = &body.html {
-        let width = HtmlCache::width_for(ui.available_width());
+        // Los boletines suelen medir 600 px: por debajo se pinta a 600 y se reduce al mostrar.
+        let width = HtmlCache::width_for(ui.available_width().max(600.0));
         let key = HtmlKey {
             id: env.id,
             width,
@@ -834,7 +846,10 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
                     }
                     ui.add_space(8.0);
                 }
-                let size = vec2(size_px[0] as f32 / scale, size_px[1] as f32 / scale);
+                let natural = vec2(size_px[0] as f32 / scale, size_px[1] as f32 / scale);
+                let fit = (ui.available_width() / natural.x).clamp(0.3, 1.0);
+                let size = natural * fit;
+                let scale = scale / fit;
                 let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
                 ui.painter().image(tex.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                 iurefficient_ui::a11y::label(&resp, &body.text.chars().take(400).collect::<String>());
@@ -975,7 +990,7 @@ fn context_inline(ui: &mut Ui, card: &ContextCard) {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
-                    ui.painter().circle_filled(r.center(), 6.0, iurefficient_ui::tokens::brand::NAVY);
+                    ui.painter().circle_filled(r.center(), 6.0, c.accent);
                     ui.label(RichText::new("Iurefficient").font(theme::bold_font(ui.ctx(), 13.0)).color(c.text));
                 });
                 ui.add_space(4.0);
