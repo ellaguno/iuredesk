@@ -514,8 +514,6 @@ fn assets() -> Res {
     report("assets", errors)
 }
 
-
-
 fn report(task: &str, errors: Vec<String>) -> Res {
     if errors.is_empty() {
         println!("{task}: ok");
