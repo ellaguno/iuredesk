@@ -1,0 +1,28 @@
+[package]
+name = "iuredesk-pop3"
+description = "Cliente POP3 asíncrono (TLS/STLS, USER/PASS, APOP, SASL XOAUTH2) con descarga incremental por UIDL"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Servidor POP3 falso para las pruebas de este crate y de `iuredesk-sync`.
+test-server = ["tokio/sync", "tokio/rt"]
+
+[dependencies]
+iuredesk-model = { workspace = true }
+iuredesk-net = { workspace = true }
+thiserror = { workspace = true }
+base64 = { workspace = true }
+md-5 = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util", "time"] }
+
+[dev-dependencies]
+iuredesk-pop3 = { path = ".", features = ["test-server"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
+proptest = { workspace = true }
+
+[lints]
+workspace = true

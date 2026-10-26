@@ -6,6 +6,10 @@ members = [
     "crates/autoconfig",
     "crates/accounts",
     "crates/oauth",
+    "crates/net",
+    "crates/imap",
+    "crates/pop3",
+    "crates/sync",
     "crates/dav",
     "crates/compose",
     "crates/engine",
@@ -30,6 +34,10 @@ iuredesk-store = { path = "crates/store" }
 iuredesk-autoconfig = { path = "crates/autoconfig" }
 iuredesk-accounts = { path = "crates/accounts" }
 iuredesk-oauth = { path = "crates/oauth" }
+iuredesk-net = { path = "crates/net" }
+iuredesk-imap = { path = "crates/imap" }
+iuredesk-pop3 = { path = "crates/pop3" }
+iuredesk-sync = { path = "crates/sync" }
 iuredesk-dav = { path = "crates/dav" }
 iuredesk-compose = { path = "crates/compose" }
 iuredesk-engine = { path = "crates/engine" }

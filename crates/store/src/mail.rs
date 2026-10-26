@@ -467,6 +467,30 @@ impl Store {
         })
     }
 
+    /// Pares `(id remoto, id local)` de una carpeta (para comparar con el servidor al
+    /// sincronizar), en orden del id remoto como texto.
+    pub fn remote_ids(&self, folder: FolderId) -> Result<Vec<(String, MessageId)>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(REMOTE_INDEX)?;
+        let f = folder.get();
+        let mut out = Vec::new();
+        if f == u64::MAX {
+            return Ok(out);
+        }
+        for item in t.range((f, "")..(f.saturating_add(1), ""))? {
+            let (k, v) = item?;
+            out.push((k.value().1.to_string(), MessageId(v.value())));
+        }
+        Ok(out)
+    }
+
+    /// Mensaje de una carpeta por su id remoto.
+    pub fn message_by_remote(&self, folder: FolderId, remote: &str) -> Result<Option<MessageId>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(REMOTE_INDEX)?;
+        Ok(t.get((folder.get(), clip(remote, MAX_KEY_LEN)))?.map(|g| MessageId(g.value())))
+    }
+
     /// Un sobre.
     pub fn get_envelope(&self, id: MessageId) -> Result<Option<MessageEnvelope>> {
         self.read_rec(ENVELOPES, id.get())

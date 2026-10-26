@@ -1,0 +1,21 @@
+[package]
+name = "iuredesk-net"
+description = "Conexiones TCP con TLS (rustls) o STARTTLS y tiempos de espera: base de IMAP, POP3 y la prueba de conexión"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util", "time"] }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+webpki-roots = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "net", "io-util"] }
+
+[lints]
+workspace = true

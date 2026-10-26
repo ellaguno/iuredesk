@@ -237,3 +237,20 @@ fn concurrent_readers_and_writer() {
     assert_eq!(s.list_ids(inbox).unwrap().len(), 500);
     assert_eq!(s.count(inbox).unwrap().total, 500);
 }
+
+#[test]
+fn remote_id_lookups() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::open(dir.path()).unwrap();
+    let a = folder(&s, 1, "INBOX", FolderRole::Inbox);
+    let b = folder(&s, 1, "Archive", FolderRole::Archive);
+    let x = s.put_message(env(a, 1, "uno"), b"x").unwrap();
+    let y = s.put_message(env(b, 2, "dos"), b"y").unwrap();
+    assert_eq!(s.remote_ids(a).unwrap(), vec![("uid-1".to_string(), x)]);
+    assert_eq!(s.remote_ids(b).unwrap(), vec![("uid-2".to_string(), y)]);
+    assert_eq!(s.message_by_remote(a, "uid-1").unwrap(), Some(x));
+    assert_eq!(s.message_by_remote(a, "uid-2").unwrap(), None);
+    s.move_message(x, b).unwrap();
+    assert!(s.remote_ids(a).unwrap().is_empty());
+    assert!(s.remote_ids(FolderId(u64::MAX)).unwrap().is_empty());
+}
