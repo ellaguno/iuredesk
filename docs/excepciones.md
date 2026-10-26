@@ -9,6 +9,7 @@ PLAN.md D1. Cada excepción tiene su línea en `xtask/purity-allow.txt`. Solo la
 | `x11-dl` | Linux | Abre Xlib del sistema en tiempo de ejecución; X11 es el servidor gráfico del SO. `pkg-config` solo localiza la biblioteca. | 2026-10-23 |
 | `rayon-core` | Todas | Declara `links` solo para impedir dos versiones en un mismo binario; es Rust puro. Llega por las dependencias de pruebas (`egui_kittest`). | 2026-10-23 |
 | `wasm-bindgen-shared` | Web | Declara `links` solo para impedir dos versiones de wasm-bindgen; Rust puro. | 2026-10-23 |
+| `stylo` | Todas | **Pendiente de aprobación del dueño (F0.3).** Motor CSS de Servo/Firefox que usa Blitz. Declara `links = "servo_style_crate"` solo para impedir dos copias; no enlaza nada nativo y `bindgen` solo se usa con la feature `gecko` (no activa). Ojo: su `build.rs` ejecuta **`python3`** (plantillas Mako → código Rust), así que compilar exige Python en la máquina; el binario resultante es Rust puro. Ver `docs/html-view.md`. | 2026-10-26 |
 
 Pendiente al llegar a Windows y macOS (Fase 7): revisar `windows-sys`/`windows-targets` (Win32) y
 `objc2` (Cocoa), que son bindings del SO.

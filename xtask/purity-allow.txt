@@ -6,3 +6,4 @@ x11-dl            # abre Xlib del sistema en tiempo de ejecución; es el servido
 rayon-core       # «links» solo evita dos versiones en un binario; no enlaza nada nativo (llega por las dependencias de pruebas)
 wasm-bindgen-shared  # «links» solo evita dos versiones de wasm-bindgen en un binario; Rust puro
 ring              # proveedor criptográfico de rustls (TLS hacia Iurefficient); primitivas en C/ensamblador; decisión del dueño 2026-10-24
+stylo             # «links» solo evita dos copias del motor CSS; Rust puro. Su build.rs ejecuta python3 (plantillas Mako → Rust). PENDIENTE de aprobación del dueño (F0.3, docs/html-view.md)

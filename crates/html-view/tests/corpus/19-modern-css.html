@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  body { margin:0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; padding:32px 0; }
+  .card { width:560px; margin:0 auto; background:#fff; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.25); overflow:hidden; }
+  .top { padding:28px 32px; background: radial-gradient(circle at top left, #fbc2eb, #a6c1ee); }
+  .top h1 { margin:0; font-size:28px; letter-spacing:-0.5px; color:#2d1b4e; }
+  .stats { display:flex; gap:12px; padding:20px 32px; }
+  .stat { flex:1; background:#f6f3ff; border-radius:12px; padding:14px; text-align:center; }
+  .stat b { display:block; font-size:24px; color:#5b3cc4; }
+  .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; padding:0 32px 24px; }
+  .grid div { aspect-ratio: 1 / 1; border-radius:10px; background:#e9e4ff; display:flex; align-items:center; justify-content:center; font-weight:600; color:#5b3cc4; }
+  .pill { display:inline-block; padding:4px 12px; border-radius:999px; background:#2d1b4e; color:#fff; font-size:12px; text-transform:uppercase; letter-spacing:1px; }
+  .muted { color:#776; font-size:13px; padding:0 32px 28px; }
+  .clamp { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .shadowtext { text-shadow: 0 2px 4px rgba(0,0,0,.3); color:#fff; }
+  .sticky-note { transform: rotate(-2deg); background:#fff8b3; padding:10px; margin:0 32px 20px; box-shadow:2px 3px 0 #e0d97a; }
+</style></head>
+<body>
+<div class="card">
+  <div class="top"><span class="pill">Resumen semanal</span><h1>Tu actividad 📈</h1></div>
+  <div class="stats">
+    <div class="stat"><b>128</b>correos</div>
+    <div class="stat"><b>14</b>reuniones</div>
+    <div class="stat"><b>9</b>tareas</div>
+  </div>
+  <div class="grid"><div>Lun</div><div>Mar</div><div>Mié</div><div>Jue</div><div>Vie</div><div>Sáb</div></div>
+  <div class="sticky-note">Nota rotada con <code>transform</code> y sombra.</div>
+  <p class="muted clamp">Este párrafo usa line-clamp para cortarse a dos líneas. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit.</p>
+  <p class="muted" style="opacity:.6">Flexbox, grid, gradientes, sombras, border-radius, aspect-ratio y transform.</p>
+</div>
+</body></html>
