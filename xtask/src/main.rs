@@ -268,6 +268,11 @@ fn licenses(m: &Value) -> Res {
         if p.get("source").is_some_and(Value::is_null) {
             continue; // crates propios
         }
+        // Crates de la suite Iurefficient (repos hermanos del mismo titular, misma licencia FSL).
+        let suite = s(p, "source").contains("github.com/ellaguno/");
+        if suite && lic == "FSL-1.1-ALv2" {
+            continue;
+        }
         if !license_ok(lic) {
             errors.push(format!("{} {}: licencia «{lic}» no aprobada", s(p, "name"), s(p, "version")));
         }
