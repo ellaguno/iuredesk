@@ -8,6 +8,19 @@ license.workspace = true
 publish = false
 
 [dependencies]
+iuredesk-model = { workspace = true }
+iuredesk-store = { workspace = true }
+iuredesk-engine = { workspace = true }
+iuredesk-html-view = { workspace = true }
+iurefficient-ui = { workspace = true }
+egui = { workspace = true }
+chrono = { workspace = true }
+# Abre enlaces en el navegador del sistema (xdg-open/open/start; Rust puro).
+open = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

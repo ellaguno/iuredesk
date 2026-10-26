@@ -7,7 +7,17 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[[bin]]
+name = "iuredesk"
+path = "src/main.rs"
+
 [dependencies]
+iuredesk-engine = { workspace = true }
+iuredesk-store = { workspace = true }
+iuredesk-ui = { workspace = true }
+egui = { workspace = true }
+eframe = { workspace = true, features = ["wgpu", "wayland", "x11", "accesskit", "default_fonts"] }
+dirs = { workspace = true }
 
 [lints]
 workspace = true
