@@ -7,6 +7,7 @@ members = [
     "crates/accounts",
     "crates/oauth",
     "crates/dav",
+    "crates/compose",
     "crates/engine",
     "crates/html-view",
     "crates/ui",
@@ -30,6 +31,7 @@ iuredesk-autoconfig = { path = "crates/autoconfig" }
 iuredesk-accounts = { path = "crates/accounts" }
 iuredesk-oauth = { path = "crates/oauth" }
 iuredesk-dav = { path = "crates/dav" }
+iuredesk-compose = { path = "crates/compose" }
 iuredesk-engine = { path = "crates/engine" }
 iuredesk-html-view = { path = "crates/html-view" }
 iuredesk-ui = { path = "crates/ui" }
@@ -59,7 +61,11 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 tempfile = "3"
 # 1.x exige Rust 1.98; la cadena actual es 1.97
 mail-parser = "0.11"
-mail-builder = "0.4"
+# sin `gethostname`: el Message-ID lo genera siempre el redactor con el dominio de la identidad
+mail-builder = { version = "0.4", default-features = false }
+# redactor (F1.2): Markdown e IDNA, Rust puro
+pulldown-cmark = { version = "0.13", default-features = false }
+idna = "1"
 proptest = "1"
 anyhow = "1"
 # recurrencias RFC 5545 (Rust puro; ver la elección en crates/dav/src/lib.rs)

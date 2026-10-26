@@ -1,0 +1,77 @@
+Date: Mon, 26 Oct 2026 10:42:00 -0600
+From: =?utf-8?Q?Ana_L=C3=B3pez?= <ana@acme.mx>
+Reply-To: Ventas <ventas@acme.mx>
+To: =?utf-8?Q?P=C3=A9rez=2C_Juan?= <juan@cliente.com.mx>, bob@example.com
+Cc: =?utf-8?Q?Jos=C3=A9?= <jose@correo.xn--mxico-bsa>
+Subject: =?utf-8?Q?Cotizaci=C3=B3n_Q4_=E2=80=94_revisi=C3=B3n?=
+Message-ID: <test.1@acme.mx>
+MIME-Version: 1.0
+User-Agent: IureDesk/VERSION
+Content-Type: multipart/mixed; 
+	boundary="B1"
+
+
+--B1
+Content-Type: multipart/alternative; 
+	boundary="B2"
+
+
+--B2
+Content-Type: text/plain; charset="utf-8"; format="flowed"
+Content-Transfer-Encoding: quoted-printable
+
+Hola Juan,
+
+Adjunto la cotizaci=C3=B3n.
+
+- punto uno
+- punto dos
+
+Saludos
+
+--B2
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html><head><meta http-equiv=3D"Content-Type" content=3D"text/html; charset=
+=3Dutf-8"><meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-s=
+cale=3D1"></head>
+<body style=3D"margin:0;padding:0;">
+<div style=3D"font-family:Calibri,Arial,Helvetica,sans-serif;font-size:14px;=
+line-height:1.5;color:#222222;">
+<p style=3D"margin:0 0 12px 0;">Hola <strong>Juan</strong>,</p>
+<p style=3D"margin:0 0 12px 0;">Adjunto la <em>cotizaci=C3=B3n</em>.</p>
+<ul style=3D"margin:0 0 12px 0;padding:0 0 0 24px;">
+<li style=3D"margin:0 0 4px 0;">punto uno</li>
+<li style=3D"margin:0 0 4px 0;">punto dos</li>
+</ul>
+<p style=3D"margin:0 0 12px 0;">Saludos</p>
+</div>
+</body></html>
+
+--B2
+Content-Type: text/calendar; charset="utf-8"; method="REQUEST"
+Content-Transfer-Encoding: quoted-printable
+
+BEGIN:VCALENDAR
+VERSION:2.0
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:1@acme.mx
+SUMMARY:Revisi=C3=B3n
+END:VEVENT
+END:VCALENDAR
+
+--B2--
+
+--B1
+Content-Type: application/ics; name="invite.ics"
+Content-Disposition: attachment; filename="invite.ics"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBTEVOREFSDQpWRVJTSU9OOjIuMA0KTUVUSE9EOlJFUVVFU1QNCkJFR0lOOlZFVkVO
+VA0KVUlEOjFAYWNtZS5teA0KU1VNTUFSWTpSZXZpc2nDs24NCkVORDpWRVZFTlQNCkVORDpWQ0FM
+RU5EQVINCg==
+
+--B1--
