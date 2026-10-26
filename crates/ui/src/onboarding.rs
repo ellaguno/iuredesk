@@ -15,7 +15,13 @@ pub fn page(app: &mut DeskApp, ui: &mut Ui) {
         let top = ((ui.available_height() - 520.0) / 2.0).max(24.0);
         ui.vertical_centered(|ui| {
             ui.add_space(top);
-            ui.label(RichText::new("IureDesk").font(theme::bold_font(ui.ctx(), 28.0)).color(c.brand));
+            ui.label(
+                RichText::new("IureDesk").font(theme::bold_font(ui.ctx(), 28.0)).color(if ui.visuals().dark_mode {
+                    c.accent
+                } else {
+                    c.brand
+                }),
+            );
             ui.add_space(4.0);
             ui.label(
                 RichText::new(pick(

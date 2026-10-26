@@ -25,6 +25,8 @@ pub struct CalendarState {
     pub view: CalView,
     /// Día de referencia (`None` = hoy).
     pub anchor: Option<NaiveDate>,
+    /// Cuadros en que todavía se fija el desplazamiento inicial (07:30).
+    scroll_frames: u8,
     scrolled: bool,
 }
 
@@ -144,6 +146,7 @@ fn top_bar(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate) 
         if ui.button(pick("Today", "Hoy")).clicked() {
             app.calendar.anchor = Some(today);
             app.calendar.scrolled = false;
+            app.calendar.scroll_frames = 0;
         }
         let step = match app.calendar.view {
             CalView::Month => 30,
@@ -281,8 +284,13 @@ fn week_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate
 
     // Rejilla de horas.
     let scroll = egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("week-scroll");
+    // El desplazamiento inicial se repite unos cuadros: el primero aún no conoce el alto del
+    // contenido y egui lo recortaría.
     let scroll = if app.calendar.scrolled { scroll } else { scroll.vertical_scroll_offset(hh * 7.5) };
-    app.calendar.scrolled = true;
+    app.calendar.scroll_frames = app.calendar.scroll_frames.saturating_add(1);
+    if app.calendar.scroll_frames >= 3 {
+        app.calendar.scrolled = true;
+    }
     scroll.show(ui, |ui| {
         let (grid, _) = ui.allocate_exact_size(vec2(ui.available_width(), hh * 24.0 + 8.0), Sense::hover());
         let p = ui.painter_at(grid);
