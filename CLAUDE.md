@@ -11,6 +11,8 @@ libdbus…), webviews y JS/TS. Las bibliotecas del SO (Wayland/X11, Vulkan, D-Bu
 `cargo xtask purity` lo verifica; una excepción nueva va en `xtask/purity-allow.txt` y
 `docs/excepciones.md`, y la decide el dueño del proyecto (si la necesitas, documenta el motivo y
 sigue; no la escondas).
+Criterio del dueño: en desarrollo/compilación se aceptan herramientas externas (p. ej. `python3` para
+`stylo`); el **producto final** no puede requerir nada fuera de Rust y del SO.
 Elecciones hechas: `rustls` (no OpenSSL), `zbus` (no libdbus), `redb` (no SQLite), `rfd` con portal
 XDG (no GTK), Blitz para HTML (no webview).
 
