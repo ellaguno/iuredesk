@@ -11,6 +11,7 @@ members = [
     "crates/pop3",
     "crates/sync",
     "crates/dav",
+    "crates/pim-sync",
     "crates/compose",
     "crates/engine",
     "crates/html-view",
@@ -39,6 +40,7 @@ iuredesk-imap = { path = "crates/imap" }
 iuredesk-pop3 = { path = "crates/pop3" }
 iuredesk-sync = { path = "crates/sync" }
 iuredesk-dav = { path = "crates/dav" }
+iuredesk-pim-sync = { path = "crates/pim-sync" }
 iuredesk-compose = { path = "crates/compose" }
 iuredesk-engine = { path = "crates/engine" }
 iuredesk-html-view = { path = "crates/html-view" }

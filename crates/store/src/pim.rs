@@ -65,7 +65,7 @@ fn upsert_child<T: Serialize + DeserializeOwned>(
     Ok(id)
 }
 
-fn children<T: DeserializeOwned>(
+pub(crate) fn children<T: DeserializeOwned>(
     store: &Store,
     table: TableDefinition<u64, &[u8]>,
     index: TableDefinition<(u64, u64), ()>,
@@ -84,7 +84,7 @@ fn children<T: DeserializeOwned>(
     Ok(out)
 }
 
-fn remove_child<T: DeserializeOwned>(
+pub(crate) fn remove_child<T: DeserializeOwned>(
     tx: &WriteTransaction,
     table: TableDefinition<u64, &[u8]>,
     index: TableDefinition<(u64, u64), ()>,
@@ -119,7 +119,11 @@ fn put_simple<T: Serialize>(
     Ok(id)
 }
 
-fn unindex_event(days: &mut Table<'_, (i64, u64), ()>, long: &mut Table<'_, u64, ()>, e: &Event) -> Result<()> {
+pub(crate) fn unindex_event(
+    days: &mut Table<'_, (i64, u64), ()>,
+    long: &mut Table<'_, u64, ()>,
+    e: &Event,
+) -> Result<()> {
     match event_days(e) {
         Some((a, b)) => {
             for d in a..=b {
@@ -212,6 +216,7 @@ impl Store {
                 let mut long = tx.open_table(EVENT_LONG)?;
                 unindex_event(&mut days, &mut long, &old)?;
             }
+            tx.open_table(PIM_RAW)?.remove(crate::PimRef::Event(id).key())?;
             Ok(())
         })
     }
@@ -220,7 +225,9 @@ impl Store {
     /// `[from, to)`, ordenados por inicio.
     ///
     /// Los eventos recurrentes se devuelven como su evento maestro si empiezan antes de `to`; la
-    /// expansión de `RRULE`/`EXDATE` corresponde a la capa superior.
+    /// expansión de `RRULE`/`EXDATE` corresponde a la capa superior: las vistas deben usar
+    /// `iuredesk_pim_sync::occurrences_between` (L3), que expande con el motor acotado de
+    /// `iuredesk-dav` y aplica las excepciones guardadas en el objeto crudo.
     pub fn events_between(&self, cals: &[CalendarId], from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Event>> {
         if to <= from {
             return Ok(Vec::new());
@@ -355,6 +362,7 @@ impl Store {
     pub fn delete_contact(&self, id: ContactId) -> Result<()> {
         self.write(|tx, _| {
             remove_child::<Contact>(tx, CONTACTS, BOOK_CONTACTS, id.get(), |o| o.address_book.get())?;
+            tx.open_table(PIM_RAW)?.remove(crate::PimRef::Contact(id).key())?;
             Ok(())
         })
     }
@@ -456,6 +464,7 @@ impl Store {
     pub fn delete_task(&self, id: TaskId) -> Result<()> {
         self.write(|tx, _| {
             remove_child::<Task>(tx, TASKS, LIST_TASKS, id.get(), |o| o.list.get())?;
+            tx.open_table(PIM_RAW)?.remove(crate::PimRef::Task(id).key())?;
             Ok(())
         })
     }

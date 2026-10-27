@@ -191,3 +191,44 @@ impl Event {
         self.rrule.as_deref().is_some_and(|r| !r.trim().is_empty())
     }
 }
+
+/// Una aparición concreta de un evento en el calendario (la serie ya expandida).
+///
+/// La produce `iuredesk_pim_sync::occurrences_between` con el motor de recurrencias de
+/// `iuredesk-dav` (zonas, `EXDATE`, excepciones `RECURRENCE-ID`, topes). Un evento sin repetición
+/// da exactamente una aparición; una excepción movida trae sus propios datos (`overridden`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventOccurrence {
+    /// Evento (la serie maestra o el evento único) en el almacén.
+    pub event: EventId,
+    /// Calendario.
+    pub calendar: CalendarId,
+    /// `UID` de iCalendar.
+    pub uid: String,
+    /// Inicio de esta aparición. En días completos, la fecha (`EventTime::Date`).
+    pub start: EventTime,
+    /// Fin exclusivo de esta aparición.
+    pub end: EventTime,
+    /// Valor de `RECURRENCE-ID` (UTC) si viene de una serie; identifica la aparición para
+    /// editarla o excluirla.
+    pub recurrence_id: Option<DateTime<Utc>>,
+    /// Pertenece a una serie.
+    pub recurring: bool,
+    /// Es una excepción con datos propios (movida, retitulada…).
+    pub overridden: bool,
+    /// Título (el de la excepción, si la hay).
+    pub summary: String,
+    /// Lugar.
+    pub location: String,
+    /// Estado.
+    pub status: EventStatus,
+    /// Transparencia.
+    pub transparency: Transparency,
+}
+
+impl EventOccurrence {
+    /// `true` si es de día completo.
+    pub fn is_all_day(&self) -> bool {
+        self.start.is_all_day()
+    }
+}
