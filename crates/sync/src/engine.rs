@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use iuredesk_accounts::SecretStore;
-use iuredesk_model::account::{Account, AccountKind, Protocol};
+use iuredesk_model::account::{Account, AccountKind};
 use iuredesk_model::{AccountId, Flags, FolderId, MessageId};
 use iuredesk_oauth::TokenProvider;
 use iuredesk_store::Store;
@@ -13,8 +13,10 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use crate::backend::{BackendKind, MailBackend, choose_backend};
 use crate::error::{Result, SyncError};
-use crate::imap_sync::{CycleReport, IdleExit, ImapAccount};
+use crate::graph_sync::GraphAccount;
+use crate::imap_sync::{IdleExit, ImapAccount};
 use crate::pool::{Auth, ImapPool};
 use crate::pop3_sync::Pop3Account;
 use crate::{FriendlyError, SyncEvent, SyncOptions, ops, state};
@@ -51,67 +53,11 @@ pub(crate) enum Cmd {
     Replay,
 }
 
-enum Worker {
-    Imap(Arc<ImapAccount>),
-    Pop3(Arc<Pop3Account>),
-}
-
-impl Worker {
-    fn ctx(&self) -> &Arc<Ctx> {
-        match self {
-            Worker::Imap(w) => &w.ctx,
-            Worker::Pop3(w) => &w.ctx,
-        }
-    }
-
-    async fn cycle(&self, inbox_only: bool) -> Result<CycleReport> {
-        match self {
-            Worker::Imap(w) => w.cycle(inbox_only).await,
-            Worker::Pop3(w) => w.cycle().await,
-        }
-    }
-
-    async fn backfill(&self) -> Result<bool> {
-        match self {
-            Worker::Imap(w) => w.backfill_slice().await,
-            Worker::Pop3(w) => w.cycle().await.map(|r| r.backfill_pending),
-        }
-    }
-
-    async fn replay(&self) -> Result<()> {
-        match self {
-            Worker::Imap(w) => w.replay().await,
-            // En POP3 no hay estado remoto que tocar: las operaciones son solo locales.
-            Worker::Pop3(w) => {
-                let ctx = &w.ctx;
-                for op in ctx.store.peek_ops(10_000)?.into_iter().filter(|o| o.account == ctx.acct) {
-                    // `outbox.send` es de la bandeja de salida: no se toca.
-                    if ops::classify(&op.kind, &op.payload).is_none() {
-                        continue;
-                    }
-                    ctx.store.ack_op(op.seq)?;
-                }
-                Ok(())
-            }
-        }
-    }
-
-    async fn fetch_body(&self, msg: MessageId) -> Result<()> {
-        match self {
-            Worker::Imap(w) => w.fetch_body(msg).await,
-            Worker::Pop3(w) => {
-                let env = w.ctx.store.get_envelope(msg)?.ok_or_else(|| SyncError::MessageNotFound(msg.to_string()))?;
-                if env.blob.is_some() { Ok(()) } else { Err(SyncError::MessageNotFound(msg.to_string())) }
-            }
-        }
-    }
-}
-
 struct AccountSlot {
     id: String,
     acct: AccountId,
     tx: mpsc::Sender<Cmd>,
-    worker: Arc<Worker>,
+    worker: Arc<dyn MailBackend>,
 }
 
 struct Inner {
@@ -230,12 +176,30 @@ impl SyncEngine {
                 events: events.clone(),
             });
             let (tx, rx) = mpsc::channel(64);
-            let worker = match account.incoming.protocol {
-                Protocol::Pop3 => {
+            let kind = choose_backend(&account, &opts, auth.tokens.is_some());
+            let worker: Arc<dyn MailBackend> = match kind {
+                BackendKind::Pop3 => {
                     let policy = opts.pop3_policies.get(&account.id).copied().unwrap_or(opts.pop3_policy);
-                    Arc::new(Worker::Pop3(Arc::new(Pop3Account { ctx, auth: Arc::clone(&auth), policy })))
+                    Arc::new(Pop3Account { ctx, auth: Arc::clone(&auth), policy })
                 }
-                _ => {
+                BackendKind::Graph => {
+                    let made = match auth.tokens.clone() {
+                        Some(t) => GraphAccount::new(Arc::clone(&ctx), t),
+                        None => Err(SyncError::NoTokenProvider),
+                    };
+                    match made {
+                        Ok(g) => {
+                            let (t, s) = (tx.clone(), inner.shutdown.subscribe());
+                            tasks.push(rt.spawn(run_poll_inbox(opts.graph_inbox_poll, t, s)));
+                            Arc::new(g)
+                        }
+                        Err(e) => {
+                            ctx.emit_error(&e);
+                            continue;
+                        }
+                    }
+                }
+                BackendKind::Imap => {
                     let pool = Arc::new(ImapPool::new(account.clone(), Arc::clone(&auth), &opts));
                     inner.pools.push(Arc::clone(&pool));
                     let imap = Arc::new(ImapAccount::new(ctx, Arc::clone(&pool)));
@@ -243,7 +207,7 @@ impl SyncEngine {
                         let (i, t, s) = (Arc::clone(&imap), tx.clone(), inner.shutdown.subscribe());
                         tasks.push(rt.spawn(run_idle(i, t, s)));
                     }
-                    Arc::new(Worker::Imap(imap))
+                    imap
                 }
             };
             tasks.push(rt.spawn(run_worker(Arc::clone(&worker), rx, inner.shutdown.subscribe())));
@@ -274,7 +238,7 @@ fn retry_delay(failures: u32, e: &SyncError, poll: Duration) -> Duration {
     Duration::from_secs(secs).min(poll.max(Duration::from_secs(30)))
 }
 
-async fn run_worker(w: Arc<Worker>, mut rx: mpsc::Receiver<Cmd>, shutdown: watch::Receiver<bool>) {
+async fn run_worker(w: Arc<dyn MailBackend>, mut rx: mpsc::Receiver<Cmd>, shutdown: watch::Receiver<bool>) {
     let ctx = Arc::clone(w.ctx());
     let poll = ctx.opts.poll_interval;
     let mut backfill = false;
@@ -354,6 +318,19 @@ async fn run_worker(w: Arc<Worker>, mut rx: mpsc::Receiver<Cmd>, shutdown: watch
                     }
                 }
             }
+        }
+    }
+}
+
+/// Sin avisos del servidor (Graph): una pasada rápida de la bandeja de entrada cada `every`.
+async fn run_poll_inbox(every: Duration, tx: mpsc::Sender<Cmd>, shutdown: watch::Receiver<bool>) {
+    let every = every.max(Duration::from_secs(15));
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(every) => {
+                let _ = tx.try_send(Cmd::Sync { inbox_only: true, reply: None });
+            }
+            _ = wait_shutdown(shutdown.clone()) => break,
         }
     }
 }
@@ -476,6 +453,29 @@ impl SyncHandle {
             self.kick(a);
         }
         Ok(seq)
+    }
+
+    /// Gmail: pone la etiqueta de la carpeta `label` sin quitar las demás (local al instante).
+    pub fn add_label(&self, msg: MessageId, label: FolderId) -> Result<Option<u64>> {
+        let seq = ops::add_label(&self.inner.store, msg, label)?;
+        if let Some(a) = self.account_of(msg) {
+            self.kick(a);
+        }
+        Ok(seq)
+    }
+
+    /// Gmail: quita la etiqueta de la carpeta `label` (el mensaje sigue en «Todos»).
+    pub fn remove_label(&self, msg: MessageId, label: FolderId) -> Result<Option<u64>> {
+        let seq = ops::remove_label(&self.inner.store, msg, label)?;
+        if let Some(a) = self.account_of(msg) {
+            self.kick(a);
+        }
+        Ok(seq)
+    }
+
+    /// ¿La cuenta usa etiquetas de Gmail (las carpetas son etiquetas)?
+    pub fn uses_labels(&self, acct: AccountId) -> bool {
+        state::is_gmail_labels(&self.inner.store, acct)
     }
 
     /// Borra definitivamente (local al instante; se replica en segundo plano).

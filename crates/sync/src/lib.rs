@@ -14,7 +14,15 @@
 //! - **Cola de operaciones** (banderas, mover, borrar, subir): se replica antes de leer, en
 //!   orden, con reintentos y espera exponencial. Conflictos: **gana el servidor** salvo que el
 //!   mensaje tenga una operación local pendiente.
-//! - **IDLE** en la bandeja de entrada (reemitido cada 29 min) y sondeo periódico del resto.
+//! - **IDLE** en la bandeja de entrada (reemitido cada 29 min) y sondeo periódico del resto; con
+//!   NOTIFY (RFC 5465) el mismo IDLE avisa de los cambios en todas las carpetas.
+//! - **Gmail** (`X-GM-EXT-1`): las etiquetas son carpetas, pero un mensaje con varias etiquetas es
+//!   **un** mensaje local (`X-GM-MSGID`) con varias pertenencias; hilos por `X-GM-THRID`;
+//!   archivar = quitar `\Inbox`; mover a una etiqueta = `STORE X-GM-LABELS`.
+//! - **Microsoft 365** con OAuth: Microsoft Graph (árbol `mailFolders`, delta por carpeta con
+//!   `@removed`, MIME bajo demanda, banderas, mover/borrar/archivar, categorías → etiquetas,
+//!   429 con `Retry-After`) en vez de IMAP.
+//! - Sin cuerpo descargado, el extracto sale de una descarga parcial (`BODY.PEEK[TEXT]<0.2048>`).
 //! - **POP3**: descarga incremental por `UIDL` con «dejar copia» y «borrar tras N días».
 //! - Tope de conexiones por cuenta (Gmail ≤ 15).
 //!
@@ -28,8 +36,11 @@
     clippy::unreachable
 )]
 
+mod backend;
 mod engine;
 mod error;
+mod gmail;
+mod graph_sync;
 mod imap_sync;
 pub mod ops;
 pub mod parse;
@@ -42,6 +53,7 @@ use std::time::Duration;
 
 use iuredesk_model::{AccountId, FolderId, MessageId};
 
+pub use backend::{BackendKind, choose_backend};
 pub use engine::{SyncEngine, SyncHandle};
 pub use error::{Result, SyncError};
 pub use iuredesk_pop3::Pop3Policy;
@@ -87,6 +99,19 @@ pub struct SyncOptions {
     pub pop3_policies: HashMap<String, Pop3Policy>,
     /// Mensajes POP3 por pasada.
     pub pop3_max_per_cycle: usize,
+    /// Extractos por carpeta y pasada para mensajes sin cuerpo (descarga parcial
+    /// `BODY.PEEK[TEXT]<0.n>`); 0 desactiva.
+    pub preview_fetch: usize,
+    /// Bytes del texto que se piden para el extracto.
+    pub preview_bytes: u64,
+    /// Microsoft 365 con OAuth sincroniza el correo por Microsoft Graph (si no, por IMAP).
+    pub graph_mail: bool,
+    /// Raíz de Microsoft Graph (las pruebas apuntan a un servidor falso).
+    pub graph_base_url: String,
+    /// Sondeo de la bandeja de entrada por Graph (no hay avisos de servidor en escritorio).
+    pub graph_inbox_poll: Duration,
+    /// Páginas máximas por delta de Graph en una pasada (se sigue en la siguiente).
+    pub graph_max_pages: usize,
 }
 
 impl Default for SyncOptions {
@@ -111,6 +136,12 @@ impl Default for SyncOptions {
             pop3_policy: Pop3Policy::default(),
             pop3_policies: HashMap::new(),
             pop3_max_per_cycle: 500,
+            preview_fetch: 200,
+            preview_bytes: 2_048,
+            graph_mail: true,
+            graph_base_url: iuredesk_graph::GRAPH_BASE.to_string(),
+            graph_inbox_poll: Duration::from_secs(60),
+            graph_max_pages: 50,
         }
     }
 }

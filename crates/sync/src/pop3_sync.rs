@@ -10,9 +10,11 @@ use iuredesk_oauth::sasl;
 use iuredesk_pop3::{Pop3Client, Pop3Config, Pop3Error, Pop3Policy, plan_download};
 use iuredesk_store::NewMessage;
 
+use crate::backend::{BoxFuture, MailBackend};
 use crate::engine::Ctx;
 use crate::error::{Result, SyncError};
 use crate::imap_sync::CycleReport;
+use crate::ops;
 use crate::parse::envelope_from_raw;
 use crate::pool::Auth;
 use crate::state::{self, Pop3Known, pop3_key};
@@ -159,5 +161,41 @@ impl Pop3Account {
         let backfill_pending = fresh_total > plan.download.len();
         ctx.emit(SyncEvent::Synced { account: ctx.acct, took: started.elapsed(), backfill_pending });
         Ok(CycleReport { backfill_pending })
+    }
+}
+
+impl MailBackend for Pop3Account {
+    fn ctx(&self) -> &Arc<Ctx> {
+        &self.ctx
+    }
+
+    fn cycle(&self, _inbox_only: bool) -> BoxFuture<'_, Result<CycleReport>> {
+        Box::pin(Pop3Account::cycle(self))
+    }
+
+    fn backfill(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move { Pop3Account::cycle(self).await.map(|r| r.backfill_pending) })
+    }
+
+    /// En POP3 no hay estado remoto que tocar: las operaciones son solo locales.
+    fn replay(&self) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async move {
+            let ctx = &self.ctx;
+            for op in ctx.store.peek_ops(10_000)?.into_iter().filter(|o| o.account == ctx.acct) {
+                // `outbox.send` es de la bandeja de salida: no se toca.
+                if ops::classify(&op.kind, &op.payload).is_none() {
+                    continue;
+                }
+                ctx.store.ack_op(op.seq)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn fetch_body(&self, msg: iuredesk_model::MessageId) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async move {
+            let env = self.ctx.store.get_envelope(msg)?.ok_or_else(|| SyncError::MessageNotFound(msg.to_string()))?;
+            if env.blob.is_some() { Ok(()) } else { Err(SyncError::MessageNotFound(msg.to_string())) }
+        })
     }
 }

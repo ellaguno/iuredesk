@@ -134,6 +134,23 @@ impl PimError {
     }
 }
 
+impl From<iuredesk_graph::GraphError> for PimError {
+    fn from(e: iuredesk_graph::GraphError) -> Self {
+        use iuredesk_graph::GraphError as G;
+        match e {
+            G::Http { status, code } => Self::Graph { status, detail: code },
+            G::Network(n) => Self::Network(n),
+            G::Unauthorized => Self::Unauthorized,
+            G::Throttled { retry_after } => {
+                Self::Graph { status: 429, detail: format!("limitado; reintentar en {retry_after:?} s") }
+            }
+            G::OAuth(o) => Self::OAuth(o),
+            G::TooLarge => Self::Invalid("respuesta de Graph demasiado grande".into()),
+            G::Invalid(i) => Self::Invalid(i),
+        }
+    }
+}
+
 impl From<reqwest::Error> for PimError {
     fn from(e: reqwest::Error) -> Self {
         Self::Network(if e.is_timeout() { "tiempo de espera agotado".into() } else { e.to_string() })

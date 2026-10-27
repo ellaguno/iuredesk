@@ -177,7 +177,25 @@ impl Session {
                 let Some(aid) = self.account_ids.get(&a.id).copied() else { continue };
                 let smtp: Arc<dyn Transport> =
                     Arc::new(SmtpTransport::new(a.clone(), Arc::clone(&self.secrets), self.live.tokens.clone()));
-                map.insert(aid, Arc::new(LocalCopy { inner: smtp, store: Arc::clone(&self.store), account: aid }));
+                // Microsoft 365 con OAuth: Graph `sendMail` (SMTP queda de reserva para lo que
+                // Graph no acepta por tamaño), igual que la sincronización usa Graph.
+                let sync_opts = iuredesk_sync::SyncOptions::default();
+                let graph = match (&self.live.tokens, iuredesk_sync::choose_backend(a, &sync_opts, true)) {
+                    (Some(t), iuredesk_sync::BackendKind::Graph) => iuredesk_graph::GraphClient::new(
+                        a.clone(),
+                        Arc::clone(t),
+                        &sync_opts.graph_base_url,
+                        iuredesk_compose::DEFAULT_SMTP_TIMEOUT,
+                    )
+                    .ok()
+                    .map(|c| {
+                        Arc::new(iuredesk_graph::GraphSendTransport::new(c).with_fallback(Arc::clone(&smtp)))
+                            as Arc<dyn Transport>
+                    }),
+                    _ => None,
+                };
+                let inner = graph.unwrap_or(smtp);
+                map.insert(aid, Arc::new(LocalCopy { inner, store: Arc::clone(&self.store), account: aid }));
             }
         }
         if let Ok(mut m) = sender.transports.write() {

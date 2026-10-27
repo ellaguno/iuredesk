@@ -3077,6 +3077,7 @@ dependencies = [
  "iuredesk-autoconfig",
  "iuredesk-compose",
  "iuredesk-dav",
+ "iuredesk-graph",
  "iuredesk-imap",
  "iuredesk-import",
  "iuredesk-integrations",
@@ -3092,6 +3093,21 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "iuredesk-graph"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "base64 0.22.1",
+ "iuredesk-compose",
+ "iuredesk-model",
+ "iuredesk-oauth",
+ "mail-parser",
+ "reqwest",
+ "serde_json",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -3248,6 +3264,7 @@ dependencies = [
  "getrandom 0.2.17",
  "iuredesk-accounts",
  "iuredesk-dav",
+ "iuredesk-graph",
  "iuredesk-model",
  "iuredesk-oauth",
  "iuredesk-store",
@@ -3295,9 +3312,11 @@ dependencies = [
 name = "iuredesk-sync"
 version = "0.1.0-alpha.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "iuredesk-accounts",
  "iuredesk-compose",
+ "iuredesk-graph",
  "iuredesk-imap",
  "iuredesk-model",
  "iuredesk-oauth",

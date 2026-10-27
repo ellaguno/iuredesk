@@ -8,8 +8,8 @@
 //! luego respuestas tipadas ([`codec::Untagged`]).
 //!
 //! Extensiones: IDLE, CONDSTORE, QRESYNC, UIDPLUS, MOVE, ENABLE, ESEARCH, SPECIAL-USE,
-//! COMPRESS=DEFLATE (Rust puro), LITERAL+/LITERAL-, SASL-IR, ID, UNSELECT; atributos de Gmail
-//! (`X-GM-LABELS`) se interpretan si llegan.
+//! COMPRESS=DEFLATE (Rust puro), LITERAL+/LITERAL-, SASL-IR, ID, UNSELECT, NOTIFY (RFC 5465) y
+//! `X-GM-EXT-1` de Gmail (`X-GM-MSGID`, `X-GM-THRID`, `X-GM-LABELS` y `STORE X-GM-LABELS`).
 //!
 //! Con la *feature* `test-server`, [`testing`] trae un servidor IMAP falso y programable.
 #![deny(
@@ -43,6 +43,31 @@ pub use transport::Limits;
 
 /// Listas de atributos de `FETCH` habituales.
 pub mod fetch_items {
+    /// Atributos de Gmail (`X-GM-EXT-1`): id estable, hilo y etiquetas.
+    pub const GMAIL: &str = "X-GM-MSGID X-GM-THRID X-GM-LABELS";
+
+    /// Cabeceras como [`headers`] más los atributos de Gmail.
+    pub fn gmail_headers(modseq: bool) -> String {
+        format!(
+            "(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODYSTRUCTURE {THREAD_HEADERS} {GMAIL}{})",
+            if modseq { " MODSEQ" } else { "" }
+        )
+    }
+
+    /// Banderas y etiquetas de Gmail.
+    pub fn gmail_flags(modseq: bool) -> String {
+        format!("(UID FLAGS X-GM-MSGID X-GM-LABELS{})", if modseq { " MODSEQ" } else { "" })
+    }
+
+    /// Extracto sin bajar el mensaje: tipo de contenido y los primeros `len` bytes del texto
+    /// (`BODY.PEEK[TEXT]<0.len>`), que bastan para la vista previa de la lista.
+    pub fn preview(len: u64) -> String {
+        format!(
+            "(UID BODY.PEEK[HEADER.FIELDS (CONTENT-TYPE CONTENT-TRANSFER-ENCODING)] BODY.PEEK[TEXT]<0.{}>)",
+            len.clamp(1, 64 * 1024)
+        )
+    }
+
     /// Cabeceras de hilo y de lista que no trae `ENVELOPE`.
     pub const THREAD_HEADERS: &str = "BODY.PEEK[HEADER.FIELDS (REFERENCES IN-REPLY-TO LIST-ID)]";
 

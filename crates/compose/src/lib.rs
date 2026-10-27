@@ -43,7 +43,7 @@ pub mod signature;
 pub mod template;
 pub mod transport;
 
-pub use address::{AddressError, parse_address, parse_address_list};
+pub use address::{AddressError, needs_smtputf8, parse_address, parse_address_list};
 pub use draft::{
     Attachment, AttachmentKind, AttachmentSource, CalendarMethod, CalendarPart, Draft, ForwardMode, Forwarded,
     OriginalKind, OriginalRef, Priority,
@@ -63,7 +63,9 @@ pub use reply::{ReplyMode, ReplyOptions, SubjectStyle, forward, forward_subject,
 pub use rich::{Block, Image, Inline, RichBody, Span, Style};
 pub use signature::{Signature, SignatureBook, SignaturePlacement};
 pub use template::TemplateStore;
-pub use transport::{OutgoingMessage, SendError, SendErrorKind, SendReceipt, SmtpTransport, Transport};
+pub use transport::{
+    DEFAULT_SMTP_TIMEOUT, OutgoingMessage, SendError, SendErrorKind, SendReceipt, SmtpTransport, Transport,
+};
 
 /// Valor de la cabecera `User-Agent`.
 pub const USER_AGENT: &str = concat!("IureDesk/", env!("CARGO_PKG_VERSION"));

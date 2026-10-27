@@ -1,0 +1,25 @@
+[package]
+name = "iuredesk-graph"
+description = "Cliente HTTP de Microsoft Graph compartido (tokens, 429 con Retry-After, paginado, delta) y transporte sendMail"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+iuredesk-model = { workspace = true }
+iuredesk-oauth = { workspace = true }
+iuredesk-compose = { workspace = true }
+thiserror = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+base64 = { workspace = true }
+mail-parser = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
+
+[lints]
+workspace = true

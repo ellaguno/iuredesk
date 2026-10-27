@@ -189,6 +189,8 @@ pub enum IdleEvent {
     Vanished(SeqSet),
     /// Cambiaron las banderas de un mensaje.
     Fetch(Box<FetchData>),
+    /// Cambió otro buzón (NOTIFY, RFC 5465): nombre tal como lo usa el servidor.
+    MailboxStatus(String),
 }
 
 /// Cómo terminó un IDLE.
@@ -1054,6 +1056,56 @@ impl ImapClient {
         })
     }
 
+    /// `UID STORE set ±X-GM-LABELS.SILENT (etiquetas)` (Gmail, `X-GM-EXT-1`). Las etiquetas del
+    /// sistema (`\\Inbox`, `\\Starred`…) van como átomo; las demás, entrecomilladas o como literal.
+    pub async fn uid_store_gm_labels(&mut self, set: &SeqSet, mode: StoreMode, labels: &[String]) -> Result<()> {
+        self.require_selected()?;
+        if !self.caps.has("X-GM-EXT-1") {
+            return Err(ImapError::Unsupported("X-GM-EXT-1".into()));
+        }
+        if set.is_empty() || labels.is_empty() {
+            return Ok(());
+        }
+        let op = match mode {
+            StoreMode::Add => "+X-GM-LABELS.SILENT",
+            StoreMode::Remove => "-X-GM-LABELS.SILENT",
+            StoreMode::Replace => "X-GM-LABELS.SILENT",
+        };
+        let mut parts = vec![Part::Text(format!("UID STORE {set} {op} ("))];
+        for (i, l) in labels.iter().take(500).enumerate() {
+            check_text("etiqueta", l)?;
+            if l.is_empty() || l.len() > 1_000 {
+                return Err(ImapError::InvalidInput("etiqueta vacía o demasiado larga".into()));
+            }
+            if i > 0 {
+                parts.push(Part::Text(" ".into()));
+            }
+            if l.starts_with('\\') {
+                check_flag(l)?;
+                parts.push(Part::Text(l.clone()));
+            } else {
+                parts.push(astring(l));
+            }
+        }
+        parts.push(Part::Text(")".into()));
+        let done = self.exec("UID STORE", parts).await?;
+        self.keep_unsolicited(&done.untagged);
+        Ok(())
+    }
+
+    /// `NOTIFY SET` (RFC 5465): avisos de mensajes nuevos, borrados y banderas del buzón
+    /// seleccionado y de los demás buzones personales. Después, [`ImapClient::idle`] devuelve
+    /// [`IdleEvent::MailboxStatus`] cuando cambia otro buzón.
+    pub async fn notify_personal(&mut self) -> Result<()> {
+        if !self.caps.has("NOTIFY") {
+            return Err(ImapError::Unsupported("NOTIFY".into()));
+        }
+        let cmd = "NOTIFY SET (selected (MessageNew MessageExpunge FlagChange)) (personal (MessageNew MessageExpunge))";
+        let done = self.exec("NOTIFY", vec![Part::Text(cmd.into())]).await?;
+        self.keep_unsolicited(&done.untagged);
+        Ok(())
+    }
+
     /// `UID SEARCH` (con `RETURN (ALL)` si hay ESEARCH). `criteria` es texto IMAP (`SINCE
     /// 1-Jan-2026`, `UID 1:500`, `ALL`).
     pub async fn uid_search(&mut self, criteria: &str) -> Result<Vec<u32>> {
@@ -1174,6 +1226,9 @@ fn push_idle_event(events: &mut Vec<IdleEvent>, u: Untagged) {
         Untagged::Expunge(n) => events.push(IdleEvent::Expunge(n)),
         Untagged::Vanished { uids, .. } => events.push(IdleEvent::Vanished(uids)),
         Untagged::Fetch(f) => events.push(IdleEvent::Fetch(f)),
+        Untagged::Status(st) => {
+            events.push(IdleEvent::MailboxStatus(String::from_utf8_lossy(&st.raw_name).into_owned()))
+        }
         _ => {}
     }
 }
