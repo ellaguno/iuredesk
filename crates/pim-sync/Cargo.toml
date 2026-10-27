@@ -1,0 +1,32 @@
+[package]
+name = "iuredesk-pim-sync"
+description = "Sincronización de calendario, contactos y tareas: CalDAV/CardDAV y Microsoft Graph → almacén local"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+iuredesk-model = { workspace = true }
+iuredesk-store = { workspace = true }
+iuredesk-dav = { workspace = true }
+iuredesk-oauth = { workspace = true }
+iuredesk-accounts = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+reqwest = { workspace = true }
+base64 = { workspace = true }
+getrandom = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
+tempfile = { workspace = true }
+proptest = { workspace = true }
+
+[lints]
+workspace = true

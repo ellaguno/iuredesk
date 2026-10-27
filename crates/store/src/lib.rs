@@ -25,6 +25,7 @@ mod codec;
 pub mod error;
 mod mail;
 mod pim;
+pub mod pim_remote;
 mod queue;
 #[cfg(feature = "sample")]
 pub mod sample;
@@ -43,6 +44,7 @@ pub use blob::{BlobStore, MAX_BLOB_SIZE};
 pub use error::{Result, StoreError};
 pub use mail::{AccountLabel, FolderCount, NewMessage};
 pub use pim::MAX_INDEXED_DAYS;
+pub use pim_remote::{CollectionRef, CollectionSync, PimRef, RawObject, SyncedItem};
 pub use queue::{MAX_OP_PAYLOAD, QueuedOp};
 pub use search::{ParsedQuery, QueryTerm, TermField, parse_query};
 

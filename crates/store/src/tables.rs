@@ -70,6 +70,13 @@ pub(crate) const SYNC_STATE: TableDefinition<&str, &[u8]> = TableDefinition::new
 /// Cola de operaciones pendientes (offline), por número de secuencia.
 pub(crate) const OPS_QUEUE: TableDefinition<u64, &[u8]> = TableDefinition::new("ops_queue");
 
+/// Objeto crudo de cada elemento PIM sincronizado (`.ics`, `.vcf` o JSON de Graph): clave
+/// (tipo, id local) → [`crate::RawObject`]. Ver [`crate::pim_remote`].
+pub(crate) const PIM_RAW: TableDefinition<(u8, u64), &[u8]> = TableDefinition::new("pim_raw");
+/// Estado de sincronización por colección (calendario, libreta, lista de tareas): clave
+/// (tipo, id local) → [`crate::CollectionSync`].
+pub(crate) const PIM_COLLECTIONS: TableDefinition<(u8, u64), &[u8]> = TableDefinition::new("pim_collections");
+
 /// Crea todas las tablas (las transacciones de lectura fallan si una tabla no existe).
 pub(crate) fn create_all(tx: &redb::WriteTransaction) -> Result<(), redb::TableError> {
     tx.open_table(META)?;
@@ -99,5 +106,7 @@ pub(crate) fn create_all(tx: &redb::WriteTransaction) -> Result<(), redb::TableE
     tx.open_table(LIST_TASKS)?;
     tx.open_table(SYNC_STATE)?;
     tx.open_table(OPS_QUEUE)?;
+    tx.open_table(PIM_RAW)?;
+    tx.open_table(PIM_COLLECTIONS)?;
     Ok(())
 }

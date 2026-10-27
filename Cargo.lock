@@ -3084,6 +3084,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "iuredesk-pim-sync"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "chrono-tz",
+ "getrandom 0.2.17",
+ "iuredesk-accounts",
+ "iuredesk-dav",
+ "iuredesk-model",
+ "iuredesk-oauth",
+ "iuredesk-store",
+ "proptest",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "iuredesk-pop3"
 version = "0.1.0-alpha.0"
 dependencies = [
