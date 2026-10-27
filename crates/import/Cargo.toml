@@ -1,0 +1,41 @@
+[package]
+name = "iuredesk-import"
+description = "Migración local desde Thunderbird, Apple Mail, Outlook (PST), Gmail Takeout, mbox, Maildir, .eml, .ics y .vcf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+iuredesk-model = { workspace = true }
+iuredesk-store = { workspace = true }
+# Parseo de mensajes crudos → sobre + texto (el mismo que usa la sincronización IMAP/POP3).
+iuredesk-sync = { workspace = true }
+iuredesk-dav = { workspace = true }
+# Mapeo iCalendar/vCard → modelo (el mismo que usa CalDAV/CardDAV).
+iuredesk-pim-sync = { workspace = true }
+mail-parser = { workspace = true }
+mail-builder = { workspace = true }
+outlook-pst = { workspace = true }
+quick-xml = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+dirs = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
+# Escritor PST (bifurcación MIT de `outlook-pst`) para generar archivos de prueba sintéticos.
+pst-writer = { workspace = true }
+
+[[example]]
+name = "import"
+
+[lints]
+workspace = true
