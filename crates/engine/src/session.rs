@@ -13,12 +13,14 @@ mod live;
 mod mailops;
 mod outbox;
 mod pim;
+mod today;
 
 pub use cal::{CalState, PimBackend, occurrence_start};
 pub use iure::{IURE_CALENDAR_PATH, IURE_TASKS_PATH, IurePanel, IureSetup, LeadSuggestions, LoginState};
 pub use live::{AccountSync, SyncStatus};
 pub use mailops::AccountRow;
 pub use outbox::OfflineTransport;
+pub use today::{folder_from_key, folder_key};
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -59,6 +61,8 @@ const MAX_BATCH: usize = 10_000;
 /// Módulo del riel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Module {
+    /// «Mi día» (F6.1): el resumen del día.
+    Today,
     #[default]
     Mail,
     Calendar,
@@ -69,11 +73,19 @@ pub enum Module {
 }
 
 impl Module {
-    pub const ALL: [Module; 6] =
-        [Module::Mail, Module::Calendar, Module::Contacts, Module::Notes, Module::Tasks, Module::Assistant];
+    pub const ALL: [Module; 7] = [
+        Module::Today,
+        Module::Mail,
+        Module::Calendar,
+        Module::Contacts,
+        Module::Notes,
+        Module::Tasks,
+        Module::Assistant,
+    ];
 
     pub fn key(self) -> &'static str {
         match self {
+            Module::Today => "today",
             Module::Mail => "mail",
             Module::Calendar => "calendar",
             Module::Contacts => "contacts",
@@ -89,6 +101,7 @@ impl Module {
 
     pub fn label(self) -> &'static str {
         match self {
+            Module::Today => crate::lang::pick("Today", "Hoy"),
             Module::Mail => crate::lang::pick("Mail", "Correo"),
             Module::Calendar => crate::lang::pick("Calendar", "Calendario"),
             Module::Contacts => crate::lang::pick("Contacts", "Contactos"),
@@ -201,6 +214,8 @@ pub enum EngineJob {
     /// Prueba de conexión (y secreto ya guardado) de la cuenta en curso.
     Probe(std::result::Result<(), Text>),
     OAuth(std::result::Result<(), Text>),
+    /// Resumen de «Mi día» (F6.1).
+    Day(Box<crate::today::DaySummary>),
     Failed(Text),
 }
 
@@ -349,6 +364,8 @@ pub struct Session {
     iure: iure::Iure,
     /// Calendario: día de referencia, invitaciones, disponibilidad, recordatorios.
     pub cal: cal::CalState,
+    /// «Mi día» (F6.1).
+    day: today::DayState,
 }
 
 impl std::fmt::Debug for Session {
@@ -411,6 +428,7 @@ impl Session {
             pim_last_error: None,
             iure: iure::Iure::default(),
             cal: cal::CalState::default(),
+            day: today::DayState::default(),
         };
         s.signatures = SignatureBook::load(&s.store).unwrap_or_default();
         s.reload_accounts()?;
@@ -1063,7 +1081,8 @@ impl Session {
                 self.set_conversations(on);
                 Ok(Outcome::Done)
             }
-            "nav.mail" | "nav.calendar" | "nav.contacts" | "nav.notes" | "nav.tasks" | "nav.assistant" => {
+            "nav.today" | "nav.mail" | "nav.calendar" | "nav.contacts" | "nav.notes" | "nav.tasks"
+            | "nav.assistant" => {
                 if let Some(m) = Module::from_key(base.trim_start_matches("nav.")) {
                     self.module = m;
                 }
@@ -1476,7 +1495,12 @@ impl Session {
             EngineJob::Discovery(r) => self.wizard_on_discovery(id, r),
             EngineJob::Probe(r) => self.wizard_on_probe(id, r, false),
             EngineJob::OAuth(r) => self.wizard_on_probe(id, r, true),
+            EngineJob::Day(s) => {
+                self.on_day(id, *s);
+                None
+            }
             EngineJob::Failed(t) => {
+                self.day_job_failed(id);
                 if self.rows_job == Some(id) {
                     self.loading = false;
                 }

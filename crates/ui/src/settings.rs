@@ -1,7 +1,7 @@
 //! Ajustes: tema, densidad, esquema de atajos, idioma, conversaciones y cuentas.
 
 use egui::{Context, RichText};
-use iuredesk_engine::{DensityPref, ShortcutScheme, ThemePref};
+use iuredesk_engine::{DensityPref, ShortcutScheme, StartPref, ThemePref};
 use iurefficient_ui::{lang, pick, section_label, segmented, theme};
 
 use crate::app::{DeskApp, set_language};
@@ -35,6 +35,23 @@ pub fn show(app: &mut DeskApp, ctx: &Context) {
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().max_height(ctx.content_rect().height() - 140.0).show(ui, |ui| {
                 let c = theme::colors(ui);
+                section_label(ui, pick("General", "General"));
+                ui.label(RichText::new(pick("When IureDesk opens:", "Al abrir IureDesk:")).color(c.text));
+                let mut st = app.session.prefs.start;
+                if segmented(
+                    ui,
+                    &mut st,
+                    &[
+                        (StartPref::Today, pick("My day", "Mi día")),
+                        (StartPref::LastPlace, pick("Where I left off", "Donde lo dejé")),
+                    ],
+                )
+                .changed()
+                {
+                    app.session.prefs.start = st;
+                    app.session.save_prefs();
+                }
+                ui.add_space(14.0);
                 section_label(ui, pick("Appearance", "Apariencia"));
                 let mut t = app.session.prefs.theme;
                 if segmented(

@@ -93,6 +93,10 @@ pub struct DeskApp {
     pub(crate) ai: crate::assistant::AiUi,
     pub(crate) suite: crate::suite_ui::SuiteUi,
     pub(crate) import: crate::import_ui::ImportUi,
+    /// F6.1: «Mi día».
+    pub(crate) today: crate::today::TodayState,
+    /// Último lugar recordado (módulo y carpeta) para «Donde lo dejé».
+    place: Option<(Module, iuredesk_engine::FolderSel)>,
     applied: Option<(iuredesk_engine::ThemePref, iuredesk_engine::DensityPref)>,
 }
 
@@ -127,6 +131,8 @@ impl DeskApp {
             ai,
             suite,
             import,
+            today: Default::default(),
+            place: None,
             applied: None,
         };
         if let Some(m) = app.options.mailto.clone()
@@ -222,6 +228,7 @@ impl DeskApp {
         crate::header::show(self, ui, true);
         self.rail(ui);
         match self.session.module {
+            Module::Today => crate::today::show(self, ui),
             Module::Mail => crate::mail::show(self, ui),
             Module::Calendar => crate::calendar::show(self, ui),
             Module::Contacts => crate::pim::contacts(self, ui),
@@ -249,6 +256,16 @@ impl DeskApp {
             ctx.request_repaint_after(d.max(std::time::Duration::from_millis(16)));
         }
         crate::header::window_frame(self, ui);
+        self.remember_place();
+    }
+
+    /// Recuerda dónde está el usuario (para abrir ahí la próxima vez, si lo eligió).
+    fn remember_place(&mut self) {
+        let now = (self.session.module, self.session.folder_sel());
+        if self.place != Some(now) {
+            self.place = Some(now);
+            self.session.remember_place();
+        }
     }
 
     /// La barra de título integrada, si la ventana no lleva la del sistema.
@@ -260,6 +277,9 @@ impl DeskApp {
     pub(crate) fn header_title(&self) -> String {
         match self.session.module {
             Module::Mail => format!("{} · {}", self.session.folder_title(), self.session.rows().len()),
+            Module::Today => {
+                format!("{} · {}", Module::Today.label(), iuredesk_engine::today::long_day(self.session.today()))
+            }
             m => m.label().to_string(),
         }
     }
@@ -556,6 +576,7 @@ impl DeskApp {
         let scheme = self.session.scheme();
         let sc = |id: &str| command::shortcut(id, scheme).map(|c| c.label(cfg!(target_os = "macos")));
         let labels = [
+            ("today", sc("nav.today")),
             ("mail", sc("nav.mail")),
             ("calendar", sc("nav.calendar")),
             ("contacts", sc("nav.contacts")),
@@ -564,6 +585,7 @@ impl DeskApp {
             ("assistant", sc("nav.assistant")),
         ];
         let short = |k: &str| labels.iter().find(|(id, _)| *id == k).and_then(|(_, s)| s.clone()).unwrap_or_default();
+        let s_today = short("today");
         let (s_mail, s_cal, s_con, s_not, s_tas, s_ai) =
             (short("mail"), short("calendar"), short("contacts"), short("notes"), short("tasks"), short("assistant"));
         let status = self.session.sync_status();
@@ -579,6 +601,7 @@ impl DeskApp {
             self.last_sync_error = None;
         }
         let items = [
+            NavItem::new("today", iurefficient_ui::Icon::Sun, Module::Today.label()).shortcut(&s_today),
             NavItem::new("mail", iurefficient_ui::Icon::Mail, Module::Mail.label())
                 .badge(u32::try_from(unread).unwrap_or(u32::MAX))
                 .shortcut(&s_mail),

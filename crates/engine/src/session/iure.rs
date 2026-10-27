@@ -1325,12 +1325,32 @@ impl Session {
         if list.remote_path != IURE_TASKS_PATH {
             return;
         }
-        let Some(s) = self.iure_remote() else { return };
+        let Some(s) = self.iure_remote() else {
+            // Nunca en silencio: sin conexión, la instancia no se entera (el ejemplo no tiene red).
+            if matches!(self.iure.backend, Backend::None) {
+                self.notices.push(Notice::error(Text::new(
+                    "Iurefficient is not connected: the task changed only on this computer and will reopen on the next sync. Complete it in Iurefficient.",
+                    "Iurefficient no está conectado: la tarea cambió solo en este equipo y se reabrirá en la próxima sincronización. Termínala en Iurefficient.",
+                )));
+            }
+            return;
+        };
         let (rid, done) = (rid.to_string(), t.is_done());
         self.iure_spawn(async move {
             let r = iure::call(iurefficient_connect::pim::set_task_done(&s, &rid, done)).await;
             Msg::Plain(r.map(|_| Text::default()))
         });
+    }
+
+    /// ¿Se puede cambiar una tarea de la lista «Iurefficient» desde aquí? (sesión lista o el
+    /// ejemplo sin red). Si no, la interfaz ofrece abrirla en la web.
+    pub fn iure_can_write(&self) -> bool {
+        self.iure.status.is_ready() && !matches!(self.iure.backend, Backend::None)
+    }
+
+    /// ¿La tarea es de la lista «Iurefficient»?
+    pub fn is_iure_task(&self, list: TaskListId) -> bool {
+        self.store.get_task_list(list).ok().flatten().is_some_and(|l| l.remote_path == IURE_TASKS_PATH)
     }
 
     /// Mensaje de prueba: ¿hay consulta del panel esperando? (pruebas).

@@ -1018,6 +1018,34 @@ fn today(app: &mut DeskApp, ui: &mut Ui) {
     }
 }
 
+/// «Mi día»: pide la priorización de la bandeja (con el consentimiento y las reglas de
+/// DataScope de siempre; nunca sola).
+pub(crate) fn request_triage(app: &mut DeskApp) {
+    request(app, AiTask::Triage);
+}
+
+/// ¿Se está priorizando ahora?
+pub(crate) fn triage_running(app: &DeskApp) -> bool {
+    app.ai.hub.job(AiKey::Triage).is_some_and(|j| j.state == AiState::Running)
+}
+
+/// El resultado de la priorización, compacto (hasta `max` filas). Devuelve el mensaje a abrir.
+pub(crate) fn triage_compact(app: &mut DeskApp, ui: &mut Ui, max: usize) -> Option<MessageId> {
+    app.ai.hub.job(AiKey::Triage)?;
+    let Some(AiValue::Triage(rows)) = job_status(app, ui, AiKey::Triage, Some(AiTask::Triage)) else { return None };
+    let mut open = None;
+    for (k, r) in rows.iter().take(max).enumerate() {
+        if triage_row(ui, k, r) {
+            open = Some(r.id);
+        }
+    }
+    if rows.is_empty() {
+        let c = theme::colors(ui);
+        ui.label(RichText::new(pick("Nothing pending.", "Nada pendiente.")).color(c.text_muted));
+    }
+    open
+}
+
 fn triage_row(ui: &mut Ui, k: usize, r: &TriageRow) -> bool {
     let c = theme::colors(ui);
     let mut clicked = false;
