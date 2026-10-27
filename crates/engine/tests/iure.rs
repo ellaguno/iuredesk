@@ -115,7 +115,9 @@ async fn serve(f: Arc<Fake>) -> u16 {
                     if let Some(h) = text.find("\r\n\r\n") {
                         let len = text
                             .lines()
-                            .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().to_string()))
+                            .find_map(|l| {
+                                l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().to_string())
+                            })
                             .and_then(|v| v.parse::<usize>().ok())
                             .unwrap_or(0);
                         if buf.len() >= h + 4 + len {
@@ -161,9 +163,7 @@ fn wait(s: &mut Session, what: &str, mut ok: impl FnMut(&mut Session) -> bool) {
 /// Un mensaje con Message-ID y remitente.
 fn some_message(s: &mut Session) -> MessageId {
     let rows: Vec<_> = s.rows().iter().map(|r| r.id).take(200).collect();
-    rows.into_iter()
-        .find(|id| s.envelope(*id).is_some_and(|e| e.message_id.is_some() && !e.from.is_empty()))
-        .unwrap()
+    rows.into_iter().find(|id| s.envelope(*id).is_some_and(|e| e.message_id.is_some() && !e.from.is_empty())).unwrap()
 }
 
 fn start(s: &mut Session, port: u16) {
@@ -205,7 +205,10 @@ async fn context_link_feed_and_agenda_against_a_fake_instance() {
         wait(&mut s, "agenda", |s| s.calendars().iter().any(|c| c.name == "Iurefficient"));
         let cal = s.calendars().iter().find(|c| c.name == "Iurefficient").unwrap().clone();
         assert!(cal.read_only);
-        let evs = s.store().events_between(&[cal.id], now() - chrono::Duration::days(1), now() + chrono::Duration::days(3)).unwrap();
+        let evs = s
+            .store()
+            .events_between(&[cal.id], now() - chrono::Duration::days(1), now() + chrono::Duration::days(3))
+            .unwrap();
         assert_eq!(evs.len(), 1);
         assert!(s.task_lists().iter().any(|l| l.name == "Iurefficient" && !s.tasks(l.id).is_empty()));
     });

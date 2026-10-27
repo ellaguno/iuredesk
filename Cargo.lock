@@ -3187,7 +3187,8 @@ dependencies = [
 
 [[package]]
 name = "iurefficient-connect"
-version = "0.7.1"
+version = "0.8.0"
+source = "git+https://github.com/ellaguno/iurefficient-connect?tag=v0.8.0#778a99e8db76ddcbfe3a5159d18b4e9f5800636c"
 dependencies = [
  "anyhow",
  "bytes",

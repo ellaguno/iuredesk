@@ -33,8 +33,8 @@ pub use iuredesk_sync;
 pub use lang::{Text, pick};
 pub use prefs::{DensityPref, Prefs, ShortcutScheme, ThemePref};
 pub use session::{
-    AccountRow, AccountSync, Event, Fetched, IurePanel, IureSetup, LeadSuggestions, LoginState, FolderSel, ListRow, Module, Notice, NoticeKind, OfflineTransport, Outcome,
-    Session, SessionConfig, SyncStatus,
+    AccountRow, AccountSync, Event, Fetched, FolderSel, IurePanel, IureSetup, LeadSuggestions, ListRow, LoginState,
+    Module, Notice, NoticeKind, OfflineTransport, Outcome, Session, SessionConfig, SyncStatus,
 };
 pub use time::Zone;
 

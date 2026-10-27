@@ -169,10 +169,8 @@ impl DeskApp {
             return;
         }
 
-        let modal = self.palette.is_open()
-            || self.session.wizard.is_some()
-            || self.settings_open
-            || self.iure.dialog.is_some();
+        let modal =
+            self.palette.is_open() || self.session.wizard.is_some() || self.settings_open || self.iure.dialog.is_some();
         // Escribiendo en el redactor, los atajos de la aplicación no se disparan.
         let composing = !self.composers.is_empty() && ctx.egui_wants_keyboard_input();
         if !modal && !composing {

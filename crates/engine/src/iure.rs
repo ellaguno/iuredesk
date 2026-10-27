@@ -20,10 +20,10 @@ use std::future::Future;
 use std::time::Duration;
 
 use chrono::{DateTime, NaiveDate, Utc};
+use iuredesk_store::EmailLink;
 use iurefficient_connect::api::{self, CrmKind, UploadOptions};
 use iurefficient_connect::pim;
 use iurefficient_connect::rest::{ApiError, Session};
-use iuredesk_store::EmailLink;
 
 use crate::lang::Text;
 
@@ -123,8 +123,12 @@ impl IureStatus {
                 format!("No se pudo conectar con {host}. Revisa tu internet; se reintentará solo."),
             ),
             IureStatus::TermsRequired { host, .. } => Text::new(
-                format!("{host} asks you to accept its updated terms. Open Iurefficient in your browser, accept them and come back."),
-                format!("{host} te pide aceptar sus términos actualizados. Abre Iurefficient en el navegador, acéptalos y vuelve."),
+                format!(
+                    "{host} asks you to accept its updated terms. Open Iurefficient in your browser, accept them and come back."
+                ),
+                format!(
+                    "{host} te pide aceptar sus términos actualizados. Abre Iurefficient en el navegador, acéptalos y vuelve."
+                ),
             ),
         }
     }
@@ -159,9 +163,10 @@ impl IureError {
                 "Iurefficient asks you to accept its updated terms. Open it in your browser and accept them.",
                 "Iurefficient te pide aceptar sus términos actualizados. Ábrelo en el navegador y acéptalos.",
             ),
-            IureError::Server(t) => {
-                Text::new(format!("Iurefficient could not do it: {}", t.en), format!("Iurefficient no pudo hacerlo: {}", t.es))
-            }
+            IureError::Server(t) => Text::new(
+                format!("Iurefficient could not do it: {}", t.en),
+                format!("Iurefficient no pudo hacerlo: {}", t.es),
+            ),
         }
     }
 
@@ -565,10 +570,9 @@ impl TargetKind {
                 "Logs an «email» activity with the summary of the message.",
                 "Registra una actividad «correo» con el resumen del mensaje.",
             ),
-            TargetKind::Ticket => Text::new(
-                "Adds the email to the ticket as a comment.",
-                "Agrega el correo al ticket como comentario.",
-            ),
+            TargetKind::Ticket => {
+                Text::new("Adds the email to the ticket as a comment.", "Agrega el correo al ticket como comentario.")
+            }
             TargetKind::Task => Text::new("Links the email to the task.", "Vincula el correo con la tarea."),
         }
     }
@@ -860,7 +864,8 @@ pub async fn create_ticket(sess: &Session, f: &TicketForm, now: DateTime<Utc>) -
         },
     ))
     .await?;
-    let label = if t.ticket_number.is_empty() { clip(&f.title, 200) } else { format!("{} · {}", t.ticket_number, f.title) };
+    let label =
+        if t.ticket_number.is_empty() { clip(&f.title, 200) } else { format!("{} · {}", t.ticket_number, f.title) };
     Ok(vec![EmailLink {
         kind: "ticket".into(),
         id: t.id,
@@ -974,7 +979,11 @@ pub async fn fetch_feed(sess: &Session) -> Result<Feed, IureError> {
 
 /// Marca leído un aviso o una mención.
 pub async fn mark_read(sess: &Session, mention: bool, id: &str) -> Result<(), IureError> {
-    if mention { call(pim::mark_mention_read(sess, id)).await } else { call(pim::mark_notification_read(sess, id)).await }
+    if mention {
+        call(pim::mark_mention_read(sess, id)).await
+    } else {
+        call(pim::mark_notification_read(sess, id)).await
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1024,8 +1033,11 @@ pub mod sample {
     use super::*;
 
     /// Organizaciones del buzón de ejemplo con oportunidad abierta.
-    const DEALS: &[(&str, &str, f64)] =
-        &[("Acme Corp.", "Propuesta", 120_000.0), ("Northwind Ltd.", "Negociación", 48_500.0), ("Constructora Altamira", "Calificado", 310_000.0)];
+    const DEALS: &[(&str, &str, f64)] = &[
+        ("Acme Corp.", "Propuesta", 120_000.0),
+        ("Northwind Ltd.", "Negociación", 48_500.0),
+        ("Constructora Altamira", "Calificado", 310_000.0),
+    ];
 
     fn hash(s: &str) -> u64 {
         s.bytes().fold(1469598103934665603u64, |h, b| (h ^ u64::from(b)).wrapping_mul(1099511628211))
@@ -1039,7 +1051,7 @@ pub mod sample {
         }
         let h = hash(&q.email.to_lowercase());
         let deal = q.org.as_deref().and_then(|o| DEALS.iter().find(|(n, _, _)| *n == o));
-        let known = deal.is_some() || !q.case_refs.is_empty() || h % 3 == 0;
+        let known = deal.is_some() || !q.case_refs.is_empty() || h.is_multiple_of(3);
         if known {
             let subtitle = match &q.org {
                 Some(o) if !o.is_empty() => format!("Directora jurídica · {o}"),
@@ -1087,7 +1099,7 @@ pub mod sample {
                 id: format!("t-{}", h % 1000),
                 number: format!("TK-{}", 1000 + h % 900),
                 title: "Acceso al portal de clientes".into(),
-                status: if h % 2 == 0 { "open".into() } else { "waiting".into() },
+                status: if h.is_multiple_of(2) { "open".into() } else { "waiting".into() },
                 priority: "medium".into(),
             });
         }

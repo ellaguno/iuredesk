@@ -71,7 +71,7 @@ pub fn money(a: f64) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, ch) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(ch);
@@ -139,7 +139,11 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui, id: MessageId, p: &IurePanel) {
     match &p.status {
         IureStatus::TermsRequired { .. } => {
             let t = p.status.label();
-            if Banner::new(Severity::Warning, t.get()).action(pick("Open Iurefficient", "Abrir Iurefficient")).show(ui).action {
+            if Banner::new(Severity::Warning, t.get())
+                .action(pick("Open Iurefficient", "Abrir Iurefficient"))
+                .show(ui)
+                .action
+            {
                 act = Some(Act::OpenWeb);
             }
         }
@@ -172,7 +176,8 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui, id: MessageId, p: &IurePanel) {
                 };
                 ui.horizontal(|ui| {
                     ui.label(small(ui, format!("{how} · {}", l.created.format("%d/%m %H:%M"))));
-                    let r = ui.small_button("×").on_hover_text(pick("Forget this link here", "Olvidar este vínculo aquí"));
+                    let r =
+                        ui.small_button("×").on_hover_text(pick("Forget this link here", "Olvidar este vínculo aquí"));
                     iurefficient_ui::a11y::button(&r, pick("Forget link", "Olvidar vínculo"));
                     if r.clicked() {
                         act = Some(Act::Unlink(l.kind.clone(), l.id.clone()));
@@ -256,7 +261,9 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui, id: MessageId, p: &IurePanel) {
         }
         if !ctx.activities.is_empty() {
             card(ui, |ui| {
-                ui.label(RichText::new(pick("Recent CRM activity", "Actividad reciente del CRM")).strong().color(c.text));
+                ui.label(
+                    RichText::new(pick("Recent CRM activity", "Actividad reciente del CRM")).strong().color(c.text),
+                );
                 for a in ctx.activities.iter().take(4) {
                     let when = a.when.as_deref().and_then(|w| w.get(..10)).unwrap_or("");
                     ui.add(
@@ -269,10 +276,7 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui, id: MessageId, p: &IurePanel) {
         if ctx.is_empty() && p.links.is_empty() && !p.loading {
             ui.label(small(
                 ui,
-                pick(
-                    "Iurefficient doesn't know this sender yet.",
-                    "Iurefficient aún no conoce a este remitente.",
-                ),
+                pick("Iurefficient doesn't know this sender yet.", "Iurefficient aún no conoce a este remitente."),
             ));
             ui.add_space(4.0);
         }
@@ -301,7 +305,8 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui, id: MessageId, p: &IurePanel) {
     let Some(a) = act else { return };
     match a {
         Act::Link => {
-            app.iure.dialog = Some(Dialog::Link { msg: id, query: String::new(), picked: None, opts: LinkOptions::default() })
+            app.iure.dialog =
+                Some(Dialog::Link { msg: id, query: String::new(), picked: None, opts: LinkOptions::default() })
         }
         Act::Lead => {
             app.session.iure_suggest_leads(id);
@@ -358,7 +363,7 @@ pub fn dialogs(app: &mut DeskApp, ctx: &Context) {
         Dialog::Task { .. } => pick("Create task", "Crear tarea"),
     };
     egui::Window::new(title)
-        .id(egui::Id::new("iure-dialog"))
+        .id(egui::Id::unique("iure-dialog"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -578,7 +583,7 @@ pub fn bell(app: &mut DeskApp, ctx: &Context) {
     let mut all = false;
     let feed = app.session.iure_feed().clone();
     egui::Window::new(pick("Iurefficient notifications", "Avisos de Iurefficient"))
-        .id(egui::Id::new("iure-bell"))
+        .id(egui::Id::unique("iure-bell"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -687,7 +692,9 @@ pub fn settings_section(app: &mut DeskApp, ui: &mut Ui) {
             app.session.iure_retry();
         }
     }
-    if matches!(st, IureStatus::TermsRequired { .. }) && ui.button(pick("I accepted them, retry", "Ya los acepté, reintentar")).clicked() {
+    if matches!(st, IureStatus::TermsRequired { .. })
+        && ui.button(pick("I accepted them, retry", "Ya los acepté, reintentar")).clicked()
+    {
         app.session.iure_retry();
     }
     ui.add_space(4.0);

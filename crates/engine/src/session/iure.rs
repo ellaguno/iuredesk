@@ -393,8 +393,10 @@ impl Session {
     /// Segundo paso del inicio de sesión: el código de la app de autenticación.
     pub fn iure_verify_totp(&mut self, code: &str) {
         let Some((s, token)) = self.iure.pending_totp.clone() else {
-            self.iure.login =
-                LoginState { error: Some(Text::new("Sign in again.", "Vuelve a iniciar sesión.")), ..Default::default() };
+            self.iure.login = LoginState {
+                error: Some(Text::new("Sign in again.", "Vuelve a iniciar sesión.")),
+                ..Default::default()
+            };
             return;
         };
         self.iure.login.busy = true;
@@ -494,7 +496,8 @@ impl Session {
         match self.iure.backend.clone() {
             Backend::Sample => p.context = Some(iure::sample::context(&q)),
             Backend::None => {
-                if let Some(CtxEntry::Ready(c, _) | CtxEntry::Failed(Some(c), _, _)) = self.iure.contexts.get(&q.key()) {
+                if let Some(CtxEntry::Ready(c, _) | CtxEntry::Failed(Some(c), _, _)) = self.iure.contexts.get(&q.key())
+                {
                     p.context = Some(c.clone());
                 }
             }
@@ -532,8 +535,7 @@ impl Session {
         let now = Instant::now();
         let want = self.iure.want.as_ref().map(|(_, _, at)| DEBOUNCE.saturating_sub(at.elapsed()));
         let feed = self.iure.feed_next.filter(|_| !self.iure.feed_busy).map(|t| t.saturating_duration_since(now));
-        let agenda =
-            self.iure.agenda_next.filter(|_| !self.iure.agenda_busy).map(|t| t.saturating_duration_since(now));
+        let agenda = self.iure.agenda_next.filter(|_| !self.iure.agenda_busy).map(|t| t.saturating_duration_since(now));
         [want, feed, agenda].into_iter().flatten().min()
     }
 
@@ -556,9 +558,7 @@ impl Session {
         }
         let Some(s) = self.iure_remote() else { return };
         let id = id.to_string();
-        self.iure_spawn(async move {
-            Msg::Plain(iure::mark_read(&s, mention, &id).await.map(|_| Text::default()))
-        });
+        self.iure_spawn(async move { Msg::Plain(iure::mark_read(&s, mention, &id).await.map(|_| Text::default())) });
     }
 
     /// Marca todos los avisos como leídos.
@@ -635,7 +635,11 @@ impl Session {
         &mut self,
         id: MessageId,
         done: Text,
-        run: impl FnOnce(Arc<Remote>, EmailDigest, DateTime<Utc>) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<EmailLink>, IureError>> + Send>>,
+        run: impl FnOnce(
+            Arc<Remote>,
+            EmailDigest,
+            DateTime<Utc>,
+        ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<EmailLink>, IureError>> + Send>>,
         sample: impl FnOnce(&EmailDigest, DateTime<Utc>) -> Vec<EmailLink>,
     ) -> Result<(), Text> {
         let Some(digest) = self.iure_digest(id) else {
@@ -973,13 +977,17 @@ impl Session {
             }
         }
         let live = matches!(self.iure.status, IureStatus::Ready { .. } | IureStatus::Offline { .. });
-        if live && !self.iure.feed_busy && self.iure.feed_next.is_some_and(|t| now >= t)
+        if live
+            && !self.iure.feed_busy
+            && self.iure.feed_next.is_some_and(|t| now >= t)
             && let Some(s) = self.iure_remote()
         {
             self.iure.feed_busy = true;
             self.iure_spawn(async move { Msg::Feed(iure::fetch_feed(&s).await) });
         }
-        if self.iure.status.is_ready() && !self.iure.agenda_busy && self.iure.agenda_next.is_some_and(|t| now >= t)
+        if self.iure.status.is_ready()
+            && !self.iure.agenda_busy
+            && self.iure.agenda_next.is_some_and(|t| now >= t)
             && let Some(s) = self.iure_remote()
         {
             self.iure.agenda_busy = true;
@@ -1352,7 +1360,10 @@ fn parse_day(s: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(s.trim().get(..10)?, "%Y-%m-%d").ok()
 }
 
-fn event_from_remote(e: &iurefficient_connect::pim::CalendarEvent, cal: iuredesk_model::CalendarId) -> Option<CalEvent> {
+fn event_from_remote(
+    e: &iurefficient_connect::pim::CalendarEvent,
+    cal: iuredesk_model::CalendarId,
+) -> Option<CalEvent> {
     if e.id.trim().is_empty() {
         return None;
     }

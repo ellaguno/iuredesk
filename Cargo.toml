@@ -47,7 +47,7 @@ iuredesk-html-view = { path = "crates/html-view" }
 iuredesk-ui = { path = "crates/ui" }
 
 # suite Iurefficient (repos hermanos)
-iurefficient-connect = { git = "https://github.com/ellaguno/iurefficient-connect", tag = "v0.7.1", default-features = false }
+iurefficient-connect = { git = "https://github.com/ellaguno/iurefficient-connect", tag = "v0.8.0", default-features = false }
 # ui-kit compartido con IureProject (PLAN.md D11). Para desarrollo local: [patch] en .cargo/config.toml.
 iurefficient-ui = { git = "https://github.com/ellaguno/iurefficient-ui", branch = "main" }
 
@@ -140,9 +140,3 @@ codegen-units = 4
 [profile.dist]
 inherits = "release"
 strip = true
-
-# ¡TEMPORAL: quitar al publicar connect v0.8.0! F3.1 usa `connect::pim` (rama `iuredesk` de
-# iurefficient-connect, aún sin etiqueta). Al publicar v0.8.0: borrar este [patch] y subir la
-# etiqueta de `iurefficient-connect` en [workspace.dependencies] a "v0.8.0".
-[patch."https://github.com/ellaguno/iurefficient-connect"]
-iurefficient-connect = { path = "/home/ellaguno/MEGA/Proyectos/Iurefficient/Proyectos/iurefficient-connect-iuredesk" }
