@@ -14,6 +14,7 @@ members = [
     "crates/pim-sync",
     "crates/graph",
     "crates/compose",
+    "crates/crypto",
     "crates/integrations",
     "crates/mcp-server",
     "crates/import",
@@ -49,6 +50,7 @@ iuredesk-dav = { path = "crates/dav" }
 iuredesk-pim-sync = { path = "crates/pim-sync" }
 iuredesk-graph = { path = "crates/graph" }
 iuredesk-compose = { path = "crates/compose" }
+iuredesk-crypto = { path = "crates/crypto" }
 iuredesk-integrations = { path = "crates/integrations" }
 iuredesk-mcp = { path = "crates/mcp-server" }
 iuredesk-import = { path = "crates/import" }
@@ -132,6 +134,27 @@ glifo = { version = "0.4", default-features = false, features = ["std", "png"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
 html5ever = "0.40"
 png = "0.18"
+
+# F5.4: OpenPGP y S/MIME en Rust puro (RustCrypto). rPGP y no sequoia-openpgp: sequoia es
+# LGPL-2.0-or-later (licencia no aprobada) y su backend Rust puro es «experimental».
+pgp = { version = "0.21", default-features = false }
+cms = { version = "0.2.3", default-features = false, features = ["std", "builder"] }
+x509-cert = { version = "0.2", default-features = false, features = ["std", "pem", "builder"] }
+der = { version = "0.7", features = ["std", "pem", "oid"] }
+spki = { version = "0.7", features = ["std"] }
+const-oid = { version = "0.9", features = ["db"] }
+rsa = { version = "0.9", default-features = false, features = ["std", "sha2"] }
+p256 = { version = "0.13", default-features = false, features = ["std", "ecdsa", "pem", "pkcs8"] }
+p384 = { version = "0.13", default-features = false, features = ["std", "ecdsa", "pkcs8"] }
+ecdsa = { version = "0.16", default-features = false, features = ["std", "der", "verifying"] }
+sha1 = { version = "0.10", features = ["oid"] }
+signature = { version = "2", features = ["std"] }
+aes = "0.8"
+cbc = { version = "0.1", features = ["std"] }
+rand = "0.8"
+p12-keystore = "0.2"
+# impresión y PDF (F5.4): escritor PDF en Rust puro
+pdf-writer = "0.15"
 
 # ui: versión unificada en toda la suite (decisión 2026-10-26)
 egui = "0.37"
