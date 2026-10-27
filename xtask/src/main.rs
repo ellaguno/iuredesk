@@ -11,6 +11,10 @@
 //! - `dist [--tag vX.Y.Z]`: compila con el perfil `dist` (release sin símbolos) y deja en `dist/` el paquete
 //!   `iuredesk-<versión>-x86_64-linux.tar.gz` (binarios, licencia, avisos de terceros) y
 //!   `SHA256SUMS`. Con `--tag` falla si la etiqueta no coincide con la versión del workspace.
+//! - `icons`: rasteriza `assets/icons/*.svg` a PNG 16–1024, `.ico` y `.icns` (ver `icons.rs`).
+//! - `package <linux|windows|macos> [--tag vX.Y.Z] [--target <triple>]`: instaladores con
+//!   cargo-packager (`.deb` + AppImage, NSIS, `.app` + `.dmg`) en `dist/` (ver `package.rs` y
+//!   `docs/publicacion.md`).
 #![deny(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -19,6 +23,9 @@
     clippy::todo,
     clippy::unreachable
 )]
+
+mod icons;
+mod package;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -38,6 +45,8 @@ fn main() -> ExitCode {
         "notices" => notices_file(&root().join("target/THIRD-PARTY-NOTICES.txt")),
         "assets" => assets(),
         "dist" => dist(std::env::args().skip(2).collect()),
+        "icons" => icons::icons(),
+        "package" => package::package(std::env::args().skip(2).collect()),
         other => Err(format!("tarea desconocida: {other}")),
     };
     match r {
@@ -300,7 +309,12 @@ const EXTRA_LICENSES: &[(&str, &[&str], &str)] = &[(
 )];
 
 fn notices_file(path: &Path) -> Res {
-    let (text, count) = notices()?;
+    notices_file_for(path, DIST_TARGET)
+}
+
+/// Avisos de terceros para los binarios compilados para `target` (cambia un poco por SO).
+fn notices_file_for(path: &Path, target: &str) -> Res {
+    let (text, count) = notices(target)?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
@@ -312,21 +326,21 @@ fn notices_file(path: &Path) -> Res {
 /// Avisos de terceros: nombre, versión, licencia y textos de licencia de cada crate que entra en
 /// los binarios de `DIST_BINS`. MIT, Apache-2.0 y BSD exigen acompañar los binarios con ellos.
 /// Un texto idéntico a uno anterior se cita en vez de repetirse.
-fn notices() -> Result<(String, usize), String> {
-    let m = metadata(Some(DIST_TARGET))?;
+fn notices(target: &str) -> Result<(String, usize), String> {
+    let m = metadata(Some(target))?;
     let mut selection: Vec<&str> = vec!["-e", "normal"];
     for b in DIST_BINS {
         selection.extend(["-p", b]);
     }
-    let graph = tree(&selection, Some(DIST_TARGET))?;
+    let graph = tree(&selection, Some(target))?;
     let mut third: Vec<&Value> =
         packages(&m).filter(|p| in_graph(&graph, p) && !p.get("source").is_some_and(Value::is_null)).collect();
     third.sort_by_key(|p| (s(p, "name").to_string(), s(p, "version").to_string()));
 
     let mut out = String::from(
-        "IureProject: avisos de terceros / third-party notices\n\n\
-         IureProject incluye los siguientes componentes de código abierto, cada uno bajo su propia\n\
-         licencia. IureProject includes the following open-source components, each under its own\n\
+        "IureDesk: avisos de terceros / third-party notices\n\n\
+         IureDesk incluye los siguientes componentes de código abierto, cada uno bajo su propia\n\
+         licencia. IureDesk includes the following open-source components, each under its own\n\
          license. Generado por `cargo xtask notices`.\n",
     );
     let mut seen: BTreeMap<String, String> = BTreeMap::new();

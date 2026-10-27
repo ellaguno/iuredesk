@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Icono de IureDesk para 16–32 px (FSL-1.1-ALv2, proyecto IureDesk): la misma idea que
+       iuredesk.svg reducida a un sobre-calendario de trazos gruesos. Dibujado a mano. -->
+  <clipPath id="card">
+    <rect x="144" y="200" width="736" height="640" rx="96"/>
+  </clipPath>
+  <rect x="0" y="0" width="1024" height="1024" rx="200" fill="#11284C"/>
+  <rect x="144" y="200" width="736" height="640" rx="96" fill="#FFFFFF"/>
+  <rect x="144" y="200" width="736" height="176" fill="#0650EC" clip-path="url(#card)"/>
+  <path d="M248 470 L512 660 L776 470" fill="none" stroke="#11284C" stroke-width="80" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

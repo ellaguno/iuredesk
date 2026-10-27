@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Metadatos AppStream de IureDesk (centros de software de GNOME/KDE). Se instala en
+     /usr/share/metainfo/ con el .deb y dentro del AppImage. -->
+<component type="desktop-application">
+  <id>com.iurefficient.IureDesk</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>FSL-1.1-ALv2</project_license>
+  <name>IureDesk</name>
+  <summary>Mail, calendar, contacts, notes and tasks</summary>
+  <summary xml:lang="es">Correo, calendario, contactos, notas y tareas</summary>
+  <developer id="com.iurefficient">
+    <name>Eduardo Llaguno Velasco</name>
+  </developer>
+  <description>
+    <p>
+      IureDesk is a fast desktop personal information manager written entirely in Rust. It works
+      with your own mail accounts (IMAP, POP3, SMTP, Gmail, Microsoft 365, iCloud), calendars and
+      address books (CalDAV, CardDAV, Microsoft Graph), offline first, and links messages to the
+      cases, leads and tickets of an Iurefficient instance.
+    </p>
+    <p xml:lang="es">
+      IureDesk es un gestor de información personal de escritorio, rápido y escrito por completo en
+      Rust. Funciona con tus propias cuentas de correo (IMAP, POP3, SMTP, Gmail, Microsoft 365,
+      iCloud), calendarios y libretas (CalDAV, CardDAV, Microsoft Graph), sin conexión primero, y
+      vincula los mensajes con los casos, prospectos y tickets de una instancia de Iurefficient.
+    </p>
+    <ul>
+      <li>Unified inbox, conversations and instant full-text search</li>
+      <li xml:lang="es">Bandeja unificada, conversaciones y búsqueda de texto instantánea</li>
+      <li>Calendar with invitations, contacts, notes and tasks</li>
+      <li xml:lang="es">Calendario con invitaciones, contactos, notas y tareas</li>
+      <li>Keyboard first, command palette, light and dark themes, three densities</li>
+      <li xml:lang="es">Teclado primero, paleta de comandos, temas claro y oscuro, tres densidades</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">iuredesk.desktop</launchable>
+  <icon type="stock">iuredesk</icon>
+  <url type="homepage">https://iurefficient.com/</url>
+  <categories>
+    <category>Office</category>
+    <category>Email</category>
+    <category>Calendar</category>
+    <category>ContactManagement</category>
+  </categories>
+  <keywords>
+    <keyword>mail</keyword>
+    <keyword>email</keyword>
+    <keyword>calendar</keyword>
+    <keyword>contacts</keyword>
+    <keyword xml:lang="es">correo</keyword>
+    <keyword xml:lang="es">calendario</keyword>
+    <keyword xml:lang="es">contactos</keyword>
+  </keywords>
+  <provides>
+    <binary>iuredesk</binary>
+    <mediatype>x-scheme-handler/mailto</mediatype>
+    <mediatype>text/calendar</mediatype>
+    <mediatype>text/vcard</mediatype>
+    <mediatype>message/rfc822</mediatype>
+  </provides>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0-alpha.0" date="2026-10-26" type="development"/>
+  </releases>
+</component>

@@ -1,0 +1,170 @@
+# Publicación de PRUEBA: al subir una etiqueta vX.Y.Z compila los instaladores de los tres SO con
+# `cargo xtask package <so>` (cargo-packager) y crea un *borrador* de Release, marcado como
+# preliminar, en ESTE MISMO repositorio privado (decisión del dueño: nada público por ahora).
+# Secretos: SUITE_REPOS_TOKEN (obligatorio) y los de firma (opcionales; sin ellos los paquetes
+# salen sin firmar). Ver docs/publicacion.md.
+name: Publicación
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_PACKAGER_VERSION: "0.11.8"
+
+jobs:
+  package:
+    name: Paquetes ${{ matrix.os }} (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 22.04: glibc 2.35, para que el binario corra también en distribuciones más antiguas.
+          - { runner: ubuntu-22.04, os: linux, target: x86_64-unknown-linux-gnu }
+          - { runner: windows-latest, os: windows, target: x86_64-pc-windows-msvc }
+          - { runner: macos-latest, os: macos, target: aarch64-apple-darwin }
+          - { runner: macos-latest, os: macos, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Acceso a los repos privados de la suite
+        shell: bash
+        env:
+          SUITE_REPOS_TOKEN: ${{ secrets.SUITE_REPOS_TOKEN }}
+        run: |
+          if [ -z "$SUITE_REPOS_TOKEN" ]; then
+            echo "::error::Falta el secreto SUITE_REPOS_TOKEN (docs/publicacion.md)"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${SUITE_REPOS_TOKEN}@github.com/".insteadOf "https://github.com/"
+      - name: Dependencias de compilación de Linux (winit, wgpu; sin GTK)
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libxkbcommon-dev libwayland-dev libx11-dev file
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rust estable
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Caché de cargo-packager
+        id: packager-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-packager
+            ~/.cargo/bin/cargo-packager.exe
+          key: cargo-packager-${{ env.CARGO_PACKAGER_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+      - name: Instalar cargo-packager (herramienta de compilación)
+        if: steps.packager-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-packager --version ${{ env.CARGO_PACKAGER_VERSION }} --locked
+      - name: Certificado de firma de Windows (si está configurado)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_SIGN_COMMAND: ${{ vars.WINDOWS_SIGN_COMMAND }}
+        run: |
+          if ($env:WINDOWS_CERTIFICATE) {
+            $pfx = Join-Path $env:RUNNER_TEMP "cert.pfx"
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            $pw = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+            Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pw | Out-Null
+            Remove-Item $pfx
+            Write-Host "Certificado importado en CurrentUser\My"
+          }
+          if ($env:WINDOWS_SIGN_COMMAND -like "trusted-signing-cli*") {
+            cargo install trusted-signing-cli --locked
+          }
+      - name: Paquetes
+        shell: bash
+        env:
+          # Se exportan solo los que tienen valor: cargo-packager trata «vacío» como «presente».
+          S_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          S_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          S_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          S_APPLE_ID: ${{ secrets.APPLE_ID }}
+          S_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          S_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          S_WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          S_WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+          S_WINDOWS_SIGN_COMMAND: ${{ vars.WINDOWS_SIGN_COMMAND }}
+          S_AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          S_AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          S_AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          for v in APPLE_SIGNING_IDENTITY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID \
+                   APPLE_PASSWORD APPLE_TEAM_ID WINDOWS_CERTIFICATE_THUMBPRINT WINDOWS_TIMESTAMP_URL \
+                   WINDOWS_SIGN_COMMAND AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID; do
+            s="S_$v"
+            if [ -n "${!s:-}" ]; then export "$v=${!s}"; fi
+            unset "$s"
+          done
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            cargo xtask package ${{ matrix.os }} --target ${{ matrix.target }} --tag "$GITHUB_REF_NAME"
+          else
+            cargo xtask package ${{ matrix.os }} --target ${{ matrix.target }}
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iuredesk-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.AppImage
+            dist/*.exe
+            dist/*.msi
+            dist/*.dmg
+
+  release:
+    name: Borrador de Release (repo privado)
+    needs: package
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Borrador preliminar en este repositorio
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="docs/notas/$GITHUB_REF_NAME.md"
+          if [ ! -f "$NOTES" ]; then
+            NOTES="$RUNNER_TEMP/notas.md"
+            printf 'IureDesk %s: versión de PRUEBA para Linux, Windows y macOS.\n\nVerifica la descarga con `sha256sum -c SHA256SUMS`.\n' "${GITHUB_REF_NAME#v}" > "$NOTES"
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" --draft --prerelease \
+            --title "IureDesk ${GITHUB_REF_NAME#v} (prueba)" --notes-file "$NOTES"
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
+        with:
+          name: iuredesk-todos
+          path: dist/

@@ -36,3 +36,9 @@ Ids `F<fase>.<n>`. Estado: ☐ pendiente · ◐ en curso · ☑ hecho.
 | Id | Tarea | Estado |
 |---|---|---|
 | F3.0 | Inventario de la API de la instancia para el PIM y propuesta de lo que falta (REST + CalDAV/CardDAV, vincular correo) en `docs/iurefficient-api.md`; módulo `pim` en `iurefficient-connect` (rama `iuredesk`, sin publicar) | ◐ |
+
+## F5 · Paridad y pulido
+
+| Id | Tarea | Estado |
+|---|---|---|
+| F5.2 | Empaquetado 3 SO + CI: icono original (`assets/icons/iuredesk.svg` + variante 16–32 px; `cargo xtask icons` → PNG 16–1024, `.ico`, `.icns` con resvg/icns), `.desktop` (mailto, `text/calendar`, `text/vcard`, `message/rfc822`; Office;Email;Calendar;ContactManagement) y metainfo AppStream; `cargo xtask package <linux\|windows\|macos>` con cargo-packager 0.11.8 (CLI, herramienta de compilación): `.tar.gz` + `.deb` + AppImage, instalador NSIS por usuario que registra `mailto:`/`.eml`/`.ics`/`.vcf` en «Aplicaciones predeterminadas», `.app` + `.dmg` con `mailto` y tipos de documento en `Info.plist`; firma por variables de entorno (Developer ID + notarización; Azure Trusted Signing o certificado `.pfx`); `.github/workflows/ci.yml` (`cargo xtask ci` en Ubuntu 22.04 + compilación y pruebas en Windows y macOS; repos de la suite con `SUITE_REPOS_TOKEN`) y `release.yml` (etiqueta `v*` → paquetes de los 3 SO → borrador preliminar de Release en este repo privado con `SHA256SUMS`); `docs/publicacion.md` con los pasos del dueño. Probado en local: `.tar.gz` 20,3 MB, `.deb` 20,5 MB, AppImage 19,5 MB (arranca). Pendiente: icono incrustado en el `.exe` y en la ventana, abrir `.eml`/`.ics`/`.vcf` por ruta desde la app, Flatpak, primera ejecución real de los flujos y de los instaladores de Windows/macOS | ◐ |

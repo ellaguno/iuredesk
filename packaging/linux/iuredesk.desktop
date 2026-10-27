@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=IureDesk
+GenericName=Mail and Calendar
+GenericName[es]=Correo y calendario
+Comment=Mail, calendar, contacts, notes and tasks
+Comment[es]=Correo, calendario, contactos, notas y tareas
+Exec=iuredesk %U
+Icon=iuredesk
+Terminal=false
+StartupNotify=true
+StartupWMClass=iuredesk
+Categories=Office;Email;Calendar;ContactManagement;
+Keywords=mail;email;e-mail;calendar;contacts;tasks;notes;imap;caldav;
+Keywords[es]=correo;email;calendario;contactos;tareas;notas;agenda;imap;caldav;
+MimeType=x-scheme-handler/mailto;text/calendar;text/vcard;text/x-vcard;message/rfc822;
+Actions=compose;
+
+[Desktop Action compose]
+Name=New message
+Name[es]=Mensaje nuevo
+Exec=iuredesk mailto:
