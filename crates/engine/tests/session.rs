@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
 use iuredesk_accounts::MemoryStore;
-use iuredesk_engine::{FolderSel, Module, Outcome, Session, SessionConfig, Zone};
+use iuredesk_engine::{Event, FolderSel, Module, OfflineTransport, Outcome, Session, SessionConfig, Zone};
 use iuredesk_model::{FolderRole, MessageId};
 use iuredesk_store::{Store, sample};
 
@@ -25,8 +25,11 @@ fn session(dir: &std::path::Path, conversations: bool) -> Session {
         now: Some(now()),
         zone: Zone::utc(),
         sample: true,
+        sync: None,
+        transport: Some(Arc::new(OfflineTransport)),
     })
     .unwrap();
+    s.prefs.mark_read_delay_ms = 0;
     s.set_conversations(conversations);
     settle(&mut s);
     s
@@ -76,6 +79,8 @@ fn archive_and_undo_restore_folder_and_cancel_the_queued_op() {
     let id = s.rows()[3].id;
     let next = s.rows()[4].id;
     let inbox = folder_of(&s, id);
+    // Como si ya estuviera sincronizado: con UID, la acción se encola para el servidor.
+    s.store().set_remote_id(id, Some("7".into())).unwrap();
     let ops_before = s.store().ops_len().unwrap();
     select(&mut s, id);
     assert!(s.is_enabled("mail.archive"));
@@ -94,6 +99,11 @@ fn archive_and_undo_restore_folder_and_cancel_the_queued_op() {
     settle(&mut s);
     assert_eq!(folder_of(&s, id), inbox);
     assert_eq!(s.store().ops_len().unwrap(), ops_before, "la operación pendiente se cancela");
+    assert_eq!(
+        s.store().get_envelope(id).unwrap().unwrap().remote_id.as_deref(),
+        Some("7"),
+        "vuelve con su UID: la próxima sincronización no lo duplica"
+    );
     assert!(s.rows().iter().any(|r| r.id == id));
     assert_eq!(s.take_focus_request().map(|(_, m)| m), Some(id));
     assert!(!s.is_enabled("undo"));
@@ -237,9 +247,13 @@ fn move_and_flagged_view() {
 fn drafts_are_saved_and_bodies_load() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = session(dir.path(), false);
-    let mut d = iuredesk_engine::ComposeDraft::from_mailto("mailto:ana@example.com?subject=Hola").unwrap();
-    d.body = "Cuerpo del borrador".into();
-    let id = s.save_draft(&d).unwrap();
+    let mut d = s.compose_mailto("mailto:ana@example.com?subject=Hola&body=Cuerpo%20del%20borrador").unwrap();
+    let id = s.save_draft(&mut d, false).unwrap();
+    assert_eq!(d.saved, Some(id));
+    // Volver a guardar reemplaza la versión anterior.
+    let again = s.save_draft(&mut d, true).unwrap();
+    assert!(s.store().get_envelope(id).unwrap().is_none());
+    let id = again;
     let env = s.store().get_envelope(id).unwrap().unwrap();
     assert!(env.flags.draft);
     assert_eq!(s.folder(env.folder).unwrap().role, FolderRole::Drafts);
@@ -267,4 +281,163 @@ fn calendar_today_and_tasks() {
     s.run("undo").unwrap();
     assert!(s.due_tasks().iter().any(|x| x.id == t));
     assert_eq!(s.contacts().len(), 50);
+}
+
+fn wait_for(s: &mut Session, what: &str, mut f: impl FnMut(&mut Session) -> bool) {
+    let start = Instant::now();
+    while !f(s) {
+        assert!(start.elapsed() < Duration::from_secs(20), "tiempo agotado: {what}");
+        s.poll();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn mark_read_waits_for_the_delay() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    s.prefs.mark_read_delay_ms = 150;
+    let id =
+        s.rows().iter().map(|r| r.id).find(|&id| !s.store().get_envelope(id).unwrap().unwrap().flags.seen).unwrap();
+    select(&mut s, id);
+    assert!(!s.store().get_envelope(id).unwrap().unwrap().flags.seen, "aún no");
+    assert!(s.next_deadline().is_some(), "la UI sabe cuándo volver");
+    wait_for(&mut s, "leído tras el retraso", |s| s.store().get_envelope(id).unwrap().unwrap().flags.seen);
+    // Pasar de largo no marca nada.
+    let other = s
+        .rows()
+        .iter()
+        .map(|r| r.id)
+        .filter(|&x| x != id)
+        .find(|&x| !s.store().get_envelope(x).unwrap().unwrap().flags.seen)
+        .unwrap();
+    select(&mut s, other);
+    select(&mut s, id);
+    std::thread::sleep(Duration::from_millis(200));
+    s.poll();
+    assert!(!s.store().get_envelope(other).unwrap().unwrap().flags.seen);
+}
+
+#[test]
+fn reply_uses_the_compose_builders_with_quote_and_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    let id = s
+        .rows()
+        .iter()
+        .map(|r| r.id)
+        .find(|&id| s.store().get_envelope(id).unwrap().unwrap().from.first().is_some_and(|m| m.name.is_some()))
+        .unwrap();
+    let env = s.envelope(id).unwrap().clone();
+    select(&mut s, id);
+    let Outcome::Compose(d) = s.run("mail.reply").unwrap() else { panic!("redactor") };
+    assert_eq!(d.kind, iuredesk_engine::ComposeKind::Reply);
+    assert_eq!(d.account, Some(env.account));
+    assert!(d.draft.subject.to_lowercase().starts_with("re:"), "{}", d.draft.subject);
+    assert_eq!(d.draft.to[0].addr, env.from[0].addr);
+    assert!(d.draft.in_reply_to.is_some());
+    assert!(d.draft.body.blocks.iter().any(|b| matches!(b, iuredesk_engine::iuredesk_compose::Block::Quote { .. })));
+    assert_eq!(d.draft.original.as_ref().and_then(|o| o.message), Some(id));
+    let Outcome::Compose(f) = s.run("mail.forward").unwrap() else { panic!("redactor") };
+    assert!(f.draft.to.is_empty());
+    assert!(f.draft.subject.to_lowercase().starts_with("fwd:") || f.draft.subject.starts_with("RV:"));
+}
+
+#[test]
+fn send_goes_through_the_outbox_with_undo() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    let mut d = s.compose_new(None);
+    d.draft.set_to("ana@example.com").unwrap();
+    d.draft.subject = "Prueba de envío".into();
+    d.draft.body = iuredesk_engine::iuredesk_compose::RichBody::from_plain("Hola");
+    // Con ventana para deshacer: queda en la bandeja de salida y «Deshacer» lo devuelve.
+    let Outcome::Notice(n) = s.send(&d).unwrap() else { panic!("aviso") };
+    assert!(n.undo);
+    assert_eq!(n.text.es, "Enviando…");
+    assert_eq!(s.outbox_entries().len(), 1);
+    let Outcome::Compose(back) = s.run("undo").unwrap() else { panic!("vuelve al redactor") };
+    assert_eq!(back.draft.subject, "Prueba de envío");
+    assert!(s.outbox_entries().is_empty());
+    // Sin ventana: sale enseguida y queda la copia en «Enviados».
+    s.prefs.send_undo_secs = 0;
+    s.apply_send_prefs();
+    s.send(&d).unwrap();
+    let mut sent = false;
+    wait_for(&mut s, "enviado", |s| {
+        let evs = s.poll();
+        sent |= evs.iter().any(|e| matches!(e, Event::Notice(n) if n.text.es == "Mensaje enviado"));
+        sent
+    });
+    assert!(s.outbox_entries().is_empty());
+    let hits = s.store().search("asunto:prueba", 50).unwrap();
+    let copy = hits.iter().find(|e| s.folder(e.folder).is_some_and(|f| f.role == FolderRole::Sent));
+    assert!(copy.is_some(), "copia local en Enviados");
+}
+
+#[test]
+fn invalid_recipients_are_explained() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    let d = s.compose_new(None);
+    let e = s.send(&d).unwrap_err();
+    assert!(e.text().es.to_lowercase().contains("destinatario"), "{}", e.text().es);
+}
+
+#[test]
+fn sync_events_update_status_and_announce_new_mail() {
+    use iuredesk_engine::iuredesk_sync::{FriendlyError, NewMailSample, Phase, SyncEvent};
+    use iuredesk_engine::{AccountSync, SyncStatus};
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    assert_eq!(s.sync_status(), SyncStatus::Off, "sin sincronización en el buzón de ejemplo");
+    let acct = s.account_labels()[0].id;
+    let ev = s.feed_sync_event(SyncEvent::Progress {
+        account: acct,
+        phase: Phase::Headers,
+        folder: None,
+        done: 3,
+        total: 10,
+    });
+    assert!(ev.is_empty());
+    assert!(matches!(s.account_sync(acct), Some(AccountSync::Working { done: 3, total: 10, .. })));
+    assert!(s.account_sync(acct).unwrap().label().contains("3/10"));
+    let ev = s.feed_sync_event(SyncEvent::NewMail {
+        account: acct,
+        count: 2,
+        sample: vec![NewMailSample {
+            message: iuredesk_model::MessageId(1),
+            from: "Ana".into(),
+            subject: "Hola".into(),
+        }],
+    });
+    assert!(matches!(&ev[..], [Event::NewMail { detail, .. }] if detail.contains("Ana — Hola")));
+    let ev = s.feed_sync_event(SyncEvent::Error(FriendlyError {
+        account: Some(acct),
+        es: "Sin conexión".into(),
+        en: "Offline".into(),
+        transient: true,
+        needs_reauth: false,
+        detail: String::new(),
+    }));
+    assert!(ev.is_empty());
+    assert!(matches!(s.account_sync(acct), Some(AccountSync::Offline(_))));
+    s.feed_sync_event(SyncEvent::Error(FriendlyError {
+        account: Some(acct),
+        es: "La contraseña ya no funciona".into(),
+        en: "Password rejected".into(),
+        transient: false,
+        needs_reauth: true,
+        detail: String::new(),
+    }));
+    assert!(matches!(s.account_sync(acct), Some(AccountSync::Error { reauth: true, .. })));
+    s.feed_sync_event(SyncEvent::Synced { account: acct, took: Duration::from_secs(1), backfill_pending: false });
+    assert!(matches!(s.account_sync(acct), Some(AccountSync::Ready { .. })));
+    // Los cambios refrescan la lista (con retraso acotado) sin perder la selección.
+    let id = s.rows()[0].id;
+    select(&mut s, id);
+    s.feed_sync_event(SyncEvent::FolderUpdated { account: acct, folder: iuredesk_model::FolderId(1) });
+    wait_for(&mut s, "refresco", |s| s.next_deadline().is_none());
+    settle(&mut s);
+    assert_eq!(s.focused(), Some(id));
 }

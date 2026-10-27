@@ -23,6 +23,8 @@ pub struct HtmlKey {
     pub ppp_x100: u32,
     pub dark: bool,
     pub remote: bool,
+    /// Con la historia citada (si no, se pinta sin ella).
+    pub full: bool,
 }
 
 /// Resultado de un render (vuelve como `JobOutput::Custom`).

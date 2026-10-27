@@ -142,6 +142,17 @@ impl Background {
         id
     }
 
+    /// Función que despierta a la UI (para tareas propias que avisan por su cuenta).
+    pub fn waker(&self) -> Waker {
+        let w = Arc::clone(&self.waker);
+        Arc::new(move || {
+            let f = w.lock().unwrap_or_else(PoisonError::into_inner).clone();
+            if let Some(f) = f {
+                f();
+            }
+        })
+    }
+
     /// Resultados listos (no bloquea).
     pub fn poll(&self) -> Vec<Done> {
         self.rx.try_iter().collect()

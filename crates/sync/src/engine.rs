@@ -444,10 +444,16 @@ impl SyncHandle {
         rt.spawn(async move { w.fetch_body(msg).await }).await.map_err(|e| SyncError::Runtime(e.to_string()))?
     }
 
-    fn kick(&self, acct: AccountId) {
+    /// Pide replicar ya la cola de operaciones de la cuenta (no espera).
+    pub fn kick(&self, acct: AccountId) {
         if let Some(s) = self.slot_by_acct(acct) {
             let _ = s.tx.try_send(Cmd::Replay);
         }
+    }
+
+    /// ¿Esta cuenta se sincroniza aquí?
+    pub fn has_account(&self, acct: AccountId) -> bool {
+        self.slot_by_acct(acct).is_some()
     }
 
     fn account_of(&self, msg: MessageId) -> Option<AccountId> {
@@ -455,31 +461,31 @@ impl SyncHandle {
     }
 
     /// Cambia banderas (local al instante; se replica en segundo plano).
-    pub fn set_flags(&self, msg: MessageId, flags: Flags) -> Result<()> {
-        ops::set_flags(&self.inner.store, msg, flags)?;
+    pub fn set_flags(&self, msg: MessageId, flags: Flags) -> Result<Option<u64>> {
+        let seq = ops::set_flags(&self.inner.store, msg, flags)?;
         if let Some(a) = self.account_of(msg) {
             self.kick(a);
         }
-        Ok(())
+        Ok(seq)
     }
 
     /// Mueve un mensaje (local al instante; se replica en segundo plano).
-    pub fn move_message(&self, msg: MessageId, to: FolderId) -> Result<()> {
-        ops::move_message(&self.inner.store, msg, to)?;
+    pub fn move_message(&self, msg: MessageId, to: FolderId) -> Result<Option<u64>> {
+        let seq = ops::move_message(&self.inner.store, msg, to)?;
         if let Some(a) = self.account_of(msg) {
             self.kick(a);
         }
-        Ok(())
+        Ok(seq)
     }
 
     /// Borra definitivamente (local al instante; se replica en segundo plano).
-    pub fn delete_message(&self, msg: MessageId) -> Result<()> {
+    pub fn delete_message(&self, msg: MessageId) -> Result<Option<u64>> {
         let acct = self.account_of(msg);
-        ops::delete_message(&self.inner.store, msg)?;
+        let seq = ops::delete_message(&self.inner.store, msg)?;
         if let Some(a) = acct {
             self.kick(a);
         }
-        Ok(())
+        Ok(seq)
     }
 
     /// Guarda un mensaje nuevo en una carpeta (borradores, enviados) y lo sube en segundo plano.

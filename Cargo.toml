@@ -117,6 +117,9 @@ egui = "0.37"
 egui_extras = { version = "0.37", default-features = false }
 eframe = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
+# Selector de archivos del portal XDG (sin GTK) y notificaciones por D-Bus con zbus (sin libdbus).
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland"] }
+notify-rust = { version = "4.18", default-features = false, features = ["z"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

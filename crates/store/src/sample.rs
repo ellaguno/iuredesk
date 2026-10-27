@@ -4,7 +4,7 @@
 //! datos. El generador pseudoaleatorio es SplitMix64 propio (sin dependencias). Los dominios son
 //! `example.com/.org/.net` (RFC 2606): nada apunta a personas o empresas reales.
 
-use chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveTime, Offset, TimeZone, Utc};
 use iuredesk_model::{
     AccountId, AddressBook, AttachmentMeta, Attendee, AttendeeRole, Calendar, Contact, Event, EventStatus, EventTime,
     Flags, Folder, FolderId, FolderRole, Labeled, Mailbox, MessageEnvelope, Note, PartStat, PostalAddress, Reminder,
@@ -351,6 +351,12 @@ const ACCOUNTS: &[AccountSpec] = &[
 /// Llena `store` con el buzón de demostración. `now` fija «hoy» (los eventos caen en la semana
 /// de `now` y los correos en los 120 días anteriores).
 pub fn populate(store: &Store, seed: u64, now: DateTime<Utc>) -> Result<SampleSummary> {
+    populate_in(store, seed, now, Utc.fix())
+}
+
+/// Como [`populate`], pero las citas caen a horas redondas de la zona `offset` (la del usuario en
+/// `iuredesk --sample`; UTC en capturas y pruebas, que deben ser deterministas).
+pub fn populate_in(store: &Store, seed: u64, now: DateTime<Utc>, offset: FixedOffset) -> Result<SampleSummary> {
     let mut rng = Rng::new(seed);
     let mut sum = SampleSummary::default();
 
@@ -474,9 +480,12 @@ pub fn populate(store: &Store, seed: u64, now: DateTime<Utc>) -> Result<SampleSu
                     b.push_str(from.display());
                     b
                 } else {
+                    // Se cita el mensaje anterior completo (con su propia cita), como hacen los
+                    // clientes reales, precedido de la línea de atribución.
                     let prev = bodies.last().map(String::as_str).unwrap_or("");
-                    let quoted: String = prev.lines().take(6).map(|l| format!("> {l}\n")).collect();
-                    format!("{}\n\n{}\n{quoted}", rng.pick_str(REPLY), if spanish { "Escribió:" } else { "Wrote:" })
+                    let prev_from = msgs.last().and_then(|m| m.from.first()).map(|m| m.display().to_string());
+                    let prev_date = msgs.last().map(|m| m.date.with_timezone(&offset));
+                    quote_reply(rng.pick_str(REPLY), prev, prev_from.as_deref().unwrap_or(""), prev_date, spanish)
                 };
                 let with_att = i == 0 && rng.chance(18);
                 let attachments = if with_att {
@@ -610,10 +619,13 @@ pub fn populate(store: &Store, seed: u64, now: DateTime<Utc>) -> Result<SampleSu
         color: Some(0x10B981),
         ..Default::default()
     })?;
-    let monday = (now - Duration::days(i64::from(now.weekday().num_days_from_monday()))).date_naive();
+    // Las horas son de la zona del usuario: «09:00» es las 9 de su mañana, no las 9 UTC.
+    let local_now = now.with_timezone(&offset);
+    let monday = (local_now - Duration::days(i64::from(local_now.weekday().num_days_from_monday()))).date_naive();
     let at = |day: i64, h: u32, m: u32| -> DateTime<Utc> {
         let d = monday + Duration::days(day);
-        Utc.from_utc_datetime(&d.and_time(NaiveTime::from_hms_opt(h, m, 0).unwrap_or(NaiveTime::MIN)))
+        let local = d.and_time(NaiveTime::from_hms_opt(h, m, 0).unwrap_or(NaiveTime::MIN));
+        offset.from_local_datetime(&local).single().map_or_else(|| local.and_utc(), |t| t.with_timezone(&Utc))
     };
     let titles_work = [
         ("Audiencia caso 241/2026", "Juzgado 5º Civil"),
@@ -630,7 +642,7 @@ pub fn populate(store: &Store, seed: u64, now: DateTime<Utc>) -> Result<SampleSu
         let mut hour = 9u32;
         for _ in 0..n {
             let (title, loc) = rng.pick(&titles_work).copied().unwrap_or(("Reunión", ""));
-            let dur = [30u32, 60, 90].get(usize::try_from(rng.below(3)).unwrap_or(0)).copied().unwrap_or(60);
+            let dur = [60u32, 90, 60].get(usize::try_from(rng.below(3)).unwrap_or(0)).copied().unwrap_or(60);
             let start = at(day, hour, 0);
             let end = start + Duration::minutes(i64::from(dur));
             let attendees: Vec<Attendee> = (0..rng.below(4))
@@ -773,11 +785,55 @@ pub fn populate(store: &Store, seed: u64, now: DateTime<Utc>) -> Result<SampleSu
 /// Abre (o crea) un almacén de demostración en `dir`. Si está vacío lo llena con
 /// [`populate`] usando [`DEFAULT_SEED`] y la fecha actual.
 pub fn open_sample(dir: impl AsRef<std::path::Path>) -> Result<Store> {
+    let dir = dir.as_ref();
+    // Un buzón de ejemplo de una versión anterior (citas en UTC, citas truncadas) se rehace.
+    let marker = dir.join(SAMPLE_MARKER);
+    if dir.exists() && !marker.exists() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
     let store = Store::open(dir)?;
     if store.message_count()? == 0 {
-        populate(&store, DEFAULT_SEED, Utc::now())?;
+        let offset = chrono::Local::now().offset().fix();
+        populate_in(&store, DEFAULT_SEED, Utc::now(), offset)?;
+        let _ = std::fs::write(&marker, b"2");
     }
     Ok(store)
+}
+
+/// Archivo que marca la versión del buzón de ejemplo.
+const SAMPLE_MARKER: &str = ".sample-v2";
+
+/// Respuesta con la cita completa del mensaje anterior (acotada a 80 líneas) y su atribución
+/// («El lun 13 oct 2026 a las 10:13, Ana escribió:»).
+fn quote_reply(
+    reply: &str,
+    prev: &str,
+    prev_from: &str,
+    prev_date: Option<DateTime<FixedOffset>>,
+    spanish: bool,
+) -> String {
+    let when = prev_date.map(|d| d.format("%d/%m/%Y %H:%M").to_string()).unwrap_or_default();
+    let attribution = match (spanish, when.is_empty()) {
+        (true, false) => format!("El {when}, {prev_from} escribió:"),
+        (true, true) => format!("{prev_from} escribió:"),
+        (false, false) => format!("On {when}, {prev_from} wrote:"),
+        (false, true) => format!("{prev_from} wrote:"),
+    };
+    let mut out = format!("{reply}\n\n{attribution}\n");
+    for l in prev.lines().take(80) {
+        if l.is_empty() {
+            out.push_str(">\n");
+        } else if l.starts_with('>') {
+            out.push('>');
+            out.push_str(l);
+            out.push('\n');
+        } else {
+            out.push_str("> ");
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 const WORDS: &[&str] = &[
@@ -924,5 +980,42 @@ mod tests {
         let a: Vec<String> = s.list_envelopes(inbox.id, 0, 100).unwrap().into_iter().map(|e| e.subject).collect();
         let b: Vec<String> = s2.list_envelopes(inbox.id, 0, 100).unwrap().into_iter().map(|e| e.subject).collect();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn replies_quote_the_real_previous_text() {
+        let r = quote_reply("Va.", "Hola Ana,\n\nTe envío el contrato.\n\nSaludos", "Luis", None, true);
+        assert!(r.starts_with("Va.\n\nLuis escribió:\n"));
+        assert!(r.contains("> Te envío el contrato.\n>\n> Saludos"));
+        // La cita de la cita se anida sin espacios de más.
+        let r2 = quote_reply("Ok", &r, "Ana", None, false);
+        assert!(r2.contains(">> Te envío el contrato."));
+        assert!(r2.contains("> Luis escribió:"));
+        // En el buzón, ninguna respuesta termina en una atribución vacía.
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path()).unwrap();
+        populate(&s, DEFAULT_SEED, now()).unwrap();
+        let hits = s.search("Re:", 200).unwrap();
+        let mut checked = 0;
+        for e in hits.iter().filter(|e| e.in_reply_to.is_some()).take(40) {
+            let raw = String::from_utf8_lossy(&s.get_raw(e.id).unwrap()).into_owned();
+            let last = raw.trim_end().lines().last().unwrap_or("").to_string();
+            assert!(!last.ends_with("escribió:") && !last.ends_with("wrote:"), "{last}");
+            checked += 1;
+        }
+        assert!(checked > 5);
+    }
+
+    #[test]
+    fn events_fall_on_local_hours() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path()).unwrap();
+        let mx = FixedOffset::west_opt(6 * 3600).unwrap();
+        populate_in(&s, DEFAULT_SEED, now(), mx).unwrap();
+        let monday = Utc.with_ymd_and_hms(2026, 10, 19, 0, 0, 0).unwrap();
+        let week = s.events_between(&[], monday, monday + Duration::days(8)).unwrap();
+        let standup = week.iter().find(|e| e.summary.starts_with("Junta semanal")).unwrap();
+        let start = standup.start.to_utc().with_timezone(&mx);
+        assert_eq!(start.format("%H:%M").to_string(), "08:30");
     }
 }

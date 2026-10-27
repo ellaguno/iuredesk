@@ -342,9 +342,10 @@ fn week_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate
             let cols = layout_columns(&spans);
             for ((o, (sm, em)), (ci, n)) in todays.iter().zip(spans.iter()).zip(cols.iter()) {
                 let w = (col_w - 6.0) / *n as f32;
+                let (y0, y1) = block_y(*sm, *em, hh);
                 let r = Rect::from_min_max(
-                    pos2(x + 3.0 + w * *ci as f32, top + hh * (*sm as f32 / 60.0) + 1.0),
-                    pos2(x + 3.0 + w * (*ci as f32 + 1.0) - 2.0, top + hh * (*em as f32 / 60.0) - 1.0),
+                    pos2(x + 3.0 + w * *ci as f32, top + y0),
+                    pos2(x + 3.0 + w * (*ci as f32 + 1.0) - 2.0, top + y1),
                 );
                 event_block(ui, &p, r, o, zone);
             }
@@ -377,10 +378,25 @@ fn event_block(ui: &Ui, p: &egui::Painter, r: Rect, o: &Occurrence, zone: iurede
     let clip = p.with_clip_rect(r.shrink(1.0));
     let title_font = theme::bold_font(ui.ctx(), 12.5);
     let ink = if dark { c.text } else { mix(col, Color32::BLACK, 0.55) };
-    let g = clip.layout(o.summary.clone(), title_font, ink, inner.width());
+    let time = format!("{}–{}", zone.local(o.start).format("%H:%M"), zone.local(o.end).format("%H:%M"));
+    // Bloque corto (≤ 30 min): título y hora en una línea, recortados con «…».
+    let line_h = 16.0;
+    if inner.height() < line_h * 2.0 {
+        let text = format!("{}  {}", o.summary, zone.local(o.start).format("%H:%M"));
+        let mut job = egui::text::LayoutJob::simple_singleline(text, title_font, ink);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(inner.width());
+        let g = clip.ctx().fonts_mut(|f| f.layout_job(job));
+        clip.galley(pos2(inner.left(), r.center().y - g.size().y / 2.0), g, ink);
+        return;
+    }
+    // Título en hasta dos líneas (tres si el bloque es alto), y luego la hora y el lugar.
+    let max_rows = if inner.height() >= line_h * 4.0 { 3 } else { 2 };
+    let mut job = egui::text::LayoutJob::simple(o.summary.clone(), title_font, ink, inner.width());
+    job.wrap.max_rows = max_rows;
+    job.wrap.break_anywhere = false;
+    let g = clip.ctx().fonts_mut(|f| f.layout_job(job));
     let title_h = g.size().y;
     clip.galley(inner.min, g, ink);
-    let time = format!("{}–{}", zone.local(o.start).format("%H:%M"), zone.local(o.end).format("%H:%M"));
     let mut y = inner.top() + title_h + 1.0;
     if y + 14.0 <= inner.bottom() {
         clip.text(pos2(inner.left(), y), Align2::LEFT_TOP, time, FontId::proportional(11.0), c.text_muted);
@@ -389,6 +405,15 @@ fn event_block(ui: &Ui, p: &egui::Painter, r: Rect, o: &Occurrence, zone: iurede
     if !o.location.is_empty() && y + 14.0 <= inner.bottom() {
         clip.text(pos2(inner.left(), y), Align2::LEFT_TOP, &o.location, FontId::proportional(11.0), c.text_muted);
     }
+}
+
+/// Posición vertical (arriba, abajo) de un evento de `sm` a `em` minutos del día, con `hh` píxeles
+/// por hora: una hora ocupa exactamente `hh` (menos 2 px de separación); lo muy corto, al menos 20
+/// minutos para que se pueda leer.
+pub(crate) fn block_y(sm: i64, em: i64, hh: f32) -> (f32, f32) {
+    let sm = sm.clamp(0, 24 * 60);
+    let em = em.clamp(sm, 24 * 60).max((sm + 20).min(24 * 60));
+    (hh * (sm as f32 / 60.0) + 1.0, hh * (em as f32 / 60.0) - 1.0)
 }
 
 fn month_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate) {
@@ -484,5 +509,26 @@ fn month_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDat
                 c.text_muted,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::block_y;
+
+    #[test]
+    fn one_hour_is_one_hour_tall() {
+        let hh = 44.0;
+        let (a, b) = block_y(9 * 60, 10 * 60, hh);
+        assert!((b - a - (hh - 2.0)).abs() < 0.01);
+        let (a2, b2) = block_y(14 * 60, 15 * 60, hh);
+        assert!(((b2 - a2) - (b - a)).abs() < 0.01, "igual en cualquier columna y hora");
+        let (a, b) = block_y(9 * 60, 9 * 60 + 90, hh);
+        assert!((b - a - (hh * 1.5 - 2.0)).abs() < 0.01);
+        // Muy corto o al revés: mínimo legible, nunca negativo.
+        let (a, b) = block_y(600, 600, hh);
+        assert!(b > a);
+        let (a, b) = block_y(23 * 60 + 50, 24 * 60, hh);
+        assert!(b > a && b <= hh * 24.0);
     }
 }

@@ -59,6 +59,8 @@ pub struct Wizard {
     pub(crate) cancel: Option<iuredesk_oauth::CancellationToken>,
     /// Id de almacén reservado para la cuenta en curso.
     pub(crate) reserved: Option<iuredesk_model::AccountId>,
+    /// Volver a iniciar sesión en esta cuenta (en vez de dar de alta una nueva).
+    pub reauth: Option<Account>,
 }
 
 impl Wizard {
@@ -88,6 +90,7 @@ impl Wizard {
         match (&self.step, &self.flow) {
             (WizardStep::Email, _) => iuredesk_autoconfig::EmailAddress::parse(&self.email).is_ok(),
             (WizardStep::Provider, Some(Flow::OAuth(_))) => self.oauth_ready,
+            (WizardStep::Provider, Some(_)) if self.reauth.is_some() => !self.password.is_empty(),
             (WizardStep::Provider, Some(_)) => !self.password.is_empty(),
             _ => false,
         }

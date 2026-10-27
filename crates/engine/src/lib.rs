@@ -25,10 +25,16 @@ pub mod time;
 
 pub use background::{JobId, JobOutput};
 pub use command::{COMMANDS, Chord, CommandSpec};
-pub use compose::ComposeDraft;
+pub use compose::{ComposeDraft, ComposeKind, Mailto};
+/// Reexportados para la UI y la app (redactor, envío, sincronización).
+pub use iuredesk_compose;
+pub use iuredesk_sync;
 pub use lang::{Text, pick};
 pub use prefs::{DensityPref, Prefs, ShortcutScheme, ThemePref};
-pub use session::{Event, Fetched, FolderSel, ListRow, Module, Notice, NoticeKind, Outcome, Session, SessionConfig};
+pub use session::{
+    AccountRow, AccountSync, Event, Fetched, FolderSel, ListRow, Module, Notice, NoticeKind, OfflineTransport, Outcome,
+    Session, SessionConfig, SyncStatus,
+};
 pub use time::Zone;
 
 /// Error del motor.

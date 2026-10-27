@@ -51,6 +51,12 @@ pub(crate) struct ImapAccount {
     backoff: Mutex<HashMap<u64, Instant>>,
 }
 
+/// ¿Es una cuenta de Gmail (o Google Workspace por su servidor)?
+fn is_gmail(account: &iuredesk_model::account::Account) -> bool {
+    let host = account.incoming.host.to_ascii_lowercase();
+    account.kind == AccountKind::Gmail || host.ends_with("gmail.com") || host.ends_with("googlemail.com")
+}
+
 fn uid_of(env: &MessageEnvelope) -> Option<u32> {
     env.remote_id.as_deref().and_then(|r| r.parse().ok()).filter(|u| *u > 0)
 }
@@ -136,13 +142,23 @@ impl ImapAccount {
     /// `LIST` → carpetas locales (crea, renombra, borra las que ya no existen).
     async fn sync_folder_list(&self, conn: &mut Conn) -> Result<Vec<Folder>> {
         let ctx = &self.ctx;
-        let list: Vec<MailboxInfo> =
-            conn.c.list().await?.into_iter().filter(|m| m.selectable() && !m.is_virtual()).take(MAX_FOLDERS).collect();
+        // En Gmail, «Archivar» es quitar la etiqueta de la bandeja de entrada: el mensaje queda en
+        // «Todos». Esa carpeta se sincroniza como Archivo (como hacen Thunderbird y Apple Mail).
+        let gmail = is_gmail(&ctx.account);
+        let list: Vec<MailboxInfo> = conn
+            .c
+            .list()
+            .await?
+            .into_iter()
+            .filter(|m| m.selectable() && (!m.is_virtual() || (gmail && m.is_all_mail())))
+            .take(MAX_FOLDERS)
+            .collect();
         let local = ctx.store.folders(ctx.acct)?;
         let mut by_path: HashMap<String, Folder> = local.into_iter().map(|f| (f.remote_path.clone(), f)).collect();
         let mut out: Vec<Folder> = Vec::new();
+        let has_archive = list.iter().any(|m| m.role() == FolderRole::Archive);
         for m in &list {
-            let role = m.role();
+            let role = if gmail && m.is_all_mail() && !has_archive { FolderRole::Archive } else { m.role() };
             match by_path.remove(&m.path) {
                 Some(mut f) => {
                     if f.name != m.leaf || f.role != role {

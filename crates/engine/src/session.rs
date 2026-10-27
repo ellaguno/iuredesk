@@ -6,16 +6,25 @@
 //! deshacer con su inversa. Deshacer cancela la operación si aún no salió de la máquina o encola
 //! la inversa si ya se replicó.
 
+mod live;
+mod mailops;
+mod outbox;
+
+pub use live::{AccountSync, SyncStatus};
+pub use mailops::AccountRow;
+pub use outbox::OfflineTransport;
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use iuredesk_accounts::{AccountStore, SecretPurpose, SecretStore};
 use iuredesk_model::account::{Account, AuthMethod, OAuthProvider};
 use iuredesk_model::{
-    AccountId, Calendar, Contact, Event as CalEvent, Flags, Folder, FolderId, FolderRole, Mailbox, MessageEnvelope,
-    MessageId, Note, Task, TaskId, TaskList, TaskStatus,
+    AccountId, Calendar, Contact, Event as CalEvent, Flags, Folder, FolderId, FolderRole, MessageEnvelope, MessageId,
+    Note, Task, TaskId, TaskList, TaskStatus,
 };
 use iuredesk_store::{AccountLabel, FolderCount, Store};
 
@@ -30,6 +39,7 @@ use crate::onboarding::{Flow, Wizard, WizardStep};
 use crate::prefs::{DensityPref, Prefs, ShortcutScheme, ThemePref};
 use crate::time::Zone;
 use crate::{EngineError, Result};
+use iuredesk_compose::{OutboxId, SignatureBook, Transport};
 
 /// Sobres en caché antes de vaciarla.
 const ENVELOPE_CACHE: usize = 8_192;
@@ -92,6 +102,8 @@ pub enum FolderSel {
     Flagged,
     /// Una carpeta concreta.
     Folder(FolderId),
+    /// Bandeja de salida (lo que espera para enviarse).
+    Outbox,
 }
 
 impl Default for FolderSel {
@@ -123,17 +135,19 @@ pub struct Notice {
     pub text: Text,
     /// Ofrece «Deshacer».
     pub undo: bool,
+    /// Segundos a la vista (`None` = lo de siempre).
+    pub secs: Option<u32>,
 }
 
 impl Notice {
     pub fn info(en: impl Into<String>, es: impl Into<String>) -> Notice {
-        Notice { kind: NoticeKind::Info, text: Text::new(en, es), undo: false }
+        Notice { kind: NoticeKind::Info, text: Text::new(en, es), undo: false, secs: None }
     }
     pub fn success(en: impl Into<String>, es: impl Into<String>) -> Notice {
-        Notice { kind: NoticeKind::Success, text: Text::new(en, es), undo: false }
+        Notice { kind: NoticeKind::Success, text: Text::new(en, es), undo: false, secs: None }
     }
     pub fn error(text: Text) -> Notice {
-        Notice { kind: NoticeKind::Error, text, undo: false }
+        Notice { kind: NoticeKind::Error, text, undo: false, secs: None }
     }
 }
 
@@ -182,6 +196,14 @@ pub enum EngineJob {
 /// Eventos para la UI tras [`Session::poll`].
 pub enum Event {
     Notice(Notice),
+    /// Correo nuevo (aviso y notificación del escritorio).
+    NewMail {
+        summary: Text,
+        /// Hasta tres «Remitente — Asunto».
+        detail: String,
+        /// Cuenta que lo recibió.
+        account: String,
+    },
     /// Resultado de un trabajo encolado por la UI.
     Custom {
         id: JobId,
@@ -199,9 +221,21 @@ pub struct Fetched {
 /// Paso inverso de una acción.
 #[derive(Clone, Debug)]
 enum Inverse {
-    Flags { id: MessageId, account: AccountId, flags: Flags },
-    Move { id: MessageId, account: AccountId, folder: FolderId },
+    Flags {
+        id: MessageId,
+        account: AccountId,
+        flags: Flags,
+    },
+    /// Volver a `folder`, donde el mensaje tenía el id remoto `remote`.
+    Move {
+        id: MessageId,
+        account: AccountId,
+        folder: FolderId,
+        remote: Option<String>,
+    },
     Task(Box<Task>),
+    /// Sacar el mensaje de la bandeja de salida.
+    Send(OutboxId),
 }
 
 #[derive(Clone, Debug)]
@@ -223,6 +257,28 @@ pub struct SessionConfig {
     pub zone: Zone,
     /// Es el buzón de ejemplo (`--sample`).
     pub sample: bool,
+    /// Sincronizar las cuentas con sus servidores (`None` = sin red: buzón de ejemplo y pruebas).
+    pub sync: Option<iuredesk_sync::SyncOptions>,
+    /// Transporte para todas las cuentas en lugar de SMTP (buzón de ejemplo y pruebas).
+    pub transport: Option<Arc<dyn Transport>>,
+}
+
+impl SessionConfig {
+    /// Sesión sin red sobre un almacén (pruebas y capturas): sin cuentas, sin preferencias en
+    /// disco, zona UTC.
+    pub fn offline(store: Arc<Store>) -> SessionConfig {
+        SessionConfig {
+            store,
+            accounts: None,
+            secrets: Arc::new(iuredesk_accounts::MemoryStore::default()),
+            prefs_path: None,
+            now: None,
+            zone: Zone::utc(),
+            sample: false,
+            sync: None,
+            transport: None,
+        }
+    }
 }
 
 /// La sesión.
@@ -259,6 +315,17 @@ pub struct Session {
     calendars: Vec<Calendar>,
     events_cache: Option<((DateTime<Utc>, DateTime<Utc>), Vec<Occurrence>)>,
     data_gen: u64,
+    /// `Account::id` → id local.
+    account_ids: HashMap<String, AccountId>,
+    live: live::Live,
+    sync_options: Option<iuredesk_sync::SyncOptions>,
+    sender: Option<outbox::Sender>,
+    transport_override: Option<Arc<dyn Transport>>,
+    signatures: SignatureBook,
+    /// Mensaje que se marcará como leído cuando pase el retraso.
+    pending_read: Option<(MessageId, Instant)>,
+    /// Avisos para la UI que no salen de un comando.
+    notices: Vec<Notice>,
 }
 
 impl std::fmt::Debug for Session {
@@ -309,9 +376,20 @@ impl Session {
             calendars: Vec::new(),
             events_cache: None,
             data_gen: 0,
+            account_ids: HashMap::new(),
+            live: live::Live::default(),
+            sync_options: cfg.sync,
+            sender: None,
+            transport_override: cfg.transport,
+            signatures: SignatureBook::default(),
+            pending_read: None,
+            notices: Vec::new(),
         };
+        s.signatures = SignatureBook::load(&s.store).unwrap_or_default();
         s.reload_accounts()?;
         s.rebuild_rows();
+        s.start_outbox();
+        s.restart_sync();
         Ok(s)
     }
 
@@ -356,12 +434,41 @@ impl Session {
             Some(a) => a.load().unwrap_or_default(),
             None => Vec::new(),
         };
+        self.account_ids.clear();
+        for i in 0..self.accounts.len() {
+            if let Some(a) = self.accounts.get(i).cloned()
+                && let Some(aid) = self.local_account_id(&a)
+            {
+                self.account_ids.insert(a.id.clone(), aid);
+            }
+        }
         self.labels = self.store.account_labels().map_err(store_err)?;
         self.folders = self.store.all_folders().map_err(store_err)?;
         self.calendars = self.store.calendars().map_err(store_err)?;
         self.counts.clear();
         self.data_gen = self.data_gen.wrapping_add(1);
         Ok(())
+    }
+
+    /// Id local de una cuenta: el ya asociado; el que reservó el asistente de alta en versiones
+    /// anteriores (`acct<N>` con la misma dirección); o uno nuevo.
+    fn local_account_id(&self, a: &Account) -> Option<AccountId> {
+        if let Some(aid) = iuredesk_sync::state::lookup_account(&self.store, &a.id) {
+            return Some(aid);
+        }
+        let reserved =
+            a.id.strip_prefix("acct")
+                .and_then(|r| r.split('-').next())
+                .and_then(|n| n.parse::<u64>().ok())
+                .map(AccountId);
+        let labels = self.store.account_labels().unwrap_or_default();
+        if let Some(aid) = reserved
+            && labels.iter().any(|l| l.id == aid && l.email.eq_ignore_ascii_case(&a.email))
+        {
+            let _ = iuredesk_sync::state::bind_account(&self.store, &a.id, aid);
+            return Some(aid);
+        }
+        iuredesk_sync::state::account_id(&self.store, a).ok()
     }
 
     /// Cuentas para la barra lateral.
@@ -436,6 +543,7 @@ impl Session {
             FolderSel::Unified(r) => role_label(r).to_string(),
             FolderSel::Flagged => crate::lang::pick("Flagged", "Marcados").to_string(),
             FolderSel::Folder(id) => self.folder(id).map(|f| f.name.clone()).unwrap_or_default(),
+            FolderSel::Outbox => crate::lang::pick("Outbox", "Bandeja de salida").to_string(),
         }
     }
 
@@ -465,6 +573,7 @@ impl Session {
             FolderSel::Unified(role) => self.folders.iter().filter(|f| f.role == role).map(|f| f.id).collect(),
             FolderSel::Folder(id) => vec![id],
             FolderSel::Flagged => self.folders.iter().map(|f| f.id).collect(),
+            FolderSel::Outbox => Vec::new(),
         }
     }
 
@@ -525,6 +634,7 @@ impl Session {
             },
             FolderSel::Unified(r) => format!("in:{} ", r.slug()),
             FolderSel::Flagged => "is:flagged ".into(),
+            FolderSel::Outbox => String::new(),
         }
     }
 
@@ -647,19 +757,72 @@ impl Session {
 
     fn on_open(&mut self, id: MessageId) {
         self.request_body(id);
+        self.pending_read = None;
         if !self.prefs.mark_read_on_open {
             return;
         }
+        if self.prefs.mark_read_delay_ms == 0 {
+            self.mark_read_now(id);
+        } else {
+            self.pending_read = Some((id, Instant::now()));
+        }
+    }
+
+    /// Marca como leído (local al instante; el servidor se entera por la cola).
+    fn mark_read_now(&mut self, id: MessageId) {
         let Some(env) = self.envelope(id).cloned() else { return };
         if !env.flags.seen {
             let flags = Flags { seen: true, ..env.flags };
-            if self.store.set_flags(id, flags).is_ok() {
-                let _ =
-                    self.enqueue(env.account, "flags", &serde_json::json!({ "id": id.get(), "flags": flags.bits() }));
+            if self.apply_flags(id, env.account, flags).is_ok() {
                 self.refresh_envelope(id);
                 self.counts.clear();
             }
         }
+    }
+
+    /// Marca como leído el mensaje abierto cuando pasa el retraso (desde `poll`).
+    fn poll_pending_read(&mut self) {
+        let Some((id, since)) = self.pending_read else { return };
+        let delay = std::time::Duration::from_millis(self.prefs.mark_read_delay_ms.into());
+        if since.elapsed() < delay {
+            return;
+        }
+        self.pending_read = None;
+        if self.focused == Some(id) {
+            self.mark_read_now(id);
+        }
+    }
+
+    /// Cuándo debe la UI volver a llamar a `poll` aunque no pase nada (retraso de «leído»,
+    /// refresco pendiente de la sincronización).
+    pub fn next_deadline(&self) -> Option<std::time::Duration> {
+        let read = self.pending_read.map(|(_, since)| {
+            std::time::Duration::from_millis(self.prefs.mark_read_delay_ms.into()).saturating_sub(since.elapsed())
+        });
+        match (read, self.sync_deadline()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// Cambia banderas por la API local-primero de `sync` y la despierta.
+    fn apply_flags(&mut self, id: MessageId, account: AccountId, flags: Flags) -> Result<Option<u64>> {
+        let seq =
+            iuredesk_sync::ops::set_flags(&self.store, id, flags).map_err(|e| EngineError::Store(e.to_string()))?;
+        if seq.is_some() {
+            self.kick(account);
+        }
+        Ok(seq)
+    }
+
+    /// Mueve por la API local-primero de `sync` y la despierta.
+    fn apply_move(&mut self, id: MessageId, account: AccountId, to: FolderId) -> Result<Option<u64>> {
+        let seq =
+            iuredesk_sync::ops::move_message(&self.store, id, to).map_err(|e| EngineError::Store(e.to_string()))?;
+        if seq.is_some() {
+            self.kick(account);
+        }
+        Ok(seq)
     }
 
     fn refresh_envelope(&mut self, id: MessageId) {
@@ -699,16 +862,54 @@ impl Session {
         }
         self.body_jobs.insert(id);
         let store = Arc::clone(&self.store);
-        self.bg.spawn_blocking(move || {
-            let body = match store.get_raw(id) {
-                Ok(raw) => crate::body::parse(&raw),
-                Err(_) => {
-                    let preview = store.get_envelope(id).ok().flatten().map(|e| e.preview).unwrap_or_default();
-                    MessageBody { text: preview, ..Default::default() }
-                }
-            };
-            JobOutput::Engine(EngineJob::Body { id, body })
-        });
+        let downloaded = store.get_envelope(id).ok().flatten().is_some_and(|e| e.blob.is_some());
+        match (&self.live.handle, downloaded) {
+            // El cuerpo aún está en el servidor: se baja y luego se lee.
+            (Some(h), false) => {
+                let h = h.clone();
+                self.bg.spawn(async move {
+                    let fetched = h.fetch_body(id).await;
+                    let body = match (fetched, store.get_raw(id)) {
+                        (_, Ok(raw)) => crate::body::parse(&raw),
+                        (r, Err(_)) => {
+                            let preview = store.get_envelope(id).ok().flatten().map(|e| e.preview).unwrap_or_default();
+                            let why = match r {
+                                Err(e) => Text::new(e.message(false), e.message(true)),
+                                Ok(()) => Text::new("The message is empty.", "El mensaje está vacío."),
+                            };
+                            MessageBody {
+                                text: preview,
+                                note: Some(Text::new(
+                                    format!("Only the preview is available: {}", why.en),
+                                    format!("Solo está el extracto: {}", why.es),
+                                )),
+                                ..Default::default()
+                            }
+                        }
+                    };
+                    JobOutput::Engine(EngineJob::Body { id, body })
+                });
+            }
+            _ => {
+                self.bg.spawn_blocking(move || {
+                    let body = match store.get_raw(id) {
+                        Ok(raw) => crate::body::parse(&raw),
+                        Err(_) => {
+                            let preview = store.get_envelope(id).ok().flatten().map(|e| e.preview).unwrap_or_default();
+                            MessageBody { text: preview, ..Default::default() }
+                        }
+                    };
+                    JobOutput::Engine(EngineJob::Body { id, body })
+                });
+            }
+        }
+    }
+
+    /// Vuelve a pedir el cuerpo (tras un fallo de descarga).
+    pub fn retry_body(&mut self, id: MessageId) {
+        self.bodies.remove(&id);
+        self.body_jobs.remove(&id);
+        self.request_body(id);
     }
 
     /// Panel contextual del mensaje.
@@ -797,10 +998,13 @@ impl Session {
             }));
         }
         match base {
-            "mail.new" => Ok(Outcome::Compose(Box::new(ComposeDraft {
-                account: self.labels.first().map(|l| l.id),
-                ..Default::default()
-            }))),
+            "mail.new" => {
+                let account = match self.folder {
+                    FolderSel::Folder(f) => self.folder(f).map(|f| f.account),
+                    _ => None,
+                };
+                Ok(Outcome::Compose(Box::new(self.compose_new(account))))
+            }
             "mail.reply" | "mail.reply_all" | "mail.forward" => self.reply_like(base),
             "mail.archive" => self.archive(),
             "mail.delete" => self.delete(),
@@ -860,27 +1064,6 @@ impl Session {
         }
     }
 
-    fn reply_like(&mut self, base: &str) -> Result<Outcome> {
-        let id = self.focused.ok_or(EngineError::NoSelection)?;
-        let env = self.envelope(id).cloned().ok_or(EngineError::NoSelection)?;
-        let body = match self.bodies.get(&id) {
-            Some(b) => b.text.clone(),
-            None => env.preview.clone(),
-        };
-        let me = self.my_addresses();
-        let draft = match base {
-            "mail.forward" => ComposeDraft::forward(&env, &body),
-            "mail.reply_all" => ComposeDraft::reply(&env, &body, true, &me),
-            _ => ComposeDraft::reply(&env, &body, false, &me),
-        };
-        Ok(Outcome::Compose(Box::new(draft)))
-    }
-
-    fn enqueue(&self, account: AccountId, kind: &str, payload: &serde_json::Value) -> Option<u64> {
-        let bytes = serde_json::to_vec(payload).ok()?;
-        self.store.enqueue_op(account, kind, &bytes).ok()
-    }
-
     fn push_undo(&mut self, text: Text, steps: Vec<(Inverse, Option<u64>)>) {
         if steps.is_empty() {
             return;
@@ -916,13 +1099,11 @@ impl Session {
             if to == env.folder {
                 continue;
             }
-            self.store.move_message(id, to).map_err(store_err)?;
-            let seq = self.enqueue(
-                env.account,
-                "move",
-                &serde_json::json!({ "id": id.get(), "from": env.folder.get(), "to": to.get() }),
-            );
-            steps.push((Inverse::Move { id, account: env.account, folder: env.folder }, seq));
+            let seq = self.apply_move(id, env.account, to)?;
+            steps.push((
+                Inverse::Move { id, account: env.account, folder: env.folder, remote: env.remote_id.clone() },
+                seq,
+            ));
             self.envelopes.remove(&id);
             moved += 1;
         }
@@ -956,7 +1137,7 @@ impl Session {
         let text = Self::plural(n, "Message archived", "messages archived", "Mensaje archivado", "mensajes archivados");
         self.push_undo(text.clone(), steps);
         self.after_removal(&ids);
-        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true }))
+        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
     }
 
     fn delete(&mut self) -> Result<Outcome> {
@@ -971,14 +1152,8 @@ impl Session {
         }
         let (n, steps) = self.move_with(&rest, |s, acc| s.role_folder(acc, FolderRole::Trash))?;
         for id in &in_trash {
-            if let Some(env) = self.envelope(*id).cloned() {
-                self.store.delete_message(*id).map_err(store_err)?;
-                let _ = self.enqueue(
-                    env.account,
-                    "expunge",
-                    &serde_json::json!({ "id": id.get(), "folder": env.folder.get() }),
-                );
-                self.envelopes.remove(id);
+            if self.envelope(*id).is_some() {
+                self.discard_message(*id);
             }
         }
         self.after_removal(&ids);
@@ -1004,7 +1179,7 @@ impl Session {
             "mensajes enviados a la papelera",
         );
         self.push_undo(text.clone(), steps);
-        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true }))
+        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
     }
 
     fn move_to(&mut self, folder: FolderId) -> Result<Outcome> {
@@ -1028,7 +1203,7 @@ impl Session {
         );
         self.push_undo(text.clone(), steps);
         self.after_removal(&ids);
-        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true }))
+        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
     }
 
     /// Cambia las banderas de `ids` con `f` y deja la entrada de deshacer.
@@ -1040,8 +1215,7 @@ impl Session {
             if new == env.flags {
                 continue;
             }
-            self.store.set_flags(id, new).map_err(store_err)?;
-            let seq = self.enqueue(env.account, "flags", &serde_json::json!({ "id": id.get(), "flags": new.bits() }));
+            let seq = self.apply_flags(id, env.account, new)?;
             steps.push((Inverse::Flags { id, account: env.account, flags: env.flags }, seq));
             self.refresh_envelope(id);
         }
@@ -1053,7 +1227,7 @@ impl Session {
         if self.folder == FolderSel::Flagged {
             self.rebuild_rows();
         }
-        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true }))
+        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
     }
 
     fn toggle_read(&mut self) -> Result<Outcome> {
@@ -1093,35 +1267,37 @@ impl Session {
             let cancel = seq.filter(|s| pending.contains(s));
             match inv {
                 Inverse::Flags { id, account, flags } => {
-                    self.store.set_flags(id, flags).map_err(store_err)?;
                     match cancel {
-                        Some(s) => self.store.ack_op(s).map_err(store_err)?,
+                        // Aún no salió: se cancela y se restauran las banderas solo en local.
+                        Some(s) => {
+                            self.store.ack_op(s).map_err(store_err)?;
+                            self.store.set_flags(id, flags).map_err(store_err)?;
+                        }
                         None => {
-                            let _ = self.enqueue(
-                                account,
-                                "flags",
-                                &serde_json::json!({ "id": id.get(), "flags": flags.bits() }),
-                            );
+                            self.apply_flags(id, account, flags)?;
                         }
                     }
                     self.refresh_envelope(id);
                     restored = Some(id);
                 }
-                Inverse::Move { id, account, folder } => {
-                    let from = self.store.get_envelope(id).ok().flatten().map(|e| e.folder);
-                    self.store.move_message(id, folder).map_err(store_err)?;
+                Inverse::Move { id, account, folder, remote } => {
                     match cancel {
-                        Some(s) => self.store.ack_op(s).map_err(store_err)?,
+                        Some(s) => iuredesk_sync::ops::cancel_move(&self.store, s, id, folder, remote)
+                            .map_err(|e| EngineError::Store(e.to_string()))?,
+                        None if seq.is_none() => {
+                            // Nunca se encoló (mensaje solo local): se devuelve tal cual.
+                            self.store.move_message(id, folder).map_err(store_err)?;
+                            self.store.set_remote_id(id, remote).map_err(store_err)?;
+                        }
                         None => {
-                            let _ = self.enqueue(
-                                account,
-                                "move",
-                                &serde_json::json!({ "id": id.get(), "from": from.map(|f| f.get()), "to": folder.get() }),
-                            );
+                            self.apply_move(id, account, folder)?;
                         }
                     }
                     self.envelopes.remove(&id);
                     restored = Some(id);
+                }
+                Inverse::Send(outbox_id) => {
+                    return Ok(self.undo_send(outbox_id));
                 }
                 Inverse::Task(t) => {
                     self.store.put_task(&t).map_err(store_err)?;
@@ -1140,38 +1316,6 @@ impl Session {
             format!("Undone: {}", entry.text.en),
             format!("Deshecho: {}", entry.text.es),
         )))
-    }
-
-    /// Guarda un borrador en «Borradores» de su cuenta.
-    pub fn save_draft(&mut self, d: &ComposeDraft) -> Result<MessageId> {
-        let account = d.account.or_else(|| self.labels.first().map(|l| l.id)).ok_or(EngineError::NoAccount)?;
-        let folder = self.role_folder(account, FolderRole::Drafts).ok_or(EngineError::NoAccount)?;
-        let me = self
-            .labels
-            .iter()
-            .find(|l| l.id == account)
-            .map(|l| Mailbox::new(l.name.clone(), l.email.clone()))
-            .unwrap_or_default();
-        let now = self.now();
-        let raw = crate::compose::render_rfc822(&me, d, now);
-        let env = MessageEnvelope {
-            account,
-            folder,
-            from: vec![me],
-            to: ComposeDraft::parse_addresses(&d.to),
-            cc: ComposeDraft::parse_addresses(&d.cc),
-            subject: d.subject.clone(),
-            date: now,
-            flags: Flags { seen: true, draft: true, ..Default::default() },
-            preview: iuredesk_model::make_preview(&d.body),
-            in_reply_to: d.in_reply_to.clone(),
-            ..Default::default()
-        };
-        let id = self.store.put_message(env, &raw).map_err(store_err)?;
-        let _ = self.enqueue(account, "append_draft", &serde_json::json!({ "id": id.get() }));
-        self.counts.clear();
-        self.rebuild_rows();
-        Ok(id)
     }
 
     // ------------------------------------------------------------------ preferencias
@@ -1231,6 +1375,10 @@ impl Session {
     pub fn poll(&mut self) -> Vec<Event> {
         let done: Vec<Done> = self.bg.poll();
         let mut events = Vec::new();
+        self.poll_sync(&mut events);
+        self.poll_outbox();
+        self.poll_pending_read();
+        events.extend(self.notices.drain(..).map(Event::Notice));
         for d in done {
             match d.output {
                 JobOutput::Custom(value) => events.push(Event::Custom { id: d.id, value }),
@@ -1423,7 +1571,7 @@ impl Session {
             Text::new("Task reopened", "Tarea reabierta")
         };
         self.push_undo(text.clone(), vec![(Inverse::Task(Box::new(task)), None)]);
-        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true }))
+        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
     }
 
     /// Generación de los datos de PIM (cambia al editar tareas o cuentas): sirve de clave de caché.
@@ -1556,7 +1704,11 @@ impl Session {
     /// Prueba la conexión con la contraseña escrita y, si funciona, guarda la cuenta.
     pub fn wizard_test_and_save(&mut self) {
         let Some(w) = self.wizard.as_ref() else { return };
-        let Some(cand) = w.discovery.as_ref().and_then(|d| d.best()).cloned() else { return };
+        let reauth = w.reauth.clone();
+        let cand = w.discovery.as_ref().and_then(|d| d.best()).cloned();
+        if cand.is_none() && reauth.is_none() {
+            return;
+        }
         let auth = match w.flow {
             Some(Flow::AppPassword { .. }) => AuthMethod::AppPassword,
             _ => AuthMethod::Password,
@@ -1576,8 +1728,13 @@ impl Session {
                 }
             },
         };
-        let account =
-            crate::onboarding::build_account(format!("acct{}", aid.get()), &w.name, w.email.trim(), &cand, auth);
+        let account = match (reauth, cand) {
+            (Some(a), _) => a,
+            (None, Some(cand)) => {
+                crate::onboarding::build_account(new_account_key(aid), &w.name, w.email.trim(), &cand, auth)
+            }
+            (None, None) => return,
+        };
         let password = w.password.clone();
         let secrets = Arc::clone(&self.secrets);
         let acc = account.clone();
@@ -1617,18 +1774,23 @@ impl Session {
     pub fn wizard_oauth(&mut self) {
         let Some(w) = self.wizard.as_ref() else { return };
         let Some(Flow::OAuth(provider)) = w.flow.clone() else { return };
-        let Some(cand) = w.discovery.as_ref().and_then(|d| d.best()).cloned() else { return };
+        let reauth = w.reauth.clone();
+        let cand = w.discovery.as_ref().and_then(|d| d.best()).cloned();
         let aid = match w.reserved.map(Ok).unwrap_or_else(|| self.store.new_account_id()) {
             Ok(a) => a,
             Err(_) => return,
         };
-        let account = crate::onboarding::build_account(
-            format!("acct{}", aid.get()),
-            &w.name,
-            w.email.trim(),
-            &cand,
-            AuthMethod::OAuth2 { provider },
-        );
+        let account = match (reauth, cand) {
+            (Some(a), _) => a,
+            (None, Some(cand)) => crate::onboarding::build_account(
+                new_account_key(aid),
+                &w.name,
+                w.email.trim(),
+                &cand,
+                AuthMethod::OAuth2 { provider },
+            ),
+            (None, None) => return,
+        };
         let hint = w.email.trim().to_string();
         let secrets = Arc::clone(&self.secrets);
         let cancel = iuredesk_oauth::CancellationToken::new();
@@ -1712,6 +1874,9 @@ impl Session {
         if let Some(st) = &self.account_store {
             st.upsert(account.clone()).map_err(|e| EngineError::Io(e.to_string()))?;
         }
+        // La sincronización usará este mismo id local (etiqueta y carpetas de abajo).
+        iuredesk_sync::state::bind_account(&self.store, &account.id, aid)
+            .map_err(|e| EngineError::Store(e.to_string()))?;
         self.store
             .put_account_label(&AccountLabel {
                 id: aid,
@@ -1742,8 +1907,29 @@ impl Session {
         }
         self.reload_accounts()?;
         self.rebuild_rows();
+        // Empieza a sincronizar ya (y a poder enviar desde ella).
+        if let Some(st) = self.live.status.get_mut(&aid) {
+            *st = AccountSync::Starting;
+        }
+        self.restart_sync();
+        self.refresh_transports();
         Ok(())
     }
+
+    /// La cuenta que acaba de dar de alta el asistente (para mostrar su avance).
+    pub fn wizard_account(&self) -> Option<AccountId> {
+        self.wizard.as_ref().and_then(|w| w.reserved)
+    }
+}
+
+/// Identificador único de una cuenta nueva (`acct<N>-<marca>`): el número es su id local y la
+/// marca evita que dos carpetas de datos distintas (`IUREDESK_DATA_DIR`) compartan entradas del
+/// llavero.
+fn new_account_key(aid: AccountId) -> String {
+    let nanos =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+    let mix = (nanos as u64) ^ u64::from(std::process::id()).rotate_left(32);
+    format!("acct{}-{:08x}", aid.get(), mix & 0xffff_ffff)
 }
 
 /// Agrupa por conversación: la primera aparición (la más reciente) de cada hilo representa a la

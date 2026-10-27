@@ -32,6 +32,8 @@ pub struct MailState {
     expanded: HashSet<MessageId>,
     conv: Option<(MessageId, u64, Vec<MessageEnvelope>)>,
     card: Option<(MessageId, u64, ContextCard)>,
+    /// Mensajes con la historia citada desplegada.
+    show_quoted: HashSet<MessageId>,
 }
 
 impl Default for MailState {
@@ -53,6 +55,7 @@ impl Default for MailState {
             expanded: HashSet::new(),
             conv: None,
             card: None,
+            show_quoted: HashSet::new(),
         }
     }
 }
@@ -146,6 +149,22 @@ fn folders(app: &mut DeskApp, ui: &mut Ui) {
             (FolderSel::Unified(FolderRole::Junk), Icon::Junk, pick("Junk", "No deseado")),
             (FolderSel::Unified(FolderRole::Trash), Icon::Trash, pick("Trash", "Papelera")),
         ];
+        let outbox = app.session.outbox_entries().len();
+        if outbox > 0 || current == FolderSel::Outbox {
+            let on = !searching && current == FolderSel::Outbox;
+            if sidebar_item(
+                ui,
+                Some(Icon::Send),
+                pick("Outbox", "Bandeja de salida"),
+                u32::try_from(outbox).unwrap_or(u32::MAX),
+                on,
+            )
+            .clicked()
+            {
+                app.session.select_folder(FolderSel::Outbox);
+                app.mail.search.clear();
+            }
+        }
         for (sel, ic, label) in favs {
             let count = match sel {
                 FolderSel::Unified(r @ (FolderRole::Inbox | FolderRole::Junk)) => app.session.unified_unread(r),
@@ -400,9 +419,116 @@ fn top_bar(app: &mut DeskApp, ui: &mut Ui) {
 // ---------------------------------------------------------------------------------------------
 // Lista
 
+/// La bandeja de salida: lo que espera su hora (deshacer, programado, reintento) o falló.
+fn outbox_view(app: &mut DeskApp, ui: &mut Ui) {
+    let ctx = ui.ctx().clone();
+    let c = theme::colors(ui);
+    let entries = app.session.outbox_entries();
+    egui::Frame::new().inner_margin(egui::Margin { left: 14, right: 10, top: 10, bottom: 8 }).show(ui, |ui| {
+        pane_title(
+            ui,
+            pick("Outbox", "Bandeja de salida"),
+            &format!("{} {}", entries.len(), pick("messages", "mensajes")),
+        );
+    });
+    hairline(ui);
+    if entries.is_empty() {
+        EmptyState::new(Icon::Send, pick("Nothing waiting to be sent", "No hay nada esperando para enviarse"))
+            .body(pick(
+                "Messages wait here during the undo window, until their scheduled time, or while offline.",
+                "Aquí esperan los mensajes durante la ventana para deshacer, hasta su hora programada o mientras no hay conexión.",
+            ))
+            .show(ui);
+        // Mientras haya algo, se vuelve a mirar cada segundo.
+        return;
+    }
+    ctx.request_repaint_after(std::time::Duration::from_secs(1));
+    let now = chrono::Utc::now();
+    let zone = app.session.zone();
+    let mut cancel = None;
+    let mut retry = None;
+    egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("outbox-scroll").show(ui, |ui| {
+        for e in &entries {
+            egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        let subject =
+                            if e.subject.trim().is_empty() { pick("(no subject)", "(sin asunto)") } else { &e.subject };
+                        ui.label(RichText::new(subject).strong().color(c.text));
+                        ui.label(RichText::new(format!("{} {}", pick("To:", "Para:"), e.to)).color(c.text_muted));
+                        let state = match e.state {
+                            iuredesk_engine::iuredesk_compose::OutboxState::Failed => e
+                                .last_error
+                                .as_ref()
+                                .map(|er| {
+                                    er.message(if iuredesk_engine::lang::spanish() {
+                                        iuredesk_engine::iuredesk_compose::Lang::Es
+                                    } else {
+                                        iuredesk_engine::iuredesk_compose::Lang::En
+                                    })
+                                })
+                                .unwrap_or_else(|| pick("Failed", "Falló").to_string()),
+                            iuredesk_engine::iuredesk_compose::OutboxState::Sending => {
+                                pick("Sending…", "Enviando…").to_string()
+                            }
+                            iuredesk_engine::iuredesk_compose::OutboxState::Waiting if e.scheduled => format!(
+                                "{} {}",
+                                pick("Scheduled for", "Programado para"),
+                                iuredesk_engine::compose::schedule_label(e.not_before, now, zone)
+                            ),
+                            iuredesk_engine::iuredesk_compose::OutboxState::Waiting if e.attempts > 0 => format!(
+                                "{} {}",
+                                pick("Will retry", "Se reintentará"),
+                                iuredesk_engine::compose::schedule_label(e.not_before, now, zone)
+                            ),
+                            iuredesk_engine::iuredesk_compose::OutboxState::Waiting => {
+                                let secs = (e.not_before - now).num_seconds().max(0);
+                                format!("{} {secs} s", pick("Sending in", "Se envía en"))
+                            }
+                        };
+                        let failed = e.state == iuredesk_engine::iuredesk_compose::OutboxState::Failed;
+                        ui.add(
+                            egui::Label::new(RichText::new(state).color(if failed { c.danger } else { c.text_muted }))
+                                .wrap(),
+                        );
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .button(pick("Edit", "Editar"))
+                            .on_hover_text(pick("Stop sending and reopen", "Detener el envío y reabrir"))
+                            .clicked()
+                        {
+                            cancel = Some(e.id);
+                        }
+                        if e.state != iuredesk_engine::iuredesk_compose::OutboxState::Sending
+                            && ui.button(pick("Send now", "Enviar ya")).clicked()
+                        {
+                            retry = Some(e.id);
+                        }
+                    });
+                });
+            });
+            hairline(ui);
+        }
+    });
+    if let Some(id) = cancel {
+        match app.session.outbox_cancel(id) {
+            Ok(out) => app.outcome(&ctx, out),
+            Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
+        }
+    }
+    if let Some(id) = retry {
+        app.session.outbox_retry(id);
+    }
+}
+
 fn message_list(app: &mut DeskApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let c = theme::colors(ui);
+    if app.session.folder_sel() == FolderSel::Outbox && app.session.search_query().is_empty() {
+        outbox_view(app, ui);
+        return;
+    }
     let view = (app.session.folder_sel(), app.session.search_query().to_string());
     if app.mail.list_for.as_ref() != Some(&view) {
         app.mail.list = ListState::default();
@@ -890,13 +1016,42 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
     let ctx = ui.ctx().clone();
     let c = theme::colors(ui);
     let Some(body) = app.session.body(env.id).cloned() else {
+        // Mientras llega (o se descarga del servidor): el extracto y un esqueleto.
         ui.horizontal(|ui| {
             ui.add(egui::Spinner::new().size(12.0));
-            ui.label(RichText::new(&env.preview).color(c.text));
+            ui.label(
+                RichText::new(if env.blob.is_some() {
+                    pick("Opening…", "Abriendo…")
+                } else {
+                    pick("Downloading the message…", "Descargando el mensaje…")
+                })
+                .color(c.text_muted),
+            );
         });
+        ui.add_space(6.0);
+        if !env.preview.trim().is_empty() {
+            ui.add(egui::Label::new(RichText::new(&env.preview).color(c.text)).wrap());
+            ui.add_space(6.0);
+        }
+        let w = ui.available_width().min(560.0);
+        for k in 0..4 {
+            let (r, _) = ui.allocate_exact_size(vec2(w * [0.92, 0.78, 0.85, 0.5][k], 10.0), Sense::hover());
+            ui.painter().rect_filled(r, 4.0, c.surface_alt);
+            ui.add_space(6.0);
+        }
         return;
     };
-    if let Some(html) = &body.html {
+    if let Some(note) = &body.note {
+        let r = Banner::new(Severity::Warning, note.get()).action(pick("Retry", "Reintentar")).show(ui);
+        if r.action {
+            app.session.retry_body(env.id);
+        }
+        ui.add_space(8.0);
+    }
+    let full = app.mail.show_quoted.contains(&env.id);
+    let html_cut = body.html.as_deref().and_then(iuredesk_engine::body::strip_quoted_html);
+    let html_view = if full { body.html.clone() } else { html_cut.clone().or_else(|| body.html.clone()) };
+    if let Some(html) = &html_view {
         // Los boletines suelen medir 600 px: por debajo se pinta a 600 y se reduce al mostrar.
         let width = HtmlCache::width_for(ui.available_width().max(600.0));
         let key = HtmlKey {
@@ -905,6 +1060,7 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
             ppp_x100: (ctx.pixels_per_point() * 100.0).round() as u32,
             dark: ui.visuals().dark_mode,
             remote: app.html.remote_ready(env.id),
+            full: full || html_cut.is_none(),
         };
         let state = app.html.get(&mut app.session, key, html, &body.inline);
         match state {
@@ -953,7 +1109,7 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
                         if resp.clicked() {
                             let href = l.href.clone();
                             if href.to_ascii_lowercase().starts_with("mailto:") {
-                                if let Some(d) = iuredesk_engine::ComposeDraft::from_mailto(&href) {
+                                if let Some(d) = app.session.compose_mailto(&href) {
                                     app.open_composer(d);
                                 }
                             } else if !crate::open_url(&href) {
@@ -966,15 +1122,15 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
                     }
                 }
             }
-            Some(HtmlState::Pending) => {
-                plain_text(ui, &body.text);
-            }
-            Some(HtmlState::Failed) | None => {
-                plain_text(ui, &body.text);
+            Some(HtmlState::Pending) | Some(HtmlState::Failed) | None => {
+                quoted_text(app, ui, env.id, &body.text);
             }
         }
+        if html_cut.is_some() {
+            quoted_toggle(app, ui, env.id);
+        }
     } else {
-        plain_text(ui, &body.text);
+        quoted_text(app, ui, env.id, &body.text);
     }
     if !body.attachments.is_empty() {
         ui.add_space(10.0);
@@ -991,6 +1147,44 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
             }
         });
     }
+}
+
+/// Texto plano con la historia citada plegada tras «… mostrar texto citado» (como Gmail).
+fn quoted_text(app: &mut DeskApp, ui: &mut Ui, id: MessageId, text: &str) {
+    let (visible, quoted) = iuredesk_engine::body::split_quoted(text);
+    match quoted {
+        None => plain_text(ui, text),
+        Some(q) => {
+            plain_text(ui, &visible);
+            quoted_toggle(app, ui, id);
+            if app.mail.show_quoted.contains(&id) {
+                plain_text(ui, &q);
+            }
+        }
+    }
+}
+
+fn quoted_toggle(app: &mut DeskApp, ui: &mut Ui, id: MessageId) {
+    let c = theme::colors(ui);
+    let open = app.mail.show_quoted.contains(&id);
+    let label = if open {
+        pick("Hide quoted text", "Ocultar texto citado")
+    } else {
+        pick("… show quoted text", "… mostrar texto citado")
+    };
+    let r = ui.add(
+        egui::Button::new(RichText::new(label).color(c.text_muted).size(theme::density(ui.ctx()).small_size()))
+            .fill(c.surface_alt)
+            .corner_radius(8),
+    );
+    if r.clicked() {
+        if open {
+            app.mail.show_quoted.remove(&id);
+        } else {
+            app.mail.show_quoted.insert(id);
+        }
+    }
+    ui.add_space(4.0);
 }
 
 fn plain_text(ui: &mut Ui, text: &str) {

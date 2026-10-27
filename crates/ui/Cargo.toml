@@ -17,6 +17,8 @@ egui = { workspace = true }
 chrono = { workspace = true }
 # Abre enlaces en el navegador del sistema (xdg-open/open/start; Rust puro).
 open = { workspace = true }
+# Selector de archivos para adjuntar (portal XDG en Linux).
+rfd = { workspace = true }
 
 [dev-dependencies]
 iuredesk-accounts = { workspace = true }

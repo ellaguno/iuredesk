@@ -148,7 +148,11 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
                 if let Some(e) = &email
                     && iurefficient_ui::primary_button(ui, pick("Write", "Escribir")).clicked()
                 {
-                    app.open_composer(iuredesk_engine::ComposeDraft { to: e.clone(), ..Default::default() });
+                    {
+                        let mut d = app.session.compose_new(None);
+                        d.draft.to = iuredesk_engine::compose::lenient_addresses(e);
+                        app.open_composer(d);
+                    }
                 }
                 if let Some(e) = &email
                     && ui.button(pick("Show messages", "Ver mensajes")).clicked()

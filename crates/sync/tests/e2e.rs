@@ -479,3 +479,25 @@ async fn live_imap() {
     }
     h.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gmail_all_mail_is_the_archive() {
+    let s = FakeImap::start(FakeCaps::default()).await.unwrap();
+    // Gmail no tiene «Archive»: archivar es quitar la etiqueta de la bandeja (queda en «Todos»).
+    s.remove_mailbox("Archive");
+    s.add_mailbox("[Gmail]/All Mail", Some("\\All"));
+    s.add_mailbox("[Gmail]/Starred", Some("\\Flagged"));
+    s.deliver("INBOX", &msg(1, 0), &[], None);
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
+    let mut acc = account("g1", Protocol::Imap, s.port());
+    acc.kind = AccountKind::Gmail;
+    let handle = SyncEngine::start_with(Arc::clone(&store), vec![acc], None, secrets("g1", PASSWORD), opts());
+    handle.sync_now_wait("g1").await.unwrap();
+    let acct = store.account_labels().unwrap()[0].id;
+    let folders = store.folders(acct).unwrap();
+    let archive = folders.iter().find(|f| f.role == FolderRole::Archive).expect("Gmail: «Todos» hace de Archivo");
+    assert_eq!(archive.remote_path, "[Gmail]/All Mail");
+    assert!(!folders.iter().any(|f| f.remote_path == "[Gmail]/Starred"), "las demás virtuales no se bajan");
+    handle.shutdown().await;
+}

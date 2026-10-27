@@ -189,13 +189,43 @@ fn body(app: &mut DeskApp, ui: &mut Ui) {
                 );
             });
             ui.add_space(6.0);
-            ui.label(
-                RichText::new(pick(
-                    "Your mail will start syncing when sync arrives (F1). Meanwhile, everything is ready.",
-                    "Tu correo empezará a sincronizarse cuando llegue la sincronización (F1). Mientras, todo está listo.",
-                ))
-                .color(c.text_muted),
-            );
+            // Avance de la primera sincronización de la cuenta recién agregada.
+            let status = app.session.wizard_account().and_then(|a| app.session.account_sync(a).cloned());
+            match status {
+                Some(iuredesk_engine::AccountSync::Ready { .. }) => {
+                    ui.label(
+                        RichText::new(pick("Your inbox is up to date.", "Tu bandeja está al día.")).color(c.text_muted),
+                    );
+                }
+                Some(iuredesk_engine::AccountSync::Error { text, .. }) => {
+                    ui.add(egui::Label::new(RichText::new(text.get()).color(c.danger)).wrap());
+                }
+                Some(iuredesk_engine::AccountSync::Offline(text)) => {
+                    ui.add(egui::Label::new(RichText::new(text.get()).color(c.warning)).wrap());
+                }
+                Some(s) => {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(14.0));
+                        let label = match s {
+                            iuredesk_engine::AccountSync::Working { done, total, .. } if total > 0 => format!(
+                                "{} {done}/{total}",
+                                pick("Downloading recent mail…", "Descargando correos recientes…")
+                            ),
+                            _ => pick("Downloading recent mail…", "Descargando correos recientes…").to_string(),
+                        };
+                        ui.label(RichText::new(label).color(c.text_muted));
+                    });
+                }
+                None => {
+                    ui.label(
+                        RichText::new(pick(
+                            "You can start using it now; mail keeps arriving in the background.",
+                            "Ya puedes usarla; el correo sigue llegando en segundo plano.",
+                        ))
+                        .color(c.text_muted),
+                    );
+                }
+            }
             ui.add_space(14.0);
             if primary_button(ui, pick("Go to my inbox", "Ir a mi bandeja")).clicked() {
                 app.session.wizard_close();
@@ -208,8 +238,13 @@ fn provider(app: &mut DeskApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let c = theme::colors(ui);
     let Some(w) = app.session.wizard.as_ref() else { return };
-    let name = w.provider_name();
-    let server = w.server_summary().unwrap_or_default();
+    let (name, server) = match &w.reauth {
+        Some(a) => (
+            pick("Sign in again", "Volver a iniciar sesión").to_string(),
+            format!("{}:{}", a.incoming.host, a.incoming.port),
+        ),
+        None => (w.provider_name(), w.server_summary().unwrap_or_default()),
+    };
     let email = w.email.clone();
     let flow = w.flow.clone();
     let oauth_ready = w.oauth_ready;

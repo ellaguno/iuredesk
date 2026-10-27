@@ -62,8 +62,11 @@ Antes de cada commit: `cargo xtask ci` (fmt, clippy -D warnings, pruebas, layers
 notices, assets). Mensajes de commit con el id de tarea de `docs/gaps.md` (p. ej. `F0.3: …`).
 
 ## Ver la aplicación
-- `cargo run -p iuredesk` (con `--sample` carga un buzón de ejemplo).
-- Captura sin pantalla: `cargo run -p iuredesk-ui --example ui_shot -- /tmp/shot.png [--dark]`.
+- `cargo run -p iuredesk` (con `--sample` carga un buzón de ejemplo). Con
+  `IUREDESK_DATA_DIR=/ruta` usa esa carpeta para almacén, cuentas y preferencias (probar una cuenta
+  real sin tocar la instalación normal).
+- E2e con IMAP y SMTP falsos: `cargo test -p iuredesk-engine --test live -- --ignored`.
+- Captura sin pantalla: `cargo run -p iuredesk-ui --example ui_shot -- /tmp/shot.png [--dark] [--compose]`.
   Para trabajo de UI, mira la captura antes de dar algo por terminado.
 
 ## Licencia
