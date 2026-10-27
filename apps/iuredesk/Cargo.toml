@@ -16,6 +16,8 @@ iuredesk-engine = { workspace = true }
 iuredesk-store = { workspace = true }
 iuredesk-accounts = { workspace = true }
 iuredesk-ui = { workspace = true }
+# `iuredesk --mcp` y el puente IPC con la ventana abierta (F4.2).
+iuredesk-mcp = { workspace = true }
 egui = { workspace = true }
 eframe = { workspace = true, features = ["wgpu", "wayland", "x11", "accesskit", "default_fonts"] }
 dirs = { workspace = true }
@@ -26,3 +28,7 @@ notify-rust = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }

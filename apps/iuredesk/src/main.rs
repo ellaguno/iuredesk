@@ -1,9 +1,11 @@
 //! IureDesk — binario de escritorio.
 //!
-//! `iuredesk [--sample] [mailto:…]`
+//! `iuredesk [--sample] [mailto:…]` · `iuredesk --mcp [--sample]`
 //! - `--sample`: abre (y la primera vez crea) un buzón de ejemplo en la carpeta de datos.
 //! - Sin cuentas ni `--sample` se muestra la bienvenida con el asistente de alta.
 //! - Un argumento `mailto:` abre el redactor con los datos del enlace.
+//! - `--mcp`: servidor MCP por stdio (Claude, Copilot). Si la ventana está abierta, cada llamada
+//!   corre dentro de ella por el puente IPC; si no, abre el almacén solo durante la llamada.
 //! - `IUREDESK_DATA_DIR=/ruta` usa esa carpeta para todo (almacén, cuentas y preferencias): sirve
 //!   para probar con una cuenta real sin tocar la instalación normal.
 #![deny(
@@ -18,6 +20,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use iuredesk_accounts::{AccountStore, KeyringStore, MemoryStore, SecretStore};
 use iuredesk_engine::{OfflineTransport, Prefs, Session, SessionConfig, Zone};
@@ -26,8 +29,10 @@ use iuredesk_ui::{DeskApp, Notifier, Options};
 const HELP: &str = "IureDesk — correo, calendario, contactos, notas y tareas
 
 Uso: iuredesk [--sample] [mailto:…]
+     iuredesk --mcp [--sample]
 
   --sample     buzón de ejemplo (no toca tus cuentas)
+  --mcp        servidor MCP por stdio (Claude Desktop, VS Code/Copilot)
   --help       esta ayuda
   mailto:…     abre el redactor con los datos del enlace
 
@@ -65,26 +70,41 @@ fn notifier() -> Option<Notifier> {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Antes de cualquier salida: en modo MCP, stdout es solo del protocolo.
+    if args.first().map(String::as_str) == Some("--mcp") {
+        let sample = args.iter().any(|a| a == "--sample");
+        let dir = data_dir().join(if sample { "sample" } else { "store" });
+        return ExitCode::from(u8::try_from(iuredesk_mcp::run_stdio(&dir).clamp(0, 255)).unwrap_or(1));
+    }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print!("{HELP}");
         return ExitCode::SUCCESS;
     }
     let sample = args.iter().any(|a| a == "--sample");
     let mailto = args.iter().find(|a| a.to_ascii_lowercase().starts_with("mailto:")).cloned();
-    if let Some(bad) = args.iter().find(|a| a.starts_with("--") && *a != "--sample") {
+    if let Some(bad) = args.iter().find(|a| a.starts_with("--") && *a != "--sample" && *a != "--mcp") {
         eprintln!("Opción desconocida: {bad}\n\n{HELP}");
         return ExitCode::from(2);
     }
 
-    let session = match open_session(sample) {
+    let changed = Arc::new(AtomicBool::new(false));
+    let (session, bridge) = match open_session(sample, &changed) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("IureDesk no pudo abrir tus datos: {e}");
             return ExitCode::FAILURE;
         }
     };
-    let app =
-        DeskApp::new(session, Options { system_fonts: true, no_theme_watch: false, mailto, notifier: notifier() });
+    let app = DeskApp::new(
+        session,
+        Options {
+            system_fonts: true,
+            no_theme_watch: false,
+            mailto,
+            notifier: notifier(),
+            external_change: Some(changed),
+        },
+    );
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -94,7 +114,7 @@ fn main() -> ExitCode {
             .with_min_inner_size([880.0, 560.0]),
         ..Default::default()
     };
-    match eframe::run_native("IureDesk", options, Box::new(|_| Ok(Box::new(App(app))))) {
+    match eframe::run_native("IureDesk", options, Box::new(|_| Ok(Box::new(App { app, _bridge: bridge })))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("IureDesk no pudo abrir la ventana: {e}");
@@ -103,17 +123,36 @@ fn main() -> ExitCode {
     }
 }
 
-fn open_session(sample: bool) -> Result<Session, String> {
+/// Puente IPC para `iuredesk --mcp` (redb admite un solo proceso): las herramientas corren dentro
+/// de la app y, si escriben, marcan `changed` para que la interfaz recargue. Si no arranca, la app
+/// sigue (el MCP dirá que IureDesk está abierto).
+fn bridge(store: &Arc<iuredesk_store::Store>, changed: &Arc<AtomicBool>) -> Option<iuredesk_mcp::BridgeHandle> {
+    let flag = Arc::clone(changed);
+    iuredesk_mcp::start_bridge(
+        Arc::clone(store),
+        iuredesk_mcp::BridgeOptions {
+            on_change: Some(Arc::new(move |_tool: &str| flag.store(true, Ordering::Release))),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| eprintln!("IureDesk: puente MCP no disponible ({e})"))
+    .ok()
+}
+
+type Opened = (Session, Option<iuredesk_mcp::BridgeHandle>);
+
+fn open_session(sample: bool, changed: &Arc<AtomicBool>) -> Result<Opened, String> {
     let dir = data_dir();
     let prefs_path = match data_override() {
         Some(d) => Some(d.join("prefs.json")),
         None => Prefs::default_path(),
     };
     if sample {
-        let store = iuredesk_store::sample::open_sample(dir.join("sample")).map_err(|e| e.to_string())?;
+        let store = Arc::new(iuredesk_store::sample::open_sample(dir.join("sample")).map_err(|e| e.to_string())?);
+        let handle = bridge(&store, changed);
         let secrets: Arc<dyn SecretStore> = Arc::new(MemoryStore::default());
         return Session::new(SessionConfig {
-            store: Arc::new(store),
+            store,
             accounts: None,
             secrets,
             prefs_path,
@@ -125,15 +164,17 @@ fn open_session(sample: bool) -> Result<Session, String> {
             sync: None,
             transport: Some(Arc::new(OfflineTransport)),
         })
+        .map(|s| (s, handle))
         .map_err(|e| e.text().get().to_string());
     }
-    let store = iuredesk_store::Store::open(dir.join("store")).map_err(|e| e.to_string())?;
+    let store = Arc::new(iuredesk_store::Store::open(dir.join("store")).map_err(|e| e.to_string())?);
+    let handle = bridge(&store, changed);
     let accounts = match data_override() {
         Some(d) => Some(AccountStore::at(d.join("accounts.json"))),
         None => AccountStore::open_default().ok(),
     };
     Session::new(SessionConfig {
-        store: Arc::new(store),
+        store,
         accounts,
         secrets: Arc::new(KeyringStore),
         prefs_path,
@@ -143,17 +184,22 @@ fn open_session(sample: bool) -> Result<Session, String> {
         sync: Some(iuredesk_engine::iuredesk_sync::SyncOptions::default()),
         transport: None,
     })
+    .map(|s| (s, handle))
     .map_err(|e| e.text().get().to_string())
 }
 
-struct App(DeskApp);
+/// La ventana y el puente MCP (vive lo que la ventana; al soltarlo se borra el punto de acceso).
+struct App {
+    app: DeskApp,
+    _bridge: Option<iuredesk_mcp::BridgeHandle>,
+}
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.0.ui(ui);
+        self.app.ui(ui);
     }
 
     fn on_exit(&mut self) {
-        self.0.shutdown();
+        self.app.shutdown();
     }
 }

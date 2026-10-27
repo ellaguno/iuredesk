@@ -109,6 +109,7 @@ pub enum Group {
     Calendar,
     Navigate,
     View,
+    Assistant,
     App,
 }
 
@@ -119,6 +120,7 @@ impl Group {
             Group::Calendar => crate::lang::pick("Calendar", "Calendario"),
             Group::Navigate => crate::lang::pick("Go to", "Ir a"),
             Group::View => crate::lang::pick("View", "Vista"),
+            Group::Assistant => crate::lang::pick("Assistant", "Asistente"),
             Group::App => "IureDesk",
         }
     }
@@ -252,6 +254,95 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("app.palette", "Command palette", "Paleta de comandos", "search", Group::App, "commands comandos"),
     c("app.add_account", "Add account…", "Agregar cuenta…", "plus", Group::App, "account cuenta new nueva"),
     c("undo", "Undo", "Deshacer", "undo", Group::App, "undo revert deshacer"),
+    // F4.2: asistente ✦, suite e importación (los atiende la UI: `Outcome::Assist`).
+    c(
+        "ai.summarize",
+        "Summarize conversation",
+        "Resumir conversación",
+        "sparkle",
+        Group::Assistant,
+        "ai ia summary resumen",
+    ),
+    c(
+        "ai.replies",
+        "Suggest replies",
+        "Sugerir respuestas",
+        "sparkle",
+        Group::Assistant,
+        "ai ia reply respuesta rápida",
+    ),
+    c(
+        "ai.analyze",
+        "Analyze message",
+        "Analizar mensaje",
+        "sparkle",
+        Group::Assistant,
+        "ai ia dates fechas tareas lead ticket",
+    ),
+    c(
+        "ai.compose",
+        "Assistant in the composer",
+        "Asistente en el redactor",
+        "sparkle",
+        Group::Assistant,
+        "ai ia rewrite reescribir redactar tono",
+    ),
+    c(
+        "ai.triage",
+        "What needs my attention today?",
+        "¿Qué necesito atender hoy?",
+        "sparkle",
+        Group::Assistant,
+        "ai ia triage hoy prioridad",
+    ),
+    c(
+        "ai.minutes",
+        "Meeting minutes from a transcript",
+        "Minuta desde una transcripción",
+        "sparkle",
+        Group::Assistant,
+        "ai ia minutes minuta reunión transcribe",
+    ),
+    c(
+        "ai.document",
+        "Create document from selected mail",
+        "Crear documento con los correos seleccionados",
+        "sparkle",
+        Group::Assistant,
+        "ai ia document documento iureeditor",
+    ),
+    c(
+        "ai.chat",
+        "Chat with the assistant",
+        "Conversar con el asistente",
+        "sparkle",
+        Group::Assistant,
+        "ai ia chat preguntar",
+    ),
+    c(
+        "app.import",
+        "Import mail from Outlook, Thunderbird, Apple Mail…",
+        "Importar correo de Outlook, Thunderbird, Apple Mail…",
+        "plus",
+        Group::App,
+        "import importar migrar pst mbox",
+    ),
+    c(
+        "suite.read_aloud",
+        "Read message aloud (IureVoz)",
+        "Leer el mensaje en voz alta (IureVoz)",
+        "mail",
+        Group::App,
+        "voice voz leer speak",
+    ),
+    c(
+        "suite.connect_agents",
+        "Use IureDesk from Claude / Copilot",
+        "Usar IureDesk desde Claude / Copilot",
+        "settings",
+        Group::App,
+        "mcp claude copilot vscode agentes",
+    ),
 ];
 
 /// Busca un comando por id. Acepta ids con argumento (`mail.move:12` → `mail.move`).
@@ -266,6 +357,7 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
     // Comunes a todos los esquemas.
     let common = match id {
         "app.palette" => Some(Chord::cmd("K")),
+        "ai.compose" => Some(Chord::cmd("J")),
         "nav.mail" => Some(Chord::cmd("Num1")),
         "nav.calendar" => Some(Chord::cmd("Num2")),
         "nav.contacts" => Some(Chord::cmd("Num3")),

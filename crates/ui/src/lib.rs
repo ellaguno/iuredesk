@@ -13,10 +13,12 @@
 )]
 
 mod app;
+mod assistant;
 mod calendar;
 mod compose;
 mod event_editor;
 mod html;
+mod import_ui;
 mod invitation;
 mod iure;
 mod mail;
@@ -25,6 +27,7 @@ mod pim;
 mod reminders;
 mod rich_edit;
 mod settings;
+mod suite_ui;
 mod widgets;
 
 pub use app::{DeskApp, Notifier, Options};

@@ -32,7 +32,9 @@ pub fn page(app: &mut DeskApp, ui: &mut Ui) {
             );
             ui.add_space(18.0);
             card(ui, w, |ui| body(app, ui));
-            ui.add_space(12.0);
+            ui.add_space(8.0);
+            crate::import_ui::onboarding_offer(app, ui);
+            ui.add_space(4.0);
             ui.label(
                 RichText::new(pick(
                     "Just exploring? Start IureDesk with --sample to see a demo mailbox.",

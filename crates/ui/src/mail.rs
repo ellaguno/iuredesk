@@ -866,6 +866,7 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCar
     }
     ui.add_space(6.0);
     action_bar(app, ui);
+    crate::assistant::reading_bar(app, ui, id);
     ui.add_space(4.0);
     hairline(ui);
 
@@ -881,6 +882,7 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCar
             }
             ui.add_space(8.0);
         }
+        crate::assistant::reading_cards(app, ui, id);
         let n = conv.len();
         for (k, env) in conv.iter().enumerate() {
             let expanded = env.id == id || Some(env.id) == last || app.mail.expanded.contains(&env.id) || n == 1;
@@ -891,6 +893,7 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCar
                 ui.add_space(6.0);
             }
         }
+        crate::assistant::reply_chips(app, ui, id);
         ui.add_space(24.0);
     });
 }
@@ -1145,14 +1148,16 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
             for a in &body.attachments {
-                attachment_chip(ui, &a.name, a.size);
+                let r = attachment_chip(ui, &a.name, a.size);
+                crate::suite_ui::attachment_menu(app, &r, env.id, &a.name);
             }
         });
     } else if env.has_attachments {
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
             for a in &env.attachments {
-                attachment_chip(ui, &a.filename, usize::try_from(a.size).unwrap_or(usize::MAX));
+                let r = attachment_chip(ui, &a.filename, usize::try_from(a.size).unwrap_or(usize::MAX));
+                crate::suite_ui::attachment_menu(app, &r, env.id, &a.filename);
             }
         });
     }
@@ -1216,9 +1221,9 @@ fn plain_text(ui: &mut Ui, text: &str) {
     ui.add(egui::Label::new(job).selectable(true).wrap());
 }
 
-fn attachment_chip(ui: &mut Ui, name: &str, size: usize) {
+fn attachment_chip(ui: &mut Ui, name: &str, size: usize) -> egui::Response {
     let c = theme::colors(ui);
-    egui::Frame::new()
+    let r = egui::Frame::new()
         .fill(c.surface_alt)
         .stroke(Stroke::new(1.0, c.separator))
         .corner_radius(6)
@@ -1233,7 +1238,11 @@ fn attachment_chip(ui: &mut Ui, name: &str, size: usize) {
                     RichText::new(human_size(size)).color(c.text_muted).size(theme::density(ui.ctx()).small_size()),
                 );
             });
-        });
+        })
+        .response
+        .interact(Sense::click());
+    iurefficient_ui::a11y::button(&r, &format!("{} {name}", pick("Attachment", "Adjunto")));
+    r.on_hover_text(pick("Open, OCR or save in Iurefficient", "Abrir, OCR o guardar en Iurefficient"))
 }
 
 // ---------------------------------------------------------------------------------------------

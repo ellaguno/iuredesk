@@ -198,9 +198,15 @@ Registra el ejecutable actual (`agents::command()`, o el AppImage) con `--mcp`: 
 la app instalada. Si `stale`, mostrar «Actualizar conexión» (la app se movió). Sin Claude ni VS
 Code: enlaces de descarga (`status.download_url`).
 
+## Cableado en la app (F4.2)
+
+- `main`: `--mcp` antes de cualquier salida y puente IPC al abrir el almacén; `on_change` marca
+  un `AtomicBool` (`Options::external_change`) y la UI llama a `Session::reload_external`.
+- Motor: `iuredesk_engine::suite::SuiteHub` (acciones en segundo plano, `SuiteEvent`) y la UI en
+  `crates/ui/src/suite_ui.rs` (menú de adjuntos, voz, transcripción, Ajustes → Suite).
+
 ## Pendiente
 
-- Cablear todo en la UI y en `main` (arriba).
 - `iurevoz` e IureProject aún no están en el catálogo `apps` de connect (se buscan aquí).
 - Herramientas MCP de escritura con deshacer en la UI (hoy el borrador/evento/nota aparece tras
   `on_change`, sin entrada en la pila de deshacer).

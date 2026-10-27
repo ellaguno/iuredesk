@@ -31,6 +31,8 @@ pub struct Options {
     pub mailto: Option<String>,
     /// Notificaciones del escritorio para el correo nuevo (`None` = solo avisos en la ventana).
     pub notifier: Option<Notifier>,
+    /// Bandera que el puente MCP marca cuando escribe en el almacén (recargar la vista).
+    pub external_change: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl std::fmt::Debug for Options {
@@ -83,11 +85,20 @@ pub struct DeskApp {
     pub settings_open: bool,
     pub(crate) settings_ui: crate::settings::AccountsUi,
     pub(crate) iure: crate::iure::IureUi,
+    /// F4.2: asistente ✦, apps hermanas e importación.
+    pub(crate) ai: crate::assistant::AiUi,
+    pub(crate) suite: crate::suite_ui::SuiteUi,
+    pub(crate) import: crate::import_ui::ImportUi,
     applied: Option<(iuredesk_engine::ThemePref, iuredesk_engine::DensityPref)>,
 }
 
 impl DeskApp {
     pub fn new(session: Session, options: Options) -> Self {
+        let (ai, suite, import) = (
+            crate::assistant::AiUi::new(&session),
+            crate::suite_ui::SuiteUi::new(&session),
+            crate::import_ui::ImportUi::new(&session),
+        );
         let mut app = DeskApp {
             session,
             options,
@@ -109,6 +120,9 @@ impl DeskApp {
             settings_open: false,
             settings_ui: Default::default(),
             iure: Default::default(),
+            ai,
+            suite,
+            import,
             applied: None,
         };
         if let Some(m) = app.options.mailto.clone()
@@ -177,12 +191,18 @@ impl DeskApp {
                 self.session.wizard_begin();
             }
             crate::onboarding::page(self, ui);
+            crate::import_ui::frame(self, &ctx);
             self.toasts.show(&ctx);
             return;
         }
 
-        let modal =
-            self.palette.is_open() || self.session.wizard.is_some() || self.settings_open || self.iure.dialog.is_some();
+        let modal = self.palette.is_open()
+            || self.session.wizard.is_some()
+            || self.settings_open
+            || self.iure.dialog.is_some()
+            || self.ai.modal()
+            || self.suite.modal()
+            || self.import.modal();
         // Escribiendo en el redactor, los atajos de la aplicación no se disparan.
         let composing = !self.composers.is_empty() && ctx.egui_wants_keyboard_input();
         if !modal && !composing {
@@ -200,7 +220,7 @@ impl DeskApp {
             Module::Contacts => crate::pim::contacts(self, ui),
             Module::Notes => crate::pim::notes(self, ui),
             Module::Tasks => crate::pim::tasks(self, ui),
-            Module::Assistant => crate::pim::assistant(self, ui),
+            Module::Assistant => crate::assistant::page(self, ui),
         }
 
         crate::event_editor::show(self, &ctx);
@@ -209,6 +229,9 @@ impl DeskApp {
         crate::settings::show(self, &ctx);
         crate::iure::dialogs(self, &ctx);
         crate::iure::bell(self, &ctx);
+        crate::assistant::frame(self, &ctx);
+        crate::suite_ui::frame(self, &ctx);
+        crate::import_ui::frame(self, &ctx);
         self.sync_window(&ctx);
         if self.session.wizard.is_some() {
             crate::onboarding::modal(self, &ctx);
@@ -268,7 +291,11 @@ impl DeskApp {
 
     /// No queda trabajo de fondo ni renders pendientes (capturas y pruebas deterministas).
     pub fn is_settled(&self) -> bool {
-        self.session.is_idle() && !self.html.pending()
+        self.session.is_idle()
+            && !self.html.pending()
+            && self.ai.hub.is_idle()
+            && self.import.hub.is_idle()
+            && !self.suite.hub.busy()
     }
 
     /// Asistente en el paso del correo con datos escritos (capturas).
@@ -336,6 +363,12 @@ impl DeskApp {
     }
 
     fn poll(&mut self, ctx: &Context) {
+        // El puente MCP escribió en el almacén (borrador, evento, nota): recargar.
+        if let Some(f) = &self.options.external_change
+            && f.swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            self.session.reload_external();
+        }
         for ev in self.session.poll() {
             match ev {
                 Event::Notice(n) => self.notice(n),
@@ -416,6 +449,7 @@ impl DeskApp {
             Outcome::FocusSearch => self.mail.focus_search = true,
             Outcome::Restyle => self.apply_style(ctx, false),
             Outcome::EditEvent(d) => crate::event_editor::open(self, *d),
+            Outcome::Assist(id) => crate::assistant::command(self, ctx, &id),
         }
     }
 

@@ -188,7 +188,7 @@ fn modules_render_without_unnamed_controls() {
         ("Contactos", "Andrés Brown"),
         ("Notas", "Notas"),
         ("Tareas", "Despacho"),
-        ("Asistente", "El asistente llega en F3"),
+        ("Asistente", "La IA propone"),
         ("Correo (", "Entrada"),
     ] {
         h.query_all_by_label_contains(label).next().unwrap_or_else(|| panic!("riel: {label}")).click();
