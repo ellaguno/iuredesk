@@ -25,6 +25,7 @@
 mod engine;
 mod fonts;
 mod net;
+pub mod print;
 pub mod sanitize;
 mod text;
 mod ua;
