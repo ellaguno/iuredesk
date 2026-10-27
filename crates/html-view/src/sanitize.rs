@@ -292,25 +292,17 @@ impl TokenSink for Sink {
     }
 }
 
-/// Copia texto crudo (CSS de `<style>`) cambiando el `<` que abre una etiqueta peligrosa por el
-/// escape CSS `\3C `. Así, aunque un lector posterior no entre en modo texto crudo (p. ej. un
-/// `<style>` sin cerrar tras un `</style>` suelto), nunca ve `<script>` ni un cierre de `<style>`.
+/// Copia texto crudo (CSS de `<style>`) cambiando **todo** `<` por el escape CSS `\3C `. En CSS
+/// válido `<` solo aparece dentro de cadenas o comentarios, donde el escape equivale. Así, aunque
+/// un lector posterior no entre en modo texto crudo (un `<style>` dentro de `<math>`/`<svg>` es
+/// contenido extranjero, o un `<style>` sin cerrar tras un `</style>` suelto), nunca ve una etiqueta:
+/// ni `<script>`, ni `<img onerror>`, ni un cierre de `<style>` (mXSS hallado por proptest).
 fn push_raw_neutralized(out: &mut String, text: &str) {
-    const DANGEROUS: &[&str] = &["script", "/script", "style", "/style", "iframe", "object", "embed", "svg", "math"];
-    let dangerous = |after: &str| {
-        let lower: String = after.chars().take(8).collect::<String>().to_ascii_lowercase();
-        DANGEROUS.iter().any(|d| lower.starts_with(d))
-    };
     let mut rest = text;
     while let Some(pos) = rest.find('<') {
         out.push_str(rest.get(..pos).unwrap_or(""));
-        let after = rest.get(pos + 1..).unwrap_or("");
-        if dangerous(after) {
-            out.push_str("\\3C ");
-        } else {
-            out.push('<');
-        }
-        rest = after;
+        out.push_str("\\3C ");
+        rest = rest.get(pos + 1..).unwrap_or("");
     }
     out.push_str(rest);
 }
@@ -559,14 +551,28 @@ mod tests {
         assert!(!out.to_ascii_lowercase().contains("<script"), "{out}");
         let mut o = String::new();
         push_raw_neutralized(&mut o, "a{}</STYLE><b>");
-        assert_eq!(o, "a{}\\3C /STYLE><b>");
+        assert_eq!(o, "a{}\\3C /STYLE>\\3C b>");
     }
 
     #[test]
     fn style_content_kept_verbatim() {
+        // Todo se copia igual salvo `<`, que pasa a `\3C ` (equivalente dentro de una cadena CSS).
         let css = "td > p { color: red } a[href^=\"http\"]::after { content: \"<b>\" }";
         let out = s(&format!("<style>{css}</style>"));
-        assert!(out.contains(css), "{out}");
+        assert!(out.contains(&css.replace('<', "\\3C ")), "{out}");
+    }
+
+    #[test]
+    fn style_in_foreign_content_cannot_smuggle_tags() {
+        // Regresión (proptest, mXSS): `<style>` dentro de `<math>`/`<svg>` no es texto crudo para el
+        // constructor de árbol, así que una etiqueta copiada dentro se volvía elemento real.
+        for html in [
+            "<table><tr><td></style><math><mtext><table><mglyph><style></td></tr></table><img src=x onerror=alert(1)>",
+            "<svg><style><img src=x onerror=alert(1)></style></svg>",
+        ] {
+            let out = s(html).to_ascii_lowercase();
+            assert!(!out.contains("<img"), "{out}");
+        }
     }
 
     #[test]
