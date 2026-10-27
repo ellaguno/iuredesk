@@ -12,6 +12,7 @@ iuredesk-model = { workspace = true }
 iuredesk-store = { workspace = true }
 iuredesk-dav = { workspace = true }
 iuredesk-oauth = { workspace = true }
+iuredesk-graph = { workspace = true }
 iuredesk-accounts = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

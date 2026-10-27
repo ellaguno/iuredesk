@@ -114,7 +114,9 @@ pub fn forget_account(store: &Store, account_id: &str, id: AccountId, folders: &
     let key = format!("acct-map/{}", account_id.chars().take(200).collect::<String>());
     store.delete_sync_state(&key)?;
     store.delete_sync_state(&pop3_key(id))?;
+    store.delete_sync_state(&gmail_key(id))?;
     for f in folders {
+        store.delete_sync_state(&graph_key(id, *f))?;
         store.delete_sync_state(&folder_key(id, *f))?;
         store.delete_sync_state(&backfill_key(id, *f))?;
         store.delete_sync_state(&format!("adopt/{}", f.get()))?;
@@ -150,6 +152,34 @@ pub fn set_adopt(store: &Store, folder: FolderId, list: &[MessageId]) -> Result<
         return Ok(());
     }
     save(store, &key, &list.iter().map(|m| m.get()).collect::<Vec<_>>())
+}
+
+/// Marca: la cuenta es de Gmail con `X-GM-EXT-1` (las carpetas son etiquetas).
+pub fn gmail_key(acct: AccountId) -> String {
+    format!("gmail-labels/{}", acct.get())
+}
+
+/// ¿La cuenta usa etiquetas de Gmail?
+pub fn is_gmail_labels(store: &Store, acct: AccountId) -> bool {
+    store.sync_state(&gmail_key(acct)).ok().flatten().is_some_and(|v| v.first() == Some(&1))
+}
+
+/// Clave del estado de una carpeta de Graph.
+pub fn graph_key(acct: AccountId, folder: FolderId) -> String {
+    format!("graph/{}/{}", acct.get(), folder.get())
+}
+
+/// Estado de una carpeta de Microsoft Graph.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphFolderState {
+    /// `deltaLink` (o el `nextLink` pendiente si la pasada se cortó).
+    pub delta_link: Option<String>,
+    /// La primera pasada terminó.
+    pub initial_done: bool,
+    /// Fecha (ms Unix) del mensaje más antiguo bajado; lo anterior es historial por bajar.
+    pub oldest_ms: Option<i64>,
+    /// Historial antiguo terminado.
+    pub backfill_done: bool,
 }
 
 /// UIDL de POP3 → segundo Unix de descarga.

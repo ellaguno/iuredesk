@@ -1,13 +1,11 @@
 //! Proveedor Microsoft Graph: calendarios, contactos y To Do (Microsoft 365 / Outlook.com).
 
-use std::sync::Arc;
-
 use chrono::{Duration, Utc};
+use iuredesk_graph::{Body, GraphClient};
 use iuredesk_model::{
     AddressBook, AddressBookId, Calendar, CalendarId, Contact, ContactId, Event, EventId, Task, TaskId, TaskList,
     TaskListId,
 };
-use iuredesk_oauth::{TokenAudience, TokenProvider};
 use iuredesk_store::{CollectionRef, CollectionSync, PimRef, Store};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
@@ -19,15 +17,13 @@ use crate::ops::{self, PimOp};
 use crate::provider::{BoxFuture, Ctx, Provider};
 use crate::{ConflictResolution, PimEvent};
 
-/// Tamaño máximo de una respuesta de Graph.
-const MAX_RESPONSE: usize = 32 * 1024 * 1024;
 /// Ruta local de la libreta única de contactos de Graph.
 const CONTACTS_PATH: &str = "contacts";
 
+/// Proveedor Graph sobre el cliente compartido de `iuredesk-graph` (tokens, 401, 429 con
+/// `Retry-After`, tamaños acotados).
 pub(crate) struct Graph {
-    http: reqwest::Client,
-    base: String,
-    tokens: Arc<dyn TokenProvider>,
+    client: GraphClient,
 }
 
 /// Respuesta de Graph.
@@ -38,71 +34,34 @@ struct Resp {
 
 impl Graph {
     pub fn new(ctx: &Ctx, base: &str) -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .timeout(ctx.opts.timeout)
-            .connect_timeout(std::time::Duration::from_secs(20))
-            .user_agent(concat!("IureDesk/", env!("CARGO_PKG_VERSION")))
-            .build()?;
-        Ok(Self { http, base: base.trim_end_matches('/').to_string(), tokens: ctx.creds.tokens()? })
+        let client = GraphClient::new(ctx.account.account.clone(), ctx.creds.tokens()?, base, ctx.opts.timeout)?
+            .with_prefer("outlook.timezone=\"UTC\", odata.maxpagesize=100")
+            .with_max_pages(ctx.opts.graph_max_pages);
+        Ok(Self { client })
     }
 
     fn url(&self, path: &str) -> String {
-        format!("{}{}", self.base, path)
+        self.client.url(path)
     }
 
     /// Los enlaces `@odata.nextLink`/`deltaLink` solo se siguen dentro de la misma raíz (el token
     /// no debe viajar a otro sitio).
     fn same_origin(&self, link: &str) -> bool {
-        let origin = |u: &str| reqwest::Url::parse(u).ok().map(|x| x.origin().ascii_serialization());
-        origin(link).is_some() && origin(link) == origin(&self.base)
+        self.client.same_origin(link)
     }
 
     async fn request(
         &self,
-        ctx: &Ctx,
+        _ctx: &Ctx,
         method: Method,
         url: &str,
         body: Option<&Value>,
         if_match: Option<&str>,
     ) -> Result<Resp> {
-        let mut retried = false;
-        loop {
-            let token = self.tokens.access_token(&ctx.account.account, TokenAudience::Api).await?;
-            let mut req = self
-                .http
-                .request(method.clone(), url)
-                .bearer_auth(&token)
-                .header("Prefer", "outlook.timezone=\"UTC\", odata.maxpagesize=100");
-            if let Some(e) = if_match {
-                req = req.header("If-Match", e);
-            }
-            if let Some(b) = body {
-                req = req.json(b);
-            }
-            let mut resp = req.send().await?;
-            let status = resp.status();
-            if status == StatusCode::UNAUTHORIZED && !retried {
-                self.tokens.invalidate(&ctx.account.account.id);
-                retried = true;
-                continue;
-            }
-            if resp.content_length().is_some_and(|l| l > MAX_RESPONSE as u64) {
-                return Err(PimError::Invalid("respuesta de Graph demasiado grande".into()));
-            }
-            let mut bytes = Vec::new();
-            while let Some(chunk) = resp.chunk().await? {
-                if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE {
-                    return Err(PimError::Invalid("respuesta de Graph demasiado grande".into()));
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-            let body =
-                if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap_or(Value::Null) };
-            if status == StatusCode::UNAUTHORIZED {
-                return Err(PimError::Unauthorized);
-            }
-            return Ok(Resp { status, body });
-        }
+        let headers: Vec<(&str, &str)> = if_match.map(|e| vec![("If-Match", e)]).unwrap_or_default();
+        let r = self.client.request(method, url, body.map(Body::Json), &headers).await?;
+        let status = StatusCode::from_u16(r.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        Ok(Resp { status, body: r.body })
     }
 
     fn error(resp: &Resp, what: &str) -> PimError {

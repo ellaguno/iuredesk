@@ -7,25 +7,30 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use iuredesk_imap::{
-    FetchData, IdleOutcome, MailboxInfo, Qresync, SelectOptions, SelectResult, SeqSet, StoreMode, fetch_items,
+    FetchData, IdleEvent, IdleOutcome, MailboxInfo, Qresync, SelectOptions, SelectResult, SeqSet, StoreMode,
+    fetch_items,
 };
 use iuredesk_model::account::AccountKind;
 use iuredesk_model::{Folder, FolderId, FolderRole, MessageEnvelope, MessageId};
-use iuredesk_store::NewMessage;
+use iuredesk_store::{NewMessage, ProviderMeta};
 use tokio::sync::{mpsc, watch};
 
+use crate::backend::{BoxFuture, MailBackend};
 use crate::engine::{Cmd, Ctx};
 use crate::error::{Result, SyncError};
+use crate::gmail;
 use crate::ops::{MailOp, QueueWork, SyncOp, classify, pending_messages};
 use crate::parse::{enrich, envelope_from_fetch, flags_from_imap, parse_body};
 use crate::pool::{Conn, ImapPool};
-use crate::state::{self, BackfillState, FolderState, adopt_list, backfill_key, folder_key, set_adopt};
+use crate::state::{self, BackfillState, FolderState, adopt_list, backfill_key, folder_key, gmail_key, set_adopt};
 use crate::{NewMailSample, Phase, SyncEvent};
 
 /// Carpetas máximas que se sincronizan por cuenta.
 const MAX_FOLDERS: usize = 5_000;
 /// Cuerpos por `UID FETCH` de precarga.
 const BODY_BATCH: usize = 20;
+/// Extractos por `UID FETCH` parcial.
+const PREVIEW_BATCH: usize = 50;
 /// Operaciones de la cola por pasada.
 const OPS_PER_PASS: usize = 500;
 /// Espera máxima entre reintentos de una operación.
@@ -55,6 +60,16 @@ pub(crate) struct ImapAccount {
 fn is_gmail(account: &iuredesk_model::account::Account) -> bool {
     let host = account.incoming.host.to_ascii_lowercase();
     account.kind == AccountKind::Gmail || host.ends_with("gmail.com") || host.ends_with("googlemail.com")
+}
+
+/// ¿El servidor tiene las extensiones de Gmail (etiquetas, `X-GM-MSGID`)?
+fn gm_ext(conn: &Conn) -> bool {
+    conn.c.capabilities().has("X-GM-EXT-1")
+}
+
+/// Banderas (y etiquetas en Gmail) para comparar con lo local.
+fn flag_items(gmail: bool, modseq: bool) -> String {
+    if gmail { fetch_items::gmail_flags(modseq) } else { fetch_items::flags(modseq) }
 }
 
 fn uid_of(env: &MessageEnvelope) -> Option<u32> {
@@ -144,7 +159,11 @@ impl ImapAccount {
         let ctx = &self.ctx;
         // En Gmail, «Archivar» es quitar la etiqueta de la bandeja de entrada: el mensaje queda en
         // «Todos». Esa carpeta se sincroniza como Archivo (como hacen Thunderbird y Apple Mail).
-        let gmail = is_gmail(&ctx.account);
+        let ext = gm_ext(conn);
+        let gmail = is_gmail(&ctx.account) || ext;
+        if ext != state::is_gmail_labels(&ctx.store, ctx.acct) {
+            ctx.store.put_sync_state(&gmail_key(ctx.acct), &[u8::from(ext)])?;
+        }
         let list: Vec<MailboxInfo> = conn
             .c
             .list()
@@ -275,6 +294,7 @@ impl ImapAccount {
         if f.role == FolderRole::Inbox {
             self.prefetch(conn, f, &inserted).await?;
         }
+        self.previews(conn, &inserted).await?;
         if !inserted.is_empty() {
             ctx.emit(SyncEvent::FolderUpdated { account: ctx.acct, folder: f.id });
         }
@@ -306,21 +326,37 @@ impl ImapAccount {
                 continue;
             }
             let server = flags_from_imap(flags);
-            if let Some(env) = self.ctx.store.get_envelope(id)?
-                && env.flags != server
-            {
-                self.ctx.store.set_flags(id, server)?;
-                changed = true;
+            if let Some(env) = self.ctx.store.get_envelope(id)? {
+                if env.flags != server {
+                    self.ctx.store.set_flags(id, server)?;
+                    changed = true;
+                }
+                // Gmail: las etiquetas de usuario viajan con las banderas.
+                if let Some(labels) = &fd.gm_labels {
+                    let mut kw = crate::parse::keywords_from_imap(flags);
+                    for l in gmail::user_labels(labels) {
+                        if !kw.contains(&l) {
+                            kw.push(l);
+                        }
+                    }
+                    changed |= self.ctx.store.set_keywords(id, kw)?;
+                }
             }
         }
         Ok(changed)
     }
 
-    fn delete_uids(&self, local: &HashMap<u32, MessageId>, uids: impl IntoIterator<Item = u32>) -> Result<bool> {
+    fn delete_uids(
+        &self,
+        folder: FolderId,
+        local: &HashMap<u32, MessageId>,
+        uids: impl IntoIterator<Item = u32>,
+    ) -> Result<bool> {
         let mut changed = false;
         for u in uids {
             if let Some(&id) = local.get(&u) {
-                self.ctx.store.delete_message(id)?;
+                // Con etiquetas de Gmail el mensaje puede seguir en otras carpetas.
+                self.ctx.store.remove_from_folder(id, folder)?;
                 changed = true;
             }
         }
@@ -339,6 +375,7 @@ impl ImapAccount {
         let ctx = &self.ctx;
         let o = &ctx.opts;
         let condstore = conn.c.capabilities().has("CONDSTORE") && !sel.mailbox.no_modseq;
+        let gm = gm_ext(conn);
         let srv_next = sel.mailbox.uid_next.unwrap_or(0);
         let mut changed = false;
 
@@ -360,7 +397,7 @@ impl ImapAccount {
         if used_qresync {
             if !sel.vanished.is_empty() || !sel.changed.is_empty() {
                 let local = self.local_uids(f)?;
-                changed |= self.delete_uids(&local, sel.vanished.iter().copied())?;
+                changed |= self.delete_uids(f.id, &local, sel.vanished.iter().copied())?;
                 changed |= self.apply_flags(&local, &sel.changed, pending)?;
             }
         } else if known_top > 0 {
@@ -372,7 +409,7 @@ impl ImapAccount {
                     if new != old {
                         let r = conn
                             .c
-                            .uid_fetch(&SeqSet::range(1, known_top), &fetch_items::flags(true), Some(old), false)
+                            .uid_fetch(&SeqSet::range(1, known_top), &flag_items(gm, true), Some(old), false)
                             .await?;
                         changed |= self.apply_flags(&local, &r.messages, pending)?;
                     }
@@ -389,7 +426,7 @@ impl ImapAccount {
                     if lo <= known_top {
                         let r = conn
                             .c
-                            .uid_fetch(&SeqSet::range(lo, known_top), &fetch_items::flags(false), None, false)
+                            .uid_fetch(&SeqSet::range(lo, known_top), &flag_items(gm, false), None, false)
                             .await?;
                         changed |= self.apply_flags(&local, &r.messages, pending)?;
                     }
@@ -405,12 +442,15 @@ impl ImapAccount {
                         conn.c.uid_search(&format!("UID {lo}:{known_top}")).await?.into_iter().collect();
                     let gone: Vec<u32> =
                         local.keys().copied().filter(|u| *u >= lo && *u <= known_top && !server.contains(u)).collect();
-                    changed |= self.delete_uids(&local, gone)?;
+                    changed |= self.delete_uids(f.id, &local, gone)?;
                 }
             }
         }
 
         let inserted = self.fetch_headers(conn, f, &new_uids, Phase::Headers, f.role == FolderRole::Inbox).await?;
+        if gm {
+            changed |= self.reconcile_unknown(conn, f, pending).await?;
+        }
         let max_new = new_uids.first().copied().unwrap_or(0);
         st.uid_next = st.uid_next.max(srv_next).max(max_new.saturating_add(1));
         st.modseq = sel.mailbox.highest_modseq.or(st.modseq);
@@ -419,11 +459,49 @@ impl ImapAccount {
         if f.role == FolderRole::Inbox && !inserted.is_empty() {
             self.prefetch(conn, f, &inserted).await?;
         }
+        self.previews(conn, &inserted).await?;
         if changed || !inserted.is_empty() {
             ctx.emit(SyncEvent::FolderUpdated { account: ctx.acct, folder: f.id });
         }
         let bf: Option<BackfillState> = state::load(&ctx.store, &backfill_key(ctx.acct, f.id));
         Ok(FolderOutcome { initial: false, backfill_pending: bf.is_some_and(|b| !b.done) && o.backfill })
+    }
+
+    /// Gmail: pertenencias puestas en local cuyo UID aún no se conoce (etiqueta puesta desde
+    /// aquí). Si la copia ya no está en la carpeta (otro cliente quitó la etiqueta antes de que la
+    /// viéramos) se quita la pertenencia; si está, se anota su UID.
+    async fn reconcile_unknown(&self, conn: &mut Conn, f: &Folder, pending: &HashSet<MessageId>) -> Result<bool> {
+        let store = &self.ctx.store;
+        let mut changed = false;
+        let mut checked = 0usize;
+        let with_uid: HashSet<MessageId> = store.remote_ids(f.id)?.into_iter().map(|(_, id)| id).collect();
+        for id in store.list_ids(f.id)? {
+            if checked >= 200 {
+                break;
+            }
+            if with_uid.contains(&id) || pending.contains(&id) {
+                continue;
+            }
+            let known = store.memberships(id)?.into_iter().find(|(fid, _)| *fid == f.id).and_then(|(_, r)| r);
+            if known.is_some() {
+                continue;
+            }
+            let Some(gm) =
+                store.provider_meta(id)?.provider_id.and_then(|p| p.strip_prefix("gm:")?.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            checked = checked.saturating_add(1);
+            let found = conn.c.uid_search(&format!("X-GM-MSGID {gm}")).await?;
+            match found.first() {
+                Some(uid) => changed |= store.add_to_folder(id, f.id, Some(&uid.to_string()))?,
+                None => {
+                    store.remove_from_folder(id, f.id)?;
+                    changed = true;
+                }
+            }
+        }
+        Ok(changed)
     }
 
     /// Baja cabeceras de `uids` (de más nuevo a más viejo) por lotes. Devuelve `(uid, id, tamaño)`
@@ -438,7 +516,8 @@ impl ImapAccount {
     ) -> Result<Vec<(u32, MessageId, u64)>> {
         let ctx = &self.ctx;
         let condstore = conn.c.capabilities().has("CONDSTORE");
-        let items = fetch_items::headers(condstore);
+        let gm = gm_ext(conn);
+        let items = if gm { fetch_items::gmail_headers(condstore) } else { fetch_items::headers(condstore) };
         let mut adopt = adopt_list(&ctx.store, f.id);
         let adopt_before = adopt.len();
         let mut out = Vec::new();
@@ -462,13 +541,32 @@ impl ImapAccount {
                 }
             }
             let mut batch = Vec::new();
+            let mut metas: Vec<ProviderMeta> = Vec::new();
             let mut seen = HashSet::new();
             for fd in &r.messages {
                 let Some(uid) = fd.uid.filter(|u| wanted.contains(u)) else { continue };
                 if !seen.insert(uid) || ctx.store.message_by_remote(f.id, &uid.to_string())?.is_some() {
                     continue;
                 }
+                // Gmail: el mismo mensaje en otra etiqueta ya está en local; solo se anota aquí.
+                let pid = fd.gm_msgid.filter(|_| gm).map(gmail::provider_id);
+                if let Some(p) = &pid
+                    && let Some(existing) = ctx.store.message_by_provider(ctx.acct, p)?
+                {
+                    ctx.store.add_to_folder(existing, f.id, Some(&uid.to_string()))?;
+                    if let (Some(labels), Some(flags)) = (&fd.gm_labels, &fd.flags) {
+                        let mut kw = crate::parse::keywords_from_imap(flags);
+                        kw.extend(gmail::user_labels(labels).into_iter().filter(|l| !flags.contains(l)));
+                        ctx.store.set_keywords(existing, kw)?;
+                    }
+                    adopt.retain(|a| *a != existing);
+                    continue;
+                }
                 let Some(mut env) = envelope_from_fetch(fd, f.id) else { continue };
+                let hint = fd.gm_thrid.filter(|_| gm).map(gmail::thread_hint);
+                if let Some(h) = &hint {
+                    env.thread = ctx.store.thread_by_hint(ctx.acct, h)?;
+                }
                 if let Some(mid) = env.message_id.clone()
                     && let Some(local) = waiting.remove(&mid)
                 {
@@ -482,6 +580,7 @@ impl ImapAccount {
                     }
                     adopt.retain(|a| *a != local.id);
                 }
+                metas.push(ProviderMeta { provider_id: pid, thread_hint: hint });
                 batch.push(NewMessage { envelope: env, raw: None, body_text: None });
             }
             let meta: Vec<(u32, u64, String, String)> = batch
@@ -496,6 +595,15 @@ impl ImapAccount {
                 })
                 .collect();
             let ids = if batch.is_empty() { Vec::new() } else { ctx.store.put_messages(batch)? };
+            if gm {
+                let pm: Vec<(MessageId, ProviderMeta)> = ids
+                    .iter()
+                    .copied()
+                    .zip(metas)
+                    .filter(|(_, m)| m.provider_id.is_some() || m.thread_hint.is_some())
+                    .collect();
+                ctx.store.set_provider_meta(&pm)?;
+            }
             for (id, (uid, size, from, subject)) in ids.into_iter().zip(meta) {
                 out.push((uid, id, size));
                 if notify && samples.len() < 3 {
@@ -512,6 +620,63 @@ impl ImapAccount {
             ctx.emit(SyncEvent::NewMail { account: ctx.acct, count: out.len(), sample: samples });
         }
         Ok(out)
+    }
+
+    /// Extractos por descarga parcial; un rechazo del servidor no estropea la pasada (solo se
+    /// propagan los fallos que dejan la conexión inservible).
+    async fn previews(&self, conn: &mut Conn, inserted: &[(u32, MessageId, u64)]) -> Result<()> {
+        match self.fill_previews(conn, inserted).await {
+            Err(SyncError::Imap(e)) if e.is_fatal_for_connection() => Err(SyncError::Imap(e)),
+            Err(SyncError::Imap(_)) | Ok(()) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Extracto para los mensajes sin cuerpo: tipo de contenido + `BODY.PEEK[TEXT]<0.n>`.
+    async fn fill_previews(&self, conn: &mut Conn, inserted: &[(u32, MessageId, u64)]) -> Result<()> {
+        let ctx = &self.ctx;
+        let max = ctx.opts.preview_fetch;
+        if max == 0 || inserted.is_empty() {
+            return Ok(());
+        }
+        let mut want: Vec<(u32, MessageId)> = Vec::new();
+        for (uid, id, _) in inserted {
+            if want.len() >= max {
+                break;
+            }
+            if let Some(e) = ctx.store.get_envelope(*id)?
+                && e.blob.is_none()
+                && e.preview.is_empty()
+            {
+                want.push((*uid, *id));
+            }
+        }
+        let items = fetch_items::preview(ctx.opts.preview_bytes);
+        for chunk in want.chunks(PREVIEW_BATCH) {
+            let ids: HashMap<u32, MessageId> = chunk.iter().copied().collect();
+            let r = conn.c.uid_fetch(&SeqSet::from_numbers(ids.keys().copied()), &items, None, false).await?;
+            let mut batch = Vec::new();
+            for fd in r.messages {
+                let (Some(uid), Some(text)) = (fd.uid, fd.section("BODY[TEXT]")) else { continue };
+                let Some(&id) = ids.get(&uid) else { continue };
+                let header = fd.section("BODY[HEADER.FIELDS").unwrap_or(b"\r\n");
+                let preview = crate::parse::preview_from_partial(header, text);
+                if preview.is_empty() {
+                    continue;
+                }
+                let Some(mut env) = ctx.store.get_envelope(id)? else { continue };
+                if env.blob.is_some() {
+                    continue;
+                }
+                env.preview = preview;
+                env.clamp();
+                batch.push(NewMessage { envelope: env, raw: None, body_text: None });
+            }
+            if !batch.is_empty() {
+                ctx.store.put_messages(batch)?;
+            }
+        }
+        Ok(())
     }
 
     /// Precarga los cuerpos de los mensajes más recientes.
@@ -628,7 +793,8 @@ impl ImapAccount {
             uids.sort_unstable_by(|a, b| b.cmp(a));
             let all = uids.len();
             uids.truncate(budget);
-            self.fetch_headers(conn, &f, &uids, Phase::Backfill, false).await?;
+            let inserted = self.fetch_headers(conn, &f, &uids, Phase::Backfill, false).await?;
+            self.previews(conn, &inserted).await?;
             budget = budget.saturating_sub(uids.len());
             if uids.len() >= all {
                 bf.done = true;
@@ -768,6 +934,19 @@ impl ImapAccount {
                 conn.c.uid_expunge(&set).await?;
                 Ok(())
             }
+            MailOp::Labels { folder, uid, add, remove, .. } => {
+                self.ensure_rw(conn, folder).await?;
+                let set = SeqSet::single(*uid);
+                if !add.is_empty() {
+                    conn.c.uid_store_gm_labels(&set, StoreMode::Add, add).await?;
+                }
+                if !remove.is_empty() {
+                    conn.c.uid_store_gm_labels(&set, StoreMode::Remove, remove).await?;
+                }
+                Ok(())
+            }
+            // Ids opacos (Graph): no corresponden a una cuenta IMAP.
+            MailOp::RemoteFlags { .. } | MailOp::RemoteMove { .. } | MailOp::RemoteDelete { .. } => Ok(()),
             MailOp::Append { msg, folder, folder_id, flags } => {
                 let Ok(raw) = self.ctx.store.get_raw(*msg) else {
                     // Se borró en local antes de subirlo: nada que hacer.
@@ -838,6 +1017,8 @@ impl ImapAccount {
             .into_iter()
             .find(|f| f.role == FolderRole::Inbox)
             .map_or_else(|| "INBOX".to_string(), |f| f.remote_path);
+        // NOTIFY (RFC 5465): el mismo IDLE avisa de los cambios en las demás carpetas.
+        let notify = conn.c.capabilities().has("NOTIFY") && conn.c.notify_personal().await.is_ok();
         conn.c.select(&inbox, &SelectOptions { read_only: true, ..Default::default() }).await?;
         loop {
             let mut s = shutdown.clone();
@@ -845,8 +1026,10 @@ impl ImapAccount {
                 let _ = s.wait_for(|v| *v).await;
             };
             match conn.c.idle(self.ctx.opts.idle_reissue, stop).await {
-                Ok(IdleOutcome::Changed(_)) => {
-                    let _ = tx.try_send(Cmd::Sync { inbox_only: true, reply: None });
+                Ok(IdleOutcome::Changed(events)) => {
+                    let others =
+                        notify && events.iter().any(|e| matches!(e, IdleEvent::MailboxStatus(m) if *m != inbox));
+                    let _ = tx.try_send(Cmd::Sync { inbox_only: !others, reply: None });
                 }
                 Ok(IdleOutcome::Timeout) => {}
                 Ok(IdleOutcome::Stopped) => {
@@ -863,4 +1046,26 @@ impl ImapAccount {
 struct FolderOutcome {
     initial: bool,
     backfill_pending: bool,
+}
+
+impl MailBackend for ImapAccount {
+    fn ctx(&self) -> &Arc<Ctx> {
+        &self.ctx
+    }
+
+    fn cycle(&self, inbox_only: bool) -> BoxFuture<'_, Result<CycleReport>> {
+        Box::pin(ImapAccount::cycle(self, inbox_only))
+    }
+
+    fn backfill(&self) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(self.backfill_slice())
+    }
+
+    fn replay(&self) -> BoxFuture<'_, Result<()>> {
+        Box::pin(ImapAccount::replay(self))
+    }
+
+    fn fetch_body(&self, msg: MessageId) -> BoxFuture<'_, Result<()>> {
+        Box::pin(ImapAccount::fetch_body(self, msg))
+    }
 }

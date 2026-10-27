@@ -1,8 +1,7 @@
 # Publicación de PRUEBA: al subir una etiqueta vX.Y.Z compila los instaladores de los tres SO con
 # `cargo xtask package <so>` (cargo-packager) y crea un *borrador* de Release, marcado como
 # preliminar, en ESTE MISMO repositorio privado (decisión del dueño: nada público por ahora).
-# Secretos: SUITE_REPOS_TOKEN (obligatorio), IUREDESK_GOOGLE_CLIENT_ID/_SECRET e
-# IUREDESK_MS_CLIENT_ID (opcionales, OAuth) y los de firma (opcionales; sin ellos los paquetes
+# Secretos: SUITE_REPOS_TOKEN (obligatorio) y los de firma (opcionales; sin ellos los paquetes
 # salen sin firmar). Ver docs/publicacion.md.
 name: Publicación
 
@@ -19,11 +18,6 @@ env:
   CARGO_INCREMENTAL: "0"
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_PACKAGER_VERSION: "0.11.8"
-  # Identificadores OAuth incrustados al compilar (`option_env!`, docs/oauth.md). Opcionales: sin
-  # ellos el botón «Continuar con Google/Microsoft» no aparece y queda la contraseña de app.
-  IUREDESK_GOOGLE_CLIENT_ID: ${{ secrets.IUREDESK_GOOGLE_CLIENT_ID }}
-  IUREDESK_GOOGLE_CLIENT_SECRET: ${{ secrets.IUREDESK_GOOGLE_CLIENT_SECRET }}
-  IUREDESK_MS_CLIENT_ID: ${{ secrets.IUREDESK_MS_CLIENT_ID }}
 
 jobs:
   package:

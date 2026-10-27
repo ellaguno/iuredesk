@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, PoisonError};
 
 use iuredesk_model::{
-    AccountId, Flags, Folder, FolderId, FolderRole, MAX_REFERENCES, MessageEnvelope, MessageId, Thread, ThreadId,
-    ThreadInput, normalize_subject, thread_messages,
+    AccountId, Flags, Folder, FolderId, FolderRole, MAX_REFERENCES, MessageEnvelope, MessageId, Thread, ThreadGroup,
+    ThreadId, ThreadInput, normalize_subject, thread_messages,
 };
 use redb::{ReadableDatabase, ReadableTable, Table, WriteTransaction};
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,18 @@ pub const MAX_SEARCH_RESULTS: usize = 1_000;
 const MAX_SEARCH_CANDIDATES: usize = 50_000;
 /// Longitud máxima de una clave de texto en índices (Message-ID, id remoto).
 const MAX_KEY_LEN: usize = 998;
+
+/// Carpetas (etiquetas) máximas a las que pertenece un mensaje.
+const MAX_MEMBERSHIPS: usize = 500;
+
+/// Id estable del proveedor y pista de hilo de un mensaje (F2.5).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderMeta {
+    /// Id que no cambia al mover ni entre etiquetas (`X-GM-MSGID`, id inmutable de Graph).
+    pub provider_id: Option<String>,
+    /// Hilo según el proveedor (`X-GM-THRID`, `conversationId` de Graph).
+    pub thread_hint: Option<String>,
+}
 
 /// Nombre y dirección de una cuenta para la barra lateral.
 ///
@@ -73,6 +85,10 @@ struct MailTx<'t> {
     orphans: Table<'t, (u64, &'static str), u64>,
     threads: Table<'t, u64, &'static [u8]>,
     members: Table<'t, (u64, u64), ()>,
+    also: Table<'t, (u64, u64), &'static str>,
+    provider: Table<'t, (u64, &'static str), u64>,
+    msg_provider: Table<'t, u64, &'static [u8]>,
+    hints: Table<'t, (u64, &'static str), u64>,
 }
 
 impl<'t> MailTx<'t> {
@@ -89,6 +105,10 @@ impl<'t> MailTx<'t> {
             orphans: tx.open_table(ORPHAN_REFS)?,
             threads: tx.open_table(THREADS)?,
             members: tx.open_table(THREAD_MEMBERS)?,
+            also: tx.open_table(MSG_ALSO_IN)?,
+            provider: tx.open_table(PROVIDER_INDEX)?,
+            msg_provider: tx.open_table(MSG_PROVIDER)?,
+            hints: tx.open_table(THREAD_HINTS)?,
         })
     }
 
@@ -111,6 +131,17 @@ impl<'t> MailTx<'t> {
             let r = clip(r, MAX_KEY_LEN);
             if self.remote.get((env.folder.get(), r))?.map(|g| g.value()) == Some(id) {
                 self.remote.remove((env.folder.get(), r))?;
+            }
+        }
+        for (f, r) in self.secondary(id)? {
+            if f == env.folder.get() {
+                continue;
+            }
+            self.folder_index.remove((f, key.0, key.1))?;
+            pending.cache.push(CacheOp::Remove(f, key));
+            self.bump_counts(f, -1, if env.flags.seen { 0 } else { -1 })?;
+            if !r.is_empty() && self.remote.get((f, r.as_str()))?.map(|g| g.value()) == Some(id) {
+                self.remote.remove((f, r.as_str()))?;
             }
         }
         if let Some(t) = env.thread {
@@ -141,6 +172,17 @@ impl<'t> MailTx<'t> {
         if let Some(r) = env.remote_id.as_deref() {
             self.remote.insert((env.folder.get(), clip(r, MAX_KEY_LEN)), id)?;
         }
+        for (f, r) in self.secondary(id)? {
+            if f == env.folder.get() {
+                continue;
+            }
+            self.folder_index.insert((f, key.0, key.1), ())?;
+            pending.cache.push(CacheOp::Insert(f, key));
+            self.bump_counts(f, 1, if env.flags.seen { 0 } else { 1 })?;
+            if !r.is_empty() {
+                self.remote.insert((f, r.as_str()), id)?;
+            }
+        }
         if let Some(t) = env.thread {
             self.members.insert((t.get(), id), ())?;
             let mut th = get_rec::<Thread>(&self.threads, t.get())?.unwrap_or_else(|| Thread {
@@ -161,6 +203,76 @@ impl<'t> MailTx<'t> {
             put_rec(&mut self.threads, t.get(), &th)?;
         }
         Ok(())
+    }
+
+    /// Pertenencias secundarias `(carpeta, id remoto o "")` de un mensaje.
+    fn secondary(&self, id: u64) -> Result<Vec<(u64, String)>> {
+        let mut out = Vec::new();
+        for item in self.also.range((id, 0)..=(id, u64::MAX))?.take(MAX_MEMBERSHIPS) {
+            let (k, v) = item?;
+            out.push((k.value().1, v.value().to_string()));
+        }
+        Ok(out)
+    }
+
+    /// Borra las pertenencias secundarias y el id del proveedor de un mensaje que desaparece.
+    fn forget_extra(&mut self, env: &MessageEnvelope) -> Result<()> {
+        let id = env.id.get();
+        for (f, _) in self.secondary(id)? {
+            self.also.remove((id, f))?;
+        }
+        let meta: Option<ProviderMeta> = get_rec(&self.msg_provider, id)?;
+        if let Some(pid) = meta.and_then(|m| m.provider_id) {
+            let k = (env.account.get(), clip(&pid, MAX_KEY_LEN));
+            if self.provider.get(k)?.map(|g| g.value()) == Some(id) {
+                self.provider.remove(k)?;
+            }
+        }
+        self.msg_provider.remove(id)?;
+        Ok(())
+    }
+
+    /// Borra un mensaje por completo (índices, sobre, extras).
+    fn remove_full(&mut self, env: &MessageEnvelope, pending: &mut Pending) -> Result<()> {
+        self.detach(env, pending)?;
+        if let Some(own) = env.message_id.as_deref().and_then(clean_msgid)
+            && self.msgids.get((env.account.get(), own))?.map(|g| g.value()) == Some(env.id.get())
+        {
+            self.msgids.remove((env.account.get(), own))?;
+        }
+        self.forget_extra(env)?;
+        self.flags.remove(env.id.get())?;
+        self.envelopes.remove(env.id.get())?;
+        pending.unindex.push(env.id.get());
+        Ok(())
+    }
+
+    /// Quita el mensaje de `folder`: si es una pertenencia secundaria solo se quita esa; si es la
+    /// principal y hay otras, la primera pasa a principal; si no queda ninguna, se borra.
+    /// Devuelve `true` si el mensaje se borró del todo.
+    fn remove_membership(&mut self, mut env: MessageEnvelope, folder: u64, pending: &mut Pending) -> Result<bool> {
+        let id = env.id.get();
+        let others: Vec<(u64, String)> = self.secondary(id)?.into_iter().filter(|(f, _)| *f != folder).collect();
+        if env.folder.get() != folder {
+            if self.also.get((id, folder))?.is_none() {
+                return Ok(false);
+            }
+            self.detach(&env, pending)?;
+            self.also.remove((id, folder))?;
+            self.attach(&env, pending)?;
+            return Ok(false);
+        }
+        let Some((next, remote)) = others.first().cloned() else {
+            self.remove_full(&env, pending)?;
+            return Ok(true);
+        };
+        self.detach(&env, pending)?;
+        self.also.remove((id, next))?;
+        env.folder = FolderId(next);
+        env.remote_id = if remote.is_empty() { None } else { Some(remote) };
+        self.attach(&env, pending)?;
+        put_rec(&mut self.envelopes, id, &env)?;
+        Ok(false)
     }
 
     /// Hilo para un mensaje nuevo: el de un mensaje citado, el de un hijo que lo esperaba, o uno
@@ -236,6 +348,9 @@ impl<'t> MailTx<'t> {
                 env.thread = old.thread.filter(|_| old.account == env.account);
             }
         }
+        // La carpeta principal no puede ser a la vez secundaria.
+        self.also.remove((env.id.get(), env.folder.get()))?;
+
         if env.thread.is_none() {
             env.thread = Some(self.assign_thread(&env)?);
         }
@@ -396,10 +511,8 @@ impl Store {
                     .collect::<Result<_, _>>()?;
                 for msg in keys {
                     if let Some(env) = get_rec::<MessageEnvelope>(&m.envelopes, msg)? {
-                        m.detach(&env, pending)?;
-                        m.envelopes.remove(msg)?;
-                        m.flags.remove(msg)?;
-                        pending.unindex.push(msg);
+                        // Con etiquetas (Gmail) el mensaje sigue en sus otras carpetas.
+                        m.remove_membership(env, f, pending)?;
                     }
                 }
                 m.counts.remove(id.get())?;
@@ -575,6 +688,11 @@ impl Store {
             m.flags.insert(id.get(), flags.bits())?;
             if delta != 0 {
                 m.bump_counts(env.folder.get(), 0, delta)?;
+                for (f, _) in m.secondary(id.get())? {
+                    if f != env.folder.get() {
+                        m.bump_counts(f, 0, delta)?;
+                    }
+                }
                 if let Some(t) = env.thread
                     && let Some(mut th) = get_rec::<Thread>(&m.threads, t.get())?
                 {
@@ -605,6 +723,7 @@ impl Store {
                 return Ok(());
             }
             m.detach(&env, pending)?;
+            m.also.remove((id.get(), to.get()))?;
             env.folder = to;
             env.remote_id = None;
             m.attach(&env, pending)?;
@@ -643,15 +762,154 @@ impl Store {
         self.write(|tx, pending| {
             let mut m = MailTx::open(tx)?;
             let Some(env) = get_rec::<MessageEnvelope>(&m.envelopes, id.get())? else { return Ok(()) };
-            m.detach(&env, pending)?;
-            if let Some(own) = env.message_id.as_deref().and_then(clean_msgid)
-                && m.msgids.get((env.account.get(), own))?.map(|g| g.value()) == Some(id.get())
-            {
-                m.msgids.remove((env.account.get(), own))?;
+            m.remove_full(&env, pending)
+        })
+    }
+
+    // ------------------------------------------------- etiquetas e ids del proveedor (F2.5)
+
+    /// Añade el mensaje a otra carpeta sin moverlo (etiqueta de Gmail: un mismo mensaje en
+    /// varias carpetas). `remote` es su id en esa carpeta (UID), si se conoce. Si `folder` es la
+    /// principal, solo completa el id remoto que faltara. Devuelve `true` si cambió algo.
+    pub fn add_to_folder(&self, id: MessageId, folder: FolderId, remote: Option<&str>) -> Result<bool> {
+        self.write(|tx, pending| {
+            let mut m = MailTx::open(tx)?;
+            let mut env: MessageEnvelope =
+                get_rec(&m.envelopes, id.get())?.ok_or_else(|| StoreError::not_found("mensaje", id))?;
+            let dest: Folder =
+                get_rec(&m.folders, folder.get())?.ok_or_else(|| StoreError::not_found("carpeta", folder))?;
+            if dest.account != env.account {
+                return Err(StoreError::Invalid("no se puede etiquetar entre cuentas".into()));
             }
-            m.flags.remove(id.get())?;
-            m.envelopes.remove(id.get())?;
-            pending.unindex.push(id.get());
+            let remote = remote.map(|r| clip(r, MAX_KEY_LEN)).filter(|r| !r.is_empty());
+            if env.folder == folder {
+                if env.remote_id.is_some() || remote.is_none() {
+                    return Ok(false);
+                }
+                m.detach(&env, pending)?;
+                env.remote_id = remote.map(str::to_string);
+                m.attach(&env, pending)?;
+                put_rec(&mut m.envelopes, id.get(), &env)?;
+                return Ok(true);
+            }
+            let current = m.also.get((id.get(), folder.get()))?.map(|g| g.value().to_string());
+            match (&current, remote) {
+                (Some(c), r) if r.is_none_or(|r| r == c) => return Ok(false),
+                (None, _) if m.secondary(id.get())?.len() >= MAX_MEMBERSHIPS => return Ok(false),
+                _ => {}
+            }
+            m.detach(&env, pending)?;
+            m.also.insert((id.get(), folder.get()), remote.unwrap_or(""))?;
+            m.attach(&env, pending)?;
+            Ok(true)
+        })
+    }
+
+    /// Cambia las palabras clave / etiquetas de un mensaje (no toca el índice de búsqueda).
+    pub fn set_keywords(&self, id: MessageId, keywords: Vec<String>) -> Result<bool> {
+        self.write(|tx, _| {
+            let mut m = MailTx::open(tx)?;
+            let Some(mut env) = get_rec::<MessageEnvelope>(&m.envelopes, id.get())? else { return Ok(false) };
+            if env.keywords == keywords {
+                return Ok(false);
+            }
+            env.keywords = keywords;
+            env.clamp();
+            put_rec(&mut m.envelopes, id.get(), &env)?;
+            Ok(true)
+        })
+    }
+
+    /// Quita el mensaje de una carpeta (etiqueta quitada o UID desaparecido). Si era su única
+    /// carpeta, se borra del almacén. Devuelve `true` si se borró del todo.
+    pub fn remove_from_folder(&self, id: MessageId, folder: FolderId) -> Result<bool> {
+        self.write(|tx, pending| {
+            let mut m = MailTx::open(tx)?;
+            let Some(env) = get_rec::<MessageEnvelope>(&m.envelopes, id.get())? else { return Ok(false) };
+            m.remove_membership(env, folder.get(), pending)
+        })
+    }
+
+    /// Quita todas las pertenencias secundarias (el mensaje queda solo en su carpeta principal).
+    pub fn clear_secondary(&self, id: MessageId) -> Result<()> {
+        self.write(|tx, pending| {
+            let mut m = MailTx::open(tx)?;
+            let Some(env) = get_rec::<MessageEnvelope>(&m.envelopes, id.get())? else { return Ok(()) };
+            m.detach(&env, pending)?;
+            for (f, _) in m.secondary(id.get())? {
+                m.also.remove((id.get(), f))?;
+            }
+            m.attach(&env, pending)
+        })
+    }
+
+    /// Carpetas del mensaje con su id remoto en cada una: la principal primero.
+    pub fn memberships(&self, id: MessageId) -> Result<Vec<(FolderId, Option<String>)>> {
+        let Some(env) = self.get_envelope(id)? else { return Ok(Vec::new()) };
+        let mut out = vec![(env.folder, env.remote_id.clone())];
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(MSG_ALSO_IN)?;
+        for item in t.range((id.get(), 0)..=(id.get(), u64::MAX))?.take(MAX_MEMBERSHIPS) {
+            let (k, v) = item?;
+            let r = v.value();
+            out.push((FolderId(k.value().1), (!r.is_empty()).then(|| r.to_string())));
+        }
+        Ok(out)
+    }
+
+    /// Mensaje por su id estable del proveedor.
+    pub fn message_by_provider(&self, account: AccountId, provider_id: &str) -> Result<Option<MessageId>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(PROVIDER_INDEX)?;
+        Ok(t.get((account.get(), clip(provider_id, MAX_KEY_LEN)))?.map(|g| MessageId(g.value())))
+    }
+
+    /// Id del proveedor y pista de hilo de un mensaje.
+    pub fn provider_meta(&self, id: MessageId) -> Result<ProviderMeta> {
+        Ok(self.read_rec::<ProviderMeta>(MSG_PROVIDER, id.get())?.unwrap_or_default())
+    }
+
+    /// Hilo local asociado a una pista de hilo del proveedor, si aún existe.
+    pub fn thread_by_hint(&self, account: AccountId, hint: &str) -> Result<Option<ThreadId>> {
+        let tx = self.db.begin_read()?;
+        let hints = tx.open_table(THREAD_HINTS)?;
+        let threads = tx.open_table(THREADS)?;
+        let Some(t) = hints.get((account.get(), clip(hint, MAX_KEY_LEN)))?.map(|g| g.value()) else {
+            return Ok(None);
+        };
+        Ok(threads.get(t)?.is_some().then_some(ThreadId(t)))
+    }
+
+    /// Guarda el id del proveedor y la pista de hilo de varios mensajes (y asocia la pista al
+    /// hilo actual de cada uno).
+    pub fn set_provider_meta(&self, batch: &[(MessageId, ProviderMeta)]) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        self.write(|tx, _| {
+            let mut m = MailTx::open(tx)?;
+            for (id, meta) in batch.iter().take(100_000) {
+                let Some(env) = get_rec::<MessageEnvelope>(&m.envelopes, id.get())? else { continue };
+                let acct = env.account.get();
+                let mut meta = meta.clone();
+                for s in [&mut meta.provider_id, &mut meta.thread_hint].into_iter().flatten() {
+                    *s = clip(s, MAX_KEY_LEN).to_string();
+                }
+                if let Some(old) = get_rec::<ProviderMeta>(&m.msg_provider, id.get())?
+                    && let Some(op) = old.provider_id
+                    && meta.provider_id.as_ref() != Some(&op)
+                    && m.provider.get((acct, op.as_str()))?.map(|g| g.value()) == Some(id.get())
+                {
+                    m.provider.remove((acct, op.as_str()))?;
+                }
+                if let Some(p) = meta.provider_id.as_deref() {
+                    m.provider.insert((acct, p), id.get())?;
+                }
+                if let (Some(h), Some(t)) = (meta.thread_hint.as_deref(), env.thread) {
+                    m.hints.insert((acct, h), t.get())?;
+                }
+                put_rec(&mut m.msg_provider, id.get(), &meta)?;
+            }
             Ok(())
         })
     }
@@ -691,16 +949,25 @@ impl Store {
     /// el número de hilos.
     pub fn rethread_account(&self, account: AccountId) -> Result<usize> {
         let mut envs: Vec<MessageEnvelope> = Vec::new();
+        let mut seen: HashSet<MessageId> = HashSet::new();
+        let mut hint_of: HashMap<MessageId, String> = HashMap::new();
         for f in self.folders(account)? {
             for id in self.list_ids(f.id)? {
+                // Con etiquetas un mensaje aparece en varias carpetas: se cuenta una vez.
+                if !seen.insert(id) {
+                    continue;
+                }
                 if let Some(e) = self.get_envelope(id)? {
                     envs.push(e);
+                }
+                if let Some(h) = self.provider_meta(id)?.thread_hint {
+                    hint_of.insert(id, h);
                 }
             }
         }
         let groups = {
             let inputs: Vec<ThreadInput<'_>> = envs.iter().map(ThreadInput::from).collect();
-            thread_messages(&inputs)
+            merge_by_hint(thread_messages(&inputs), &hint_of)
         };
         let mut by_id: HashMap<MessageId, MessageEnvelope> = envs.into_iter().map(|e| (e.id, e)).collect();
         self.write(|tx, _| {
@@ -735,6 +1002,9 @@ impl Store {
                     m.members.insert((tid.get(), e.id.get()), ())?;
                     put_rec(&mut m.envelopes, e.id.get(), &*e)?;
                     m.record_ids(e)?;
+                    if let Some(h) = hint_of.get(&e.id) {
+                        m.hints.insert((account.get(), clip(h, MAX_KEY_LEN)), tid.get())?;
+                    }
                 }
                 put_rec(&mut m.threads, tid.get(), &th)?;
             }
@@ -884,6 +1154,39 @@ impl Store {
         }
         Ok(total)
     }
+}
+
+/// Une los hilos JWZ que el proveedor dice que son el mismo (`X-GM-THRID`, `conversationId`).
+fn merge_by_hint(groups: Vec<ThreadGroup>, hint_of: &HashMap<MessageId, String>) -> Vec<ThreadGroup> {
+    if hint_of.is_empty() {
+        return groups;
+    }
+    let mut out: Vec<ThreadGroup> = Vec::with_capacity(groups.len());
+    let mut by_hint: HashMap<&str, usize> = HashMap::new();
+    for g in groups {
+        let target = g.members.iter().find_map(|m| hint_of.get(&m.id).and_then(|h| by_hint.get(h.as_str()).copied()));
+        let idx = match target.and_then(|i| out.get_mut(i).map(|t| (i, t))) {
+            Some((i, t)) => {
+                if g.last_date > t.last_date {
+                    t.last_date = g.last_date;
+                }
+                t.members.extend(g.members);
+                i
+            }
+            None => {
+                out.push(g);
+                out.len().saturating_sub(1)
+            }
+        };
+        if let Some(t) = out.get(idx) {
+            for m in &t.members {
+                if let Some(h) = hint_of.get(&m.id) {
+                    by_hint.entry(h.as_str()).or_insert(idx);
+                }
+            }
+        }
+    }
+    out
 }
 
 fn role_rank(r: &FolderRole) -> u8 {

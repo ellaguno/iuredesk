@@ -47,6 +47,11 @@ pub struct FakeCaps {
     pub special_use: bool,
     /// SASL-IR.
     pub sasl_ir: bool,
+    /// `X-GM-EXT-1`: el servidor se comporta como Gmail (un mensaje con varias etiquetas aparece
+    /// en varios buzones con el mismo `X-GM-MSGID`).
+    pub gmail: bool,
+    /// NOTIFY (RFC 5465): durante IDLE avisa con `STATUS` de los cambios en otros buzones.
+    pub notify: bool,
 }
 
 impl Default for FakeCaps {
@@ -62,6 +67,8 @@ impl Default for FakeCaps {
             literal_plus: true,
             special_use: true,
             sasl_ir: true,
+            gmail: false,
+            notify: false,
         }
     }
 }
@@ -80,7 +87,14 @@ impl FakeCaps {
             literal_plus: false,
             special_use: false,
             sasl_ir: false,
+            gmail: false,
+            notify: false,
         }
+    }
+
+    /// Como Gmail: las extensiones de siempre más `X-GM-EXT-1`.
+    pub fn gmail() -> Self {
+        Self { gmail: true, ..Self::default() }
     }
 
     fn line(&self) -> String {
@@ -96,6 +110,8 @@ impl FakeCaps {
             (self.literal_plus, "LITERAL+"),
             (self.special_use, "SPECIAL-USE"),
             (self.sasl_ir, "SASL-IR"),
+            (self.gmail, "X-GM-EXT-1"),
+            (self.notify, "NOTIFY"),
         ];
         c.extend(opt.iter().filter(|(on, _)| *on).map(|(_, n)| *n));
         c.join(" ")
@@ -115,6 +131,12 @@ pub struct FakeMessage {
     pub internal_date: DateTime<FixedOffset>,
     /// RFC 822.
     pub raw: Vec<u8>,
+    /// `X-GM-MSGID` (0 fuera del modo Gmail).
+    pub gm_msgid: u64,
+    /// `X-GM-THRID`.
+    pub gm_thrid: u64,
+    /// `X-GM-LABELS`.
+    pub labels: BTreeSet<String>,
 }
 
 /// Un buzón del servidor falso.
@@ -135,6 +157,7 @@ pub struct FakeMailbox {
 struct State {
     mailboxes: BTreeMap<String, FakeMailbox>,
     modseq: u64,
+    next_msgid: u64,
     log: Vec<String>,
     active: usize,
     max_active: usize,
@@ -194,6 +217,7 @@ impl FakeImap {
             state: Mutex::new(State {
                 mailboxes: BTreeMap::new(),
                 modseq: 1,
+                next_msgid: 1_000_000,
                 log: Vec::new(),
                 active: 0,
                 max_active: 0,
@@ -288,6 +312,63 @@ impl FakeImap {
         }
     }
 
+    /// Modo Gmail: entrega un mensaje con estas etiquetas (`\\Inbox`, `Trabajo`…). Queda en
+    /// «Todos» y en el buzón de cada etiqueta con el mismo `X-GM-MSGID`. Devuelve el `X-GM-MSGID`.
+    pub fn deliver_gmail(&self, raw: &[u8], labels: &[&str], flags: &[&str], thread: Option<u64>) -> u64 {
+        let msgid = {
+            let mut st = self.shared.lock();
+            st.next_msgid = st.next_msgid.saturating_add(1);
+            let msgid = st.next_msgid;
+            st.modseq = st.modseq.saturating_add(1);
+            let ms = st.modseq;
+            let labels: BTreeSet<String> = labels.iter().map(|l| l.to_string()).collect();
+            let flags: BTreeSet<String> = flags.iter().map(|f| f.to_string()).collect();
+            let mut targets: Vec<String> = labels.iter().filter_map(|l| label_mailbox(&st, l)).collect();
+            targets.extend(all_mail(&st));
+            for name in targets {
+                if let Some(mb) = st.mailboxes.get_mut(&name) {
+                    let uid = add_message(mb, raw.to_vec(), flags.clone(), now(), ms);
+                    if let Some(m) = mb.messages.iter_mut().find(|m| m.uid == uid) {
+                        m.gm_msgid = msgid;
+                        m.gm_thrid = thread.unwrap_or(msgid);
+                        m.labels = labels.clone();
+                    }
+                }
+            }
+            msgid
+        };
+        self.shared.bump();
+        msgid
+    }
+
+    /// Modo Gmail: cambia las etiquetas de un mensaje (como otro cliente o la web).
+    pub fn set_gmail_labels(&self, msgid: u64, labels: &[&str]) {
+        {
+            let mut st = self.shared.lock();
+            let flags = st
+                .mailboxes
+                .values()
+                .flat_map(|mb| mb.messages.iter())
+                .find(|m| m.gm_msgid == msgid)
+                .map(|m| m.flags.clone())
+                .unwrap_or_default();
+            let labels: BTreeSet<String> = labels.iter().map(|l| l.to_string()).collect();
+            gmail_apply(&mut st, msgid, &labels, &flags);
+        }
+        self.shared.bump();
+    }
+
+    /// Modo Gmail: etiquetas actuales de un mensaje.
+    pub fn gmail_labels(&self, msgid: u64) -> Vec<String> {
+        let st = self.shared.lock();
+        st.mailboxes
+            .values()
+            .flat_map(|mb| mb.messages.iter())
+            .find(|m| m.gm_msgid == msgid)
+            .map(|m| m.labels.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// Cambia las banderas de un mensaje (como otro cliente).
     pub fn set_flags(&self, mailbox: &str, uid: u32, flags: &[&str]) {
         {
@@ -375,8 +456,88 @@ fn add_message(
 ) -> u32 {
     let uid = mb.uid_next;
     mb.uid_next = mb.uid_next.saturating_add(1);
-    mb.messages.push(FakeMessage { uid, flags, modseq, internal_date: date, raw });
+    mb.messages.push(FakeMessage {
+        uid,
+        flags,
+        modseq,
+        internal_date: date,
+        raw,
+        gm_msgid: 0,
+        gm_thrid: 0,
+        labels: BTreeSet::new(),
+    });
     uid
+}
+
+/// Buzón que corresponde a una etiqueta de Gmail (`\Inbox` → `INBOX`, `\Sent` → el de
+/// `\Sent`…); `None` para las que no tienen buzón (`\Important`).
+fn label_mailbox(st: &State, label: &str) -> Option<String> {
+    let su = match label {
+        "\\Inbox" => return Some("INBOX".into()),
+        "\\Sent" => "\\Sent",
+        "\\Draft" => "\\Drafts",
+        "\\Starred" => "\\Flagged",
+        "\\Important" => "\\Important",
+        l if l.starts_with('\\') => return None,
+        l => return st.mailboxes.contains_key(l).then(|| l.to_string()),
+    };
+    st.mailboxes.iter().find(|(_, mb)| mb.special_use.as_deref() == Some(su)).map(|(n, _)| n.clone())
+}
+
+/// Etiqueta de Gmail de un buzón (`None` para «Todos», Papelera y Spam).
+fn mailbox_label(st: &State, name: &str) -> Option<String> {
+    if name == "INBOX" {
+        return Some("\\Inbox".into());
+    }
+    let mb = st.mailboxes.get(name)?;
+    match mb.special_use.as_deref() {
+        Some("\\Sent") => Some("\\Sent".into()),
+        Some("\\Drafts") => Some("\\Draft".into()),
+        Some("\\Flagged") => Some("\\Starred".into()),
+        Some("\\Important") => Some("\\Important".into()),
+        Some(_) => None,
+        None => Some(name.to_string()),
+    }
+}
+
+/// Buzón «Todos» (`\All`) del modo Gmail.
+fn all_mail(st: &State) -> Option<String> {
+    st.mailboxes.iter().find(|(_, mb)| mb.special_use.as_deref() == Some("\\All")).map(|(n, _)| n.clone())
+}
+
+/// Aplica a todas las copias de `msgid` las etiquetas y banderas nuevas: crea la copia en los
+/// buzones de las etiquetas añadidas y la borra de los de las quitadas (como Gmail).
+fn gmail_apply(st: &mut State, msgid: u64, labels: &BTreeSet<String>, flags: &BTreeSet<String>) {
+    st.modseq = st.modseq.saturating_add(1);
+    let ms = st.modseq;
+    let mut template: Option<FakeMessage> = None;
+    for mb in st.mailboxes.values_mut() {
+        for m in mb.messages.iter_mut().filter(|m| m.gm_msgid == msgid) {
+            m.labels = labels.clone();
+            m.flags = flags.clone();
+            m.modseq = ms;
+            template.get_or_insert_with(|| m.clone());
+        }
+    }
+    let Some(t) = template else { return };
+    let names: Vec<String> = st.mailboxes.keys().cloned().collect();
+    for name in names {
+        let Some(label) = mailbox_label(st, &name) else { continue };
+        let want = labels.contains(&label);
+        let Some(mb) = st.mailboxes.get_mut(&name) else { continue };
+        let has = mb.messages.iter().any(|m| m.gm_msgid == msgid);
+        if want && !has {
+            let uid = add_message(mb, t.raw.clone(), flags.clone(), t.internal_date, ms);
+            if let Some(m) = mb.messages.iter_mut().find(|m| m.uid == uid) {
+                m.gm_msgid = msgid;
+                m.gm_thrid = t.gm_thrid;
+                m.labels = labels.clone();
+            }
+        } else if !want && has {
+            let mut out = Vec::new();
+            expunge_where(mb, &mut out, true, ms, |m| m.gm_msgid == msgid);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------- sesión
@@ -386,6 +547,7 @@ struct Session {
     selected: Option<String>,
     read_only: bool,
     qresync: bool,
+    notify: bool,
 }
 
 fn quote(s: &[u8]) -> Vec<u8> {
@@ -584,6 +746,22 @@ fn fetch_line(seq: usize, m: &FakeMessage, attrs: &[String], with_modseq: bool) 
                 out.extend(format!(" MODSEQ ({})", m.modseq).into_bytes());
                 modseq_done = true;
             }
+            "X-GM-MSGID" if m.gm_msgid != 0 => out.extend(format!(" X-GM-MSGID {}", m.gm_msgid).into_bytes()),
+            "X-GM-THRID" if m.gm_msgid != 0 => out.extend(format!(" X-GM-THRID {}", m.gm_thrid).into_bytes()),
+            "X-GM-LABELS" if m.gm_msgid != 0 => {
+                out.extend_from_slice(b" X-GM-LABELS (");
+                for (i, l) in m.labels.iter().enumerate() {
+                    if i > 0 {
+                        out.push(b' ');
+                    }
+                    if l.starts_with('\\') {
+                        out.extend(l.as_bytes());
+                    } else {
+                        out.extend(quote(l.as_bytes()));
+                    }
+                }
+                out.push(b')');
+            }
             _ if up.starts_with("BODY[") || up.starts_with("BODY.PEEK[") => {
                 let (name, data) = section(a, &m.raw);
                 out.extend(format!(" {name} {{{}}}\r\n", data.len()).into_bytes());
@@ -628,7 +806,7 @@ async fn serve(sock: TcpStream, sh: &Shared) -> Result<()> {
     let caps = sh.caps.line();
     let mut t = Transport::new(Stream::Plain(sock), "fake", Limits::default());
     send(&mut t, format!("* OK [CAPABILITY {caps}] Fake IMAP lista\r\n").as_bytes()).await?;
-    let mut sess = Session { authed: false, selected: None, read_only: false, qresync: false };
+    let mut sess = Session { authed: false, selected: None, read_only: false, qresync: false, notify: false };
     let idle_wait = Duration::from_secs(600);
     loop {
         // Lee la orden con sus literales.
@@ -741,6 +919,10 @@ async fn serve(sock: TcpStream, sh: &Shared) -> Result<()> {
                     }
                 }
                 send(&mut t, format!("* ENABLED {}\r\n{tag} OK habilitado\r\n", on.join(" ")).as_bytes()).await?;
+            }
+            "NOTIFY" if sh.caps.notify => {
+                sess.notify = !text(0).eq_ignore_ascii_case("NONE");
+                send(&mut t, format!("{tag} OK NOTIFY hecho\r\n").as_bytes()).await?;
             }
             "COMPRESS" if sh.caps.compress => {
                 send(&mut t, format!("{tag} OK DEFLATE activo\r\n").as_bytes()).await?;
@@ -900,7 +1082,16 @@ async fn serve(sock: TcpStream, sh: &Shared) -> Result<()> {
                         .map(|mb| mb.messages.iter().map(|m| m.uid).collect())
                         .unwrap_or_default()
                 };
+                let others = |sh: &Shared| -> BTreeMap<String, (u32, usize)> {
+                    sh.lock()
+                        .mailboxes
+                        .iter()
+                        .filter(|(n, _)| **n != mbox)
+                        .map(|(n, mb)| (n.clone(), (mb.uid_next, mb.messages.len())))
+                        .collect()
+                };
                 let mut known = snapshot(sh);
+                let mut known_others = others(sh);
                 send(&mut t, b"+ idling\r\n").await?;
                 loop {
                     tokio::select! {
@@ -930,6 +1121,17 @@ async fn serve(sock: TcpStream, sh: &Shared) -> Result<()> {
                                 out.extend(format!("* {} EXISTS\r\n", now_uids.len()).into_bytes());
                             }
                             known = now_uids;
+                            if sess.notify {
+                                let now_others = others(sh);
+                                for (n, (next, len)) in &now_others {
+                                    if known_others.get(n) != Some(&(*next, *len)) {
+                                        out.extend_from_slice(b"* STATUS ");
+                                        out.extend(quote(n.as_bytes()));
+                                        out.extend(format!(" (MESSAGES {len} UIDNEXT {next})\r\n").into_bytes());
+                                    }
+                                }
+                                known_others = now_others;
+                            }
                             if !out.is_empty() {
                                 send(&mut t, &out).await?;
                             }
@@ -1016,6 +1218,31 @@ fn mailbox_command(sh: &Shared, sess: &mut Session, mbox: &str, name: &str, args
                 .filter_map(Item::text)
                 .collect();
             let silent = op.ends_with(".SILENT");
+            if op.trim_start_matches(['+', '-']).starts_with("X-GM-LABELS") {
+                if !caps.gmail {
+                    return format!("{tag} BAD sin X-GM-EXT-1\r\n").into_bytes();
+                }
+                let picked: Vec<(u64, BTreeSet<String>, BTreeSet<String>)> = mb
+                    .messages
+                    .iter()
+                    .filter(|m| in_ranges(&ranges, m.uid) && m.gm_msgid != 0)
+                    .map(|m| (m.gm_msgid, m.labels.clone(), m.flags.clone()))
+                    .collect();
+                for (msgid, mut labels, flags) in picked {
+                    if op.starts_with('+') {
+                        labels.extend(flags_or_labels(args, k));
+                    } else if op.starts_with('-') {
+                        let rm = flags_or_labels(args, k);
+                        labels.retain(|l| !rm.contains(l));
+                    } else {
+                        labels = flags_or_labels(args, k);
+                    }
+                    gmail_apply(&mut st, msgid, &labels, &flags);
+                }
+                out.extend(format!("{tag} OK STORE hecho\r\n").into_bytes());
+                return out;
+            }
+            let mut gm_changed: Vec<(u64, BTreeSet<String>, BTreeSet<String>)> = Vec::new();
             for (i, m) in mb.messages.iter_mut().enumerate() {
                 if !in_ranges(&ranges, m.uid) {
                     continue;
@@ -1028,9 +1255,16 @@ fn mailbox_command(sh: &Shared, sess: &mut Session, mbox: &str, name: &str, args
                     m.flags = flags.clone();
                 }
                 m.modseq = ms;
+                if m.gm_msgid != 0 {
+                    gm_changed.push((m.gm_msgid, m.labels.clone(), m.flags.clone()));
+                }
                 if !silent {
                     out.extend(fetch_line(i.saturating_add(1), m, &["FLAGS".to_string()], caps.condstore));
                 }
+            }
+            // Gmail: las banderas son del mensaje, no de la copia.
+            for (msgid, labels, flags) in gm_changed {
+                gmail_apply(&mut st, msgid, &labels, &flags);
             }
             out.extend(format!("{tag} OK STORE hecho\r\n").into_bytes());
         }
@@ -1058,7 +1292,13 @@ fn mailbox_command(sh: &Shared, sess: &mut Session, mbox: &str, name: &str, args
                     src_uids.push(m.uid);
                     let mut flags = m.flags.clone();
                     flags.remove("\\Deleted");
-                    dst_uids.push(add_message(d, m.raw.clone(), flags, m.internal_date, ms));
+                    let uid = add_message(d, m.raw.clone(), flags, m.internal_date, ms);
+                    if let Some(c) = d.messages.iter_mut().find(|c| c.uid == uid) {
+                        c.gm_msgid = m.gm_msgid;
+                        c.gm_thrid = m.gm_thrid;
+                        c.labels = m.labels.clone();
+                    }
+                    dst_uids.push(uid);
                 }
             }
             let copyuid = if caps.uidplus && !src_uids.is_empty() {
@@ -1076,6 +1316,21 @@ fn mailbox_command(sh: &Shared, sess: &mut Session, mbox: &str, name: &str, args
                 }
                 if let Some(mb) = st.mailboxes.get_mut(mbox) {
                     expunge_where(mb, &mut out, sess.qresync, ms, |m| src_uids.contains(&m.uid));
+                }
+                // Gmail: a la Papelera o al Spam el mensaje pierde todas sus etiquetas.
+                let to_bin = st
+                    .mailboxes
+                    .get(&dest)
+                    .is_some_and(|d| matches!(d.special_use.as_deref(), Some("\\Trash" | "\\Junk")));
+                if caps.gmail && to_bin {
+                    let ids: Vec<u64> = picked.iter().map(|m| m.gm_msgid).filter(|g| *g != 0).collect();
+                    for (n, mb) in st.mailboxes.iter_mut() {
+                        if *n == dest || n == mbox {
+                            continue;
+                        }
+                        let mut sink = Vec::new();
+                        expunge_where(mb, &mut sink, true, ms, |m| ids.contains(&m.gm_msgid));
+                    }
                 }
                 out.extend(format!("{tag} OK MOVE hecho\r\n").into_bytes());
             } else {
@@ -1107,6 +1362,7 @@ fn mailbox_command(sh: &Shared, sess: &mut Session, mbox: &str, name: &str, args
             let mut since: Option<NaiveDate> = None;
             let mut before: Option<NaiveDate> = None;
             let mut header_eq: Option<(String, String)> = None;
+            let mut gm_msgid: Option<u64> = None;
             while let Some(a) = args.get(i) {
                 let k = a.text().unwrap_or_default().to_ascii_uppercase();
                 match k.as_str() {
@@ -1122,6 +1378,10 @@ fn mailbox_command(sh: &Shared, sess: &mut Session, mbox: &str, name: &str, args
                         before = parse_date(&text(i.saturating_add(1)));
                         i = i.saturating_add(2);
                     }
+                    "X-GM-MSGID" => {
+                        gm_msgid = args.get(i.saturating_add(1)).and_then(Item::number);
+                        i = i.saturating_add(2);
+                    }
                     "HEADER" => {
                         header_eq = Some((text(i.saturating_add(1)).to_ascii_lowercase(), text(i.saturating_add(2))));
                         i = i.saturating_add(3);
@@ -1135,6 +1395,7 @@ fn mailbox_command(sh: &Shared, sess: &mut Session, mbox: &str, name: &str, args
                 .filter(|m| uid_ranges.as_ref().is_none_or(|r| in_ranges(r, m.uid)))
                 .filter(|m| since.is_none_or(|d| m.internal_date.date_naive() >= d))
                 .filter(|m| before.is_none_or(|d| m.internal_date.date_naive() < d))
+                .filter(|m| gm_msgid.is_none_or(|g| m.gm_msgid == g))
                 .filter(|m| {
                     header_eq.as_ref().is_none_or(|(k, v)| {
                         headers(&m.raw).iter().any(|(hk, hv, _)| hk == k && hv.contains(v.as_str()))
@@ -1160,6 +1421,11 @@ fn mailbox_command(sh: &Shared, sess: &mut Session, mbox: &str, name: &str, args
         _ => out.extend(format!("{tag} BAD orden desconocida\r\n").into_bytes()),
     }
     out
+}
+
+/// Lista de banderas o etiquetas tras la operación de `STORE` (posición `k`).
+fn flags_or_labels(args: &[Item], k: usize) -> BTreeSet<String> {
+    args.get(k.saturating_add(1)).map(Item::list).unwrap_or_default().iter().filter_map(Item::text).collect()
 }
 
 fn expunge_where(

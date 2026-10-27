@@ -32,9 +32,9 @@ const MAX_DETAIL: usize = 500;
 /// Mensaje listo para un transporte.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutgoingMessage {
-    /// `MAIL FROM` (ASCII).
+    /// `MAIL FROM` (dominio en ASCII; la parte local puede ser UTF-8, RFC 6531).
     pub envelope_from: String,
-    /// `RCPT TO` (ASCII).
+    /// `RCPT TO` (ídem).
     pub recipients: Vec<String>,
     /// Bytes RFC 5322 (sin `Bcc:`).
     pub raw: Vec<u8>,
@@ -81,6 +81,8 @@ pub enum SendErrorKind {
     InvalidAddress,
     /// La cuenta no tiene un SMTP utilizable o falta la contraseña.
     Config,
+    /// Hay direcciones internacionalizadas (`josé@…`) y el servidor no anuncia `SMTPUTF8`.
+    InternationalUnsupported,
 }
 
 /// Error de envío.
@@ -183,6 +185,12 @@ impl SendError {
             (SendErrorKind::Config, Lang::En) => {
                 "The account's outgoing (SMTP) server isn't set up correctly, or the password is missing.".to_string()
             }
+            (SendErrorKind::InternationalUnsupported, Lang::Es) => format!(
+                "{host} no acepta direcciones con acentos o letras especiales antes de la @. Usa otra dirección del destinatario."
+            ),
+            (SendErrorKind::InternationalUnsupported, Lang::En) => format!(
+                "{host} doesn't accept addresses with accents or special letters before the @. Use another address for the recipient."
+            ),
         }
     }
 }
@@ -352,6 +360,9 @@ pub(crate) fn map_lettre(e: &lettre::transport::smtp::Error, host: &str) -> Send
     }
     if e.is_tls() {
         return err(SendErrorKind::Tls);
+    }
+    if lower.contains("smtputf8") {
+        return err(SendErrorKind::InternationalUnsupported);
     }
     if lower.contains("no compatible authentication mechanism") {
         return err(SendErrorKind::AuthUnsupported);

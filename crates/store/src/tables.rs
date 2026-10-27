@@ -81,6 +81,17 @@ pub(crate) const PIM_COLLECTIONS: TableDefinition<(u8, u64), &[u8]> = TableDefin
 /// [`crate::EmailLink`] (F3.1, aditiva).
 pub(crate) const EMAIL_LINKS: TableDefinition<&str, &[u8]> = TableDefinition::new("email_links");
 
+/// Pertenencias secundarias de un mensaje a otras carpetas (etiquetas de Gmail, F2.5): clave
+/// (mensaje, carpeta) → id remoto del mensaje en esa carpeta (`""` si aún no se conoce). La
+/// carpeta principal sigue siendo `MessageEnvelope::folder`.
+pub(crate) const MSG_ALSO_IN: TableDefinition<(u64, u64), &str> = TableDefinition::new("msg_also_in");
+/// Id estable del proveedor (`X-GM-MSGID`, id inmutable de Graph): (cuenta, id) → mensaje.
+pub(crate) const PROVIDER_INDEX: TableDefinition<(u64, &str), u64> = TableDefinition::new("provider_index");
+/// Inverso de lo anterior más la pista de hilo: mensaje → [`crate::mail::ProviderMeta`].
+pub(crate) const MSG_PROVIDER: TableDefinition<u64, &[u8]> = TableDefinition::new("msg_provider");
+/// Pista de hilo del proveedor (`X-GM-THRID`, `conversationId`): (cuenta, pista) → hilo.
+pub(crate) const THREAD_HINTS: TableDefinition<(u64, &str), u64> = TableDefinition::new("thread_hints");
+
 /// Crea todas las tablas (las transacciones de lectura fallan si una tabla no existe).
 pub(crate) fn create_all(tx: &redb::WriteTransaction) -> Result<(), redb::TableError> {
     tx.open_table(META)?;
@@ -113,5 +124,9 @@ pub(crate) fn create_all(tx: &redb::WriteTransaction) -> Result<(), redb::TableE
     tx.open_table(PIM_RAW)?;
     tx.open_table(PIM_COLLECTIONS)?;
     tx.open_table(EMAIL_LINKS)?;
+    tx.open_table(MSG_ALSO_IN)?;
+    tx.open_table(PROVIDER_INDEX)?;
+    tx.open_table(MSG_PROVIDER)?;
+    tx.open_table(THREAD_HINTS)?;
     Ok(())
 }

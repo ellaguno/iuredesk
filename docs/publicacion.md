@@ -71,9 +71,6 @@ El workspace depende de `ellaguno/iurefficient-ui` (privado) e `ellaguno/iureffi
    (Metadata: Read-only se agrega solo). Caducidad: la que prefieras (renuévalo antes).
 2. En `ellaguno/iuredesk`: *Settings → Secrets and variables → Actions → New repository secret*
    `SUITE_REPOS_TOKEN` con ese token.
-   Opcionales, para «Continuar con Google/Microsoft» en los instaladores (ver `docs/oauth.md`):
-   `IUREDESK_GOOGLE_CLIENT_ID`, `IUREDESK_GOOGLE_CLIENT_SECRET` e `IUREDESK_MS_CLIENT_ID`. Se
-   incrustan al compilar; nunca se guardan en el repositorio.
 3. *Settings → Actions → General*: permitir acciones de GitHub y de terceros verificados (se usan
    `actions/*` y `Swatinem/rust-cache`). El job `release` pide `contents: write` por sí mismo.
 

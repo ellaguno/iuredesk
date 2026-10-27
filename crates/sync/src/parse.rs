@@ -126,7 +126,8 @@ pub fn envelope_from_fetch(f: &FetchData, folder: FolderId) -> Option<MessageEnv
         env.keywords = keywords_from_imap(flags);
     }
     if let Some(labels) = &f.gm_labels {
-        for l in labels.iter().take(MAX_RECIPIENTS) {
+        // Solo las etiquetas de usuario: las de sistema (`\Inbox`, `\Important`…) son carpetas.
+        for l in labels.iter().filter(|l| !l.starts_with('\\')).take(MAX_RECIPIENTS) {
             if !env.keywords.contains(l) {
                 env.keywords.push(l.clone());
             }
@@ -272,6 +273,35 @@ pub fn envelope_from_raw(raw: &[u8], folder: FolderId, received: DateTime<Utc>) 
     (env, body.body_text)
 }
 
+/// Extracto a partir de una descarga parcial: las cabeceras de tipo (`Content-Type`,
+/// `Content-Transfer-Encoding`) y el principio del texto. Si el MIME truncado no se deja
+/// interpretar, se toman las líneas que no parecen separadores ni cabeceras de partes.
+pub fn preview_from_partial(header: &[u8], text: &[u8]) -> String {
+    let mut synthetic = header.to_vec();
+    while synthetic.last().is_some_and(|b| matches!(b, b'\r' | b'\n')) {
+        synthetic.pop();
+    }
+    synthetic.extend_from_slice(b"\r\n\r\n");
+    synthetic.extend_from_slice(text);
+    let p = parse_body(&synthetic).preview;
+    if !p.trim().is_empty() {
+        return p;
+    }
+    let lossy = String::from_utf8_lossy(text);
+    let plain: Vec<&str> = lossy
+        .lines()
+        .map(str::trim)
+        .filter(|l| {
+            !l.starts_with("--")
+                && !l
+                    .split_once(':')
+                    .is_some_and(|(k, _)| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+        })
+        .take(200)
+        .collect();
+    make_preview(&plain.join(" "))
+}
+
 /// Completa un sobre ya existente con lo que da el cuerpo descargado.
 pub fn enrich(env: &mut MessageEnvelope, body: ParsedBody) {
     env.preview = body.preview;
@@ -317,7 +347,22 @@ mod tests {
         assert_eq!(imap_flags(f), vec!["\\Seen".to_string(), "$Forwarded".to_string()]);
     }
 
+    #[test]
+    fn preview_from_truncated_multipart() {
+        let header = b"Content-Type: multipart/alternative; boundary=\"b\"\r\n\r\n";
+        let text = b"--b\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHola Ana, te mando el contrato y la fac";
+        assert!(preview_from_partial(header, text).starts_with("Hola Ana"));
+        let qp = b"Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n";
+        assert_eq!(preview_from_partial(qp, b"Caf=C3=A9 listo"), "Café listo");
+        assert_eq!(preview_from_partial(b"", b""), "");
+    }
+
     proptest::proptest! {
+        #[test]
+        fn partial_never_panics(h in proptest::collection::vec(proptest::num::u8::ANY, 0..300), t in proptest::collection::vec(proptest::num::u8::ANY, 0..2000)) {
+            let _ = preview_from_partial(&h, &t);
+        }
+
         #[test]
         fn raw_never_panics(b in proptest::collection::vec(proptest::num::u8::ANY, 0..2000)) {
             let _ = envelope_from_raw(&b, FolderId(1), Utc::now());

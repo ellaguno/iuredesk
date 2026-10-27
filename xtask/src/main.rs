@@ -115,6 +115,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("iuredesk-oauth", 3),
     ("iuredesk-dav", 3),
     ("iuredesk-pim-sync", 3),
+    ("iuredesk-graph", 3),
     ("iuredesk-compose", 3),
     ("iuredesk-import", 3),
     ("iuredesk-engine", 4),

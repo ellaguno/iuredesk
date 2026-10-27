@@ -5,8 +5,10 @@
 //! ir en Unicode (`josé@correo.méxico`); se guarda como lo escribió el usuario (en minúsculas) y se
 //! convierte a ASCII (punycode) solo al construir el mensaje ([`ascii_address`]).
 //!
-//! Las partes locales que no son ASCII (correo internacionalizado, RFC 6531) aún no se admiten: se
-//! rechazan con un error claro en vez de enviarse mal.
+//! Las partes locales que no son ASCII (correo internacionalizado, RFC 6531/6532: `josé@acme.mx`)
+//! se admiten: el mensaje lleva la dirección en UTF-8 y el transporte SMTP usa `SMTPUTF8` si el
+//! servidor lo anuncia; si no, el envío falla con un aviso claro
+//! (`SendErrorKind::InternationalUnsupported`) en vez de mandarse mal.
 
 use iuredesk_model::{MAX_RECIPIENTS, Mailbox};
 
@@ -30,7 +32,8 @@ pub enum AddressProblem {
     MissingAt,
     /// La parte antes de la `@` no es válida.
     BadLocalPart,
-    /// La parte local no es ASCII (correo internacionalizado aún no admitido).
+    /// La parte local no es ASCII y no es válida como dirección internacionalizada (se conserva
+    /// por compatibilidad; las partes locales UTF-8 válidas se aceptan, RFC 6531).
     NonAsciiLocalPart,
     /// El dominio no es válido (ni siquiera con IDNA).
     BadDomain,
@@ -69,10 +72,10 @@ impl AddressError {
             (AddressProblem::BadLocalPart, Lang::Es) => format!("La parte antes de la @ en «{i}» no es válida."),
             (AddressProblem::BadLocalPart, Lang::En) => format!("The part before the @ in “{i}” is not valid."),
             (AddressProblem::NonAsciiLocalPart, Lang::Es) => {
-                format!("«{i}» usa acentos o letras especiales antes de la @; aún no se admite.")
+                format!("«{i}» usa caracteres especiales antes de la @ que no son válidos.")
             }
             (AddressProblem::NonAsciiLocalPart, Lang::En) => {
-                format!("“{i}” has accents or special letters before the @; that isn't supported yet.")
+                format!("“{i}” has special characters before the @ that aren't valid.")
             }
             (AddressProblem::BadDomain, Lang::Es) => format!("El dominio de «{i}» no es válido."),
             (AddressProblem::BadDomain, Lang::En) => format!("The domain of “{i}” is not valid."),
@@ -120,13 +123,23 @@ fn check_local(local: &str) -> Result<(), AddressProblem> {
     if local.is_empty() {
         return Err(AddressProblem::BadLocalPart);
     }
-    if !local.is_ascii() {
-        return Err(AddressProblem::NonAsciiLocalPart);
-    }
     if local.len() > MAX_LOCAL_LEN {
         return Err(AddressProblem::TooLong);
     }
-    if !local.chars().all(is_atext) || local.starts_with('.') || local.ends_with('.') || local.contains("..") {
+    // RFC 6531: además de `atext`, cualquier carácter no ASCII que no sea de control ni espacio.
+    let utf8_ok = |c: char| !c.is_ascii() && !c.is_control() && !c.is_whitespace() && c != '\u{FEFF}';
+    if !local.is_ascii() && local.chars().any(|c| !is_atext(c) && !utf8_ok(c)) {
+        return Err(if local.chars().any(char::is_whitespace) {
+            AddressProblem::BadLocalPart
+        } else {
+            AddressProblem::NonAsciiLocalPart
+        });
+    }
+    if !local.chars().all(|c| is_atext(c) || utf8_ok(c))
+        || local.starts_with('.')
+        || local.ends_with('.')
+        || local.contains("..")
+    {
         return Err(AddressProblem::BadLocalPart);
     }
     Ok(())
@@ -166,6 +179,11 @@ pub fn ascii_address(addr: &str) -> Result<String, AddressError> {
     let (local, domain) = norm.rsplit_once('@').ok_or_else(|| AddressError::new(addr, AddressProblem::MissingAt))?;
     let ascii = domain_ascii(domain).ok_or_else(|| AddressError::new(addr, AddressProblem::BadDomain))?;
     Ok(format!("{local}@{ascii}"))
+}
+
+/// ¿La dirección necesita `SMTPUTF8` (parte local no ASCII)?
+pub fn needs_smtputf8(addr: &str) -> bool {
+    addr.rsplit_once('@').is_some_and(|(l, _)| !l.is_ascii())
 }
 
 /// Clave para comparar direcciones (deduplicar, excluir las propias): ASCII y en minúsculas.
@@ -330,6 +348,18 @@ mod tests {
     }
 
     #[test]
+    fn international_local_parts() {
+        // RFC 6531: parte local UTF-8 (se enviará con SMTPUTF8).
+        let m = parse_address("José <josé@correo.méxico>").unwrap();
+        assert_eq!(m.addr, "josé@correo.méxico");
+        assert_eq!(ascii_address(&m.addr).unwrap(), "josé@correo.xn--mxico-bsa");
+        assert!(needs_smtputf8(&m.addr));
+        assert!(!needs_smtputf8("ana@correo.méxico"));
+        assert!(validate_address("用户@例子.广告").is_ok());
+        assert!(validate_address("jo..sé@acme.mx").is_err());
+    }
+
+    #[test]
     fn idna_domains() {
         let m = parse_address("josé <jose@correo.méxico>").unwrap();
         assert_eq!(m.addr, "jose@correo.méxico");
@@ -346,7 +376,7 @@ mod tests {
         assert_eq!(p("@acme.mx"), AddressProblem::BadLocalPart);
         assert_eq!(p("a..b@acme.mx"), AddressProblem::BadLocalPart);
         assert_eq!(p("a b@acme.mx"), AddressProblem::BadLocalPart);
-        assert_eq!(p("josé@acme.mx"), AddressProblem::NonAsciiLocalPart);
+        assert_eq!(p("jo\u{0007}sé@acme.mx"), AddressProblem::NonAsciiLocalPart);
         assert_eq!(p("ana@acme"), AddressProblem::BadDomain);
         assert_eq!(p("ana@-acme.mx"), AddressProblem::BadDomain);
         assert_eq!(p("ana@1.2.3.4"), AddressProblem::BadDomain);

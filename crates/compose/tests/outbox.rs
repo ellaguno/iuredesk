@@ -290,6 +290,7 @@ impl NowUtc for ManualClock {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     Ok,
+    Utf8,
     TempFail,
     PermFail,
     AuthFail,
@@ -333,7 +334,9 @@ async fn fake_smtp(mode: Mode) -> FakeSmtp {
                     let cmd = line.trim_end().to_string();
                     let upper = cmd.to_ascii_uppercase();
                     let mode = *m.lock().unwrap();
-                    let reply: String = if upper.starts_with("EHLO") {
+                    let reply: String = if upper.starts_with("EHLO") && mode == Mode::Utf8 {
+                        "250-fake.test\r\n250-AUTH PLAIN LOGIN XOAUTH2\r\n250-SMTPUTF8\r\n250 8BITMIME\r\n".into()
+                    } else if upper.starts_with("EHLO") {
                         "250-fake.test\r\n250-AUTH PLAIN LOGIN XOAUTH2\r\n250 8BITMIME\r\n".into()
                     } else if upper.starts_with("AUTH") {
                         cur.auth = cmd.clone();
@@ -434,6 +437,31 @@ async fn smtp_success() {
     assert!(got[0].rcpts[1].contains("oculto@example.com"));
     assert!(got[0].data.contains("Subject: Hola"));
     assert!(!got[0].data.contains("oculto"));
+}
+
+/// Regresión F2.5: partes locales UTF-8 (RFC 6531) con `SMTPUTF8` si el servidor lo anuncia; si
+/// no, error claro en vez de mandarlo mal.
+#[tokio::test]
+async fn smtputf8_local_parts() {
+    let mut d = draft();
+    d.to = vec![iuredesk_compose::parse_address("José <josé@acme.mx>").unwrap()];
+    d.bcc.clear();
+    let b = iuredesk_compose::build_message(&d, &FsResolver, &iuredesk_compose::BuildOptions::now()).unwrap();
+    assert_eq!(b.recipients, vec!["josé@acme.mx".to_string()]);
+    let msg = OutgoingMessage::from(&b);
+
+    let srv = fake_smtp(Mode::Utf8).await;
+    smtp_transport(srv.addr.port()).send(&msg).await.unwrap();
+    let got = srv.received.lock().unwrap().clone();
+    assert!(got[0].from.contains("SMTPUTF8"), "{:?}", got[0].from);
+    assert!(got[0].rcpts[0].contains("josé@acme.mx"));
+    assert!(got[0].data.contains("josé@acme.mx"));
+
+    let old = fake_smtp(Mode::Ok).await;
+    let err = smtp_transport(old.addr.port()).send(&msg).await.unwrap_err();
+    assert_eq!(err.kind, SendErrorKind::InternationalUnsupported, "{err:?}");
+    assert!(!err.is_transient());
+    assert!(err.message(iuredesk_compose::Lang::Es).contains("acentos"));
 }
 
 #[tokio::test]

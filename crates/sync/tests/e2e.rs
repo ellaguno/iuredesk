@@ -387,7 +387,7 @@ async fn uidvalidity_change_resyncs_folder() {
 async fn body_on_demand() {
     let s = FakeImap::start(FakeCaps::default()).await.unwrap();
     s.deliver("INBOX", &msg(7, 1), &[], None);
-    let e = start(s.port(), Protocol::Imap, SyncOptions { prefetch_recent: 0, ..opts() }, PASSWORD);
+    let e = start(s.port(), Protocol::Imap, SyncOptions { prefetch_recent: 0, preview_fetch: 0, ..opts() }, PASSWORD);
     e.handle.sync_now_wait("t1").await.unwrap();
     let id = by_uid(&e.store, inbox(&e.store), 1).unwrap();
     assert!(e.store.get_envelope(id).unwrap().unwrap().blob.is_none());

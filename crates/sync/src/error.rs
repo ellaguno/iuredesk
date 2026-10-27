@@ -40,6 +40,12 @@ pub enum SyncError {
     /// No se pudo crear el runtime de fondo.
     #[error("runtime: {0}")]
     Runtime(String),
+    /// Microsoft Graph.
+    #[error("Graph: {0}")]
+    Graph(#[from] iuredesk_graph::GraphError),
+    /// La carpeta no es una etiqueta (Gmail) o la cuenta no usa etiquetas.
+    #[error("no es una etiqueta: {0}")]
+    NotALabel(String),
 }
 
 impl From<iuredesk_store::StoreError> for SyncError {
@@ -71,6 +77,7 @@ impl SyncError {
             SyncError::Pop3(e) => e.is_transient(),
             SyncError::OAuth(e) => matches!(e, iuredesk_oauth::Error::Http(_) | iuredesk_oauth::Error::Timeout),
             SyncError::Store(_) | SyncError::Secrets(_) => true,
+            SyncError::Graph(e) => e.is_transient(),
             _ => false,
         }
     }
@@ -82,6 +89,7 @@ impl SyncError {
             SyncError::Pop3(e) => e.is_auth(),
             SyncError::OAuth(e) => e.needs_reconsent(),
             SyncError::NoPassword | SyncError::NoTokenProvider => true,
+            SyncError::Graph(e) => e.needs_reauth(),
             _ => false,
         }
     }
@@ -146,6 +154,31 @@ impl SyncError {
             }
             SyncError::Shutdown => pick("Sync is stopped.", "La sincronización está detenida."),
             SyncError::Runtime(_) => pick("Sync could not start.", "La sincronización no pudo arrancar."),
+            SyncError::Graph(iuredesk_graph::GraphError::Throttled { .. }) => pick(
+                "Microsoft 365 asked us to slow down. Mail will sync again in a moment.",
+                "Microsoft 365 pidió ir más despacio. El correo se sincronizará de nuevo en un momento.",
+            ),
+            SyncError::Graph(iuredesk_graph::GraphError::Network(_)) => pick(
+                "Couldn't reach Microsoft 365. Check your internet connection; it will retry automatically.",
+                "No se pudo conectar con Microsoft 365. Revisa tu conexión a internet; se reintentará solo.",
+            ),
+            SyncError::Graph(e) if e.needs_reauth() => pick(
+                "Microsoft 365 needs you to sign in again.",
+                "Microsoft 365 necesita que vuelvas a iniciar sesión.",
+            ),
+            SyncError::Graph(iuredesk_graph::GraphError::Http { status: 404, .. }) => {
+                pick("That message is no longer on the server.", "Ese mensaje ya no está en el servidor.")
+            }
+            SyncError::Graph(e) => {
+                if spanish {
+                    format!("Microsoft 365 rechazó la operación ({e}).")
+                } else {
+                    format!("Microsoft 365 refused the operation ({e}).")
+                }
+            }
+            SyncError::NotALabel(_) => {
+                pick("That folder is not a Gmail label.", "Esa carpeta no es una etiqueta de Gmail.")
+            }
         }
     }
 }
