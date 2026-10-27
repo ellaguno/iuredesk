@@ -2991,6 +2991,7 @@ dependencies = [
 name = "iuredesk-engine"
 version = "0.1.0-alpha.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "chrono-tz",
  "dirs",
@@ -3003,6 +3004,7 @@ dependencies = [
  "iuredesk-pim-sync",
  "iuredesk-store",
  "iuredesk-sync",
+ "iurefficient-connect",
  "mail-parser",
  "reqwest",
  "serde",
@@ -3186,7 +3188,6 @@ dependencies = [
 [[package]]
 name = "iurefficient-connect"
 version = "0.7.1"
-source = "git+https://github.com/ellaguno/iurefficient-connect?tag=v0.7.1#f0242cf6d1de61fe75e09c3e273ecf965cca32d4"
 dependencies = [
  "anyhow",
  "bytes",

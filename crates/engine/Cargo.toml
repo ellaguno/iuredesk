@@ -18,6 +18,9 @@ iuredesk-sync = { workspace = true }
 iuredesk-compose = { workspace = true }
 # F2.3: expansión de recurrencias RFC 5545 para las vistas de calendario.
 iuredesk-pim-sync = { workspace = true }
+# F3.1: Iurefficient (panel contextual, vínculos, avisos, agenda y tareas de la instancia).
+iurefficient-connect = { workspace = true }
+anyhow = { workspace = true }
 chrono-tz = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

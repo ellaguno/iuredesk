@@ -17,6 +17,7 @@ pub mod calendar;
 pub mod command;
 pub mod compose;
 pub mod context;
+pub mod iure;
 pub mod lang;
 pub mod onboarding;
 pub mod prefs;
@@ -32,7 +33,7 @@ pub use iuredesk_sync;
 pub use lang::{Text, pick};
 pub use prefs::{DensityPref, Prefs, ShortcutScheme, ThemePref};
 pub use session::{
-    AccountRow, AccountSync, Event, Fetched, FolderSel, ListRow, Module, Notice, NoticeKind, OfflineTransport, Outcome,
+    AccountRow, AccountSync, Event, Fetched, IurePanel, IureSetup, LeadSuggestions, LoginState, FolderSel, ListRow, Module, Notice, NoticeKind, OfflineTransport, Outcome,
     Session, SessionConfig, SyncStatus,
 };
 pub use time::Zone;

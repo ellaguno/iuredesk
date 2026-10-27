@@ -77,6 +77,10 @@ pub(crate) const PIM_RAW: TableDefinition<(u8, u64), &[u8]> = TableDefinition::n
 /// (tipo, id local) → [`crate::CollectionSync`].
 pub(crate) const PIM_COLLECTIONS: TableDefinition<(u8, u64), &[u8]> = TableDefinition::new("pim_collections");
 
+/// Vínculos de correos con Iurefficient: `Message-ID` normalizado → lista de
+/// [`crate::EmailLink`] (F3.1, aditiva).
+pub(crate) const EMAIL_LINKS: TableDefinition<&str, &[u8]> = TableDefinition::new("email_links");
+
 /// Crea todas las tablas (las transacciones de lectura fallan si una tabla no existe).
 pub(crate) fn create_all(tx: &redb::WriteTransaction) -> Result<(), redb::TableError> {
     tx.open_table(META)?;
@@ -108,5 +112,6 @@ pub(crate) fn create_all(tx: &redb::WriteTransaction) -> Result<(), redb::TableE
     tx.open_table(OPS_QUEUE)?;
     tx.open_table(PIM_RAW)?;
     tx.open_table(PIM_COLLECTIONS)?;
+    tx.open_table(EMAIL_LINKS)?;
     Ok(())
 }

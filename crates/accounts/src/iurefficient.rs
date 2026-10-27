@@ -34,6 +34,9 @@ pub enum IurefficientStatus {
     Ready { host: String, email: String, name: Option<String> },
     /// Había sesión pero el servidor ya no la acepta: hay que volver a entrar.
     Expired { host: String, email: String },
+    /// La sesión vale pero la instancia exige aceptar los términos vigentes (403
+    /// `terms_acceptance_required`, desde v4.114): hay que abrir la web y aceptarlos.
+    TermsRequired { host: String, email: String },
     /// No se pudo hablar con la instancia (sin red, servidor caído). La sesión puede seguir siendo
     /// válida; se reintenta más tarde.
     Offline { host: String, email: String, reason: String },
@@ -132,6 +135,9 @@ pub async fn iurefficient_session_with(acc: Option<Account>, vault: &dyn SharedV
             let email = if user.email.trim().is_empty() { email } else { user.email };
             SharedSession { status: IurefficientStatus::Ready { host, email, name }, session: Some(session) }
         }
+        Ok(Err(e)) if is_terms(&e) => {
+            SharedSession { status: IurefficientStatus::TermsRequired { host, email }, session: None }
+        }
         Ok(Err(e)) if is_network(&e) => SharedSession {
             status: IurefficientStatus::Offline { host, email, reason: format!("{e:#}") },
             session: None,
@@ -142,6 +148,15 @@ pub async fn iurefficient_session_with(acc: Option<Account>, vault: &dyn SharedV
             session: None,
         },
     }
+}
+
+/// ¿La instancia pidió aceptar los términos? `me` responde 403 (con o sin el código
+/// `terms_acceptance_required`); el refresco ya pasó, así que no es una sesión caducada.
+pub fn is_terms(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        c.downcast_ref::<iurefficient_connect::rest::ApiError>().is_some_and(|a| a.is_terms_required())
+            || c.downcast_ref::<reqwest::Error>().and_then(|r| r.status()).is_some_and(|s| s.as_u16() == 403)
+    })
 }
 
 /// ¿El fallo fue de red (conexión, DNS, TLS, tiempo) y no una respuesta del servidor?
@@ -182,6 +197,10 @@ mod tests {
 
     /// Servidor HTTP mínimo: responde `refresh_status` a `/api/auth/refresh` y un usuario a `me`.
     async fn fake_instance(refresh_status: u16) -> u16 {
+        fake_instance_me(refresh_status, 200).await
+    }
+
+    async fn fake_instance_me(refresh_status: u16, me_status: u16) -> u16 {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
@@ -192,6 +211,8 @@ mod tests {
                 let req = String::from_utf8_lossy(&buf[..n]).to_string();
                 let (status, body) = if req.starts_with("POST /api/auth/refresh") {
                     (refresh_status, String::new())
+                } else if req.starts_with("GET /api/auth/me") && me_status == 403 {
+                    (403, r#"{"code":"terms_acceptance_required"}"#.to_string())
                 } else if req.starts_with("GET /api/auth/me") {
                     (200, r#"{"user":{"id":7,"email":"ana@despacho.mx","name":"Ana Pérez"}}"#.to_string())
                 } else {
@@ -252,6 +273,14 @@ mod tests {
         );
         assert!(s.session.is_some());
         assert_eq!(*vault.writes.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn terms_not_accepted_is_its_own_state() {
+        let port = fake_instance_me(200, 403).await;
+        let acc = Account::new(&format!("http://127.0.0.1:{port}"), "ana@despacho.mx").unwrap();
+        let s = iurefficient_session_with(Some(acc), &vault_with_session()).await;
+        assert!(matches!(s.status, IurefficientStatus::TermsRequired { .. }), "{:?}", s.status);
     }
 
     #[tokio::test]
