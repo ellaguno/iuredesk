@@ -18,6 +18,9 @@ use crate::account::{Creds, PimAccount, PimSource};
 use crate::caldav::{CalDav, server_schedules};
 use crate::error::{PimError, Result};
 use crate::graph::Graph;
+
+mod freebusy;
+pub use freebusy::{BusySlot, FreeBusy};
 use crate::ops::{self, ImipReply, PimOp};
 use crate::provider::{Ctx, Provider};
 use crate::{FriendlyError, PimEvent, PimSyncOptions};

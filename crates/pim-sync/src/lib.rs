@@ -58,6 +58,7 @@ pub mod merge;
 mod occurrences;
 pub mod ops;
 mod provider;
+pub mod series;
 
 use std::time::Duration;
 
@@ -66,7 +67,8 @@ use iuredesk_model::{AccountId, AddressBookId, CalendarId, TaskListId};
 use iuredesk_store::PimRef;
 
 pub use account::{DavAuth, GRAPH_BASE, PimAccount, PimSource};
-pub use engine::{PimSyncEngine, PimSyncHandle, account_id};
+pub use engine::{BusySlot, FreeBusy, PimSyncEngine, PimSyncHandle, account_id};
+pub use series::SeriesScope;
 pub use error::{PimError, Result};
 pub use occurrences::{MAX_OCCURRENCES, occurrences_between};
 pub use ops::{ImipReply, OP_IMIP_REPLY, PimOp};

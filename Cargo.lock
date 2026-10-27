@@ -3028,6 +3028,7 @@ dependencies = [
  "iuredesk-accounts",
  "iuredesk-autoconfig",
  "iuredesk-compose",
+ "iuredesk-dav",
  "iuredesk-imap",
  "iuredesk-model",
  "iuredesk-oauth",

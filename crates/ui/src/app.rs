@@ -117,6 +117,18 @@ impl DeskApp {
         app
     }
 
+    /// Notificaciones del escritorio, si las hay (recordatorios).
+    pub(crate) fn notifier(&self) -> Option<Notifier> {
+        self.options.notifier.clone()
+    }
+
+    /// Descarta los recordatorios que tocan ahora (capturas deterministas).
+    pub fn dismiss_reminders(&mut self) {
+        for r in self.session.due_reminders() {
+            self.session.dismiss_reminder(r.key);
+        }
+    }
+
     /// Al cerrar: detiene la sincronización y la bandeja de salida (lo pendiente se conserva).
     pub fn shutdown(&mut self) {
         self.session.shutdown();
@@ -188,6 +200,8 @@ impl DeskApp {
             Module::Assistant => crate::pim::assistant(self, ui),
         }
 
+        crate::event_editor::show(self, &ctx);
+        crate::reminders::show(self, &ctx);
         crate::compose::show_all(self, &ctx);
         crate::settings::show(self, &ctx);
         self.sync_window(&ctx);
@@ -279,7 +293,7 @@ impl DeskApp {
 
     /// Calendario en vista de mes.
     pub fn set_calendar_month(&mut self) {
-        self.calendar.view = crate::calendar::CalView::Month;
+        self.session.set_cal_view(iuredesk_engine::calendar::nav::CalView::Month);
     }
 
     fn start(&mut self, ctx: &Context) {
@@ -395,6 +409,7 @@ impl DeskApp {
             Outcome::AddAccount => {}
             Outcome::FocusSearch => self.mail.focus_search = true,
             Outcome::Restyle => self.apply_style(ctx, false),
+            Outcome::EditEvent(d) => crate::event_editor::open(self, *d),
         }
     }
 
@@ -407,13 +422,14 @@ impl DeskApp {
     fn shortcuts(&mut self, ctx: &Context) {
         let scheme = self.session.scheme();
         let typing = ctx.egui_wants_keyboard_input();
+        let in_calendar = self.session.module == Module::Calendar;
         let mut fire: Option<&'static str> = None;
         ctx.input_mut(|i| {
             let mut consumed = None;
             for (idx, e) in i.events.iter().enumerate() {
                 let egui::Event::Key { key, pressed: true, modifiers, .. } = e else { continue };
                 for (cmd, chord) in command::bindings(scheme) {
-                    if cmd == "app.palette" || (typing && !chord.has_modifier()) {
+                    if cmd == "app.palette" || (typing && !chord.has_modifier()) || (cmd.starts_with("cal.") && !in_calendar) {
                         continue;
                     }
                     if chord_matches(&chord, *key, *modifiers) {

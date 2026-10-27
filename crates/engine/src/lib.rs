@@ -27,11 +27,14 @@ pub use background::{JobId, JobOutput};
 pub use command::{COMMANDS, Chord, CommandSpec};
 pub use compose::{ComposeDraft, ComposeKind, Mailto};
 /// Reexportados para la UI y la app (redactor, envío, sincronización).
+pub use chrono_tz;
 pub use iuredesk_compose;
+pub use iuredesk_pim_sync::SeriesScope;
 pub use iuredesk_sync;
 pub use lang::{Text, pick};
 pub use prefs::{DensityPref, Prefs, ShortcutScheme, ThemePref};
 pub use session::{
+    CalState, PimBackend, occurrence_start,
     AccountRow, AccountSync, Event, Fetched, FolderSel, ListRow, Module, Notice, NoticeKind, OfflineTransport, Outcome,
     Session, SessionConfig, SyncStatus,
 };

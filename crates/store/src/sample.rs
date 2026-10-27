@@ -779,7 +779,62 @@ pub fn populate_in(store: &Store, seed: u64, now: DateTime<Utc>, offset: FixedOf
         })?;
         sum.tasks = sum.tasks.saturating_add(1);
     }
+    add_invitation(store, now, offset)?;
+    sum.messages = sum.messages.saturating_add(1);
     Ok(sum)
+}
+
+/// Correo con una invitación iMIP (`METHOD:REQUEST`) en la bandeja de la primera cuenta: la
+/// tarjeta de invitación del panel de lectura (F2.4). Es para pasado mañana a las 16:00 locales.
+pub fn add_invitation(store: &Store, now: DateTime<Utc>, offset: FixedOffset) -> Result<()> {
+    let account = AccountId(1);
+    let Some(inbox) = store.folders(account)?.into_iter().find(|f| f.role == FolderRole::Inbox) else { return Ok(()) };
+    let me = ACCOUNTS.first().map_or("laura@despacho.example.org", |a| a.email);
+    let day = (now.with_timezone(&offset) + Duration::days(1)).date_naive();
+    let local = day.and_time(NaiveTime::from_hms_opt(16, 0, 0).unwrap_or(NaiveTime::MIN));
+    let start = offset.from_local_datetime(&local).single().map_or_else(|| local.and_utc(), |t| t.with_timezone(&Utc));
+    let end = start + Duration::hours(1);
+    let f = |t: DateTime<Utc>| t.format("%Y%m%dT%H%M%SZ").to_string();
+    let ics = format!(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//IureDesk//Ejemplo//ES\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\n\
+UID:sample-invite-revision@northwind.example.com\r\nSEQUENCE:0\r\nDTSTAMP:{}\r\nDTSTART:{}\r\nDTEND:{}\r\n\
+SUMMARY:Revisión trimestral con Northwind\r\nLOCATION:Sala de juntas, piso 4\r\n\
+DESCRIPTION:Repasamos el avance del trimestre y los siguientes pasos.\r\n\
+ORGANIZER;CN=Carmen Brown:mailto:carmen.brown@northwind.example.com\r\n\
+ATTENDEE;CN=Carmen Brown;ROLE=CHAIR;PARTSTAT=ACCEPTED:mailto:carmen.brown@northwind.example.com\r\n\
+ATTENDEE;CN=Laura Méndez;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:{me}\r\n\
+ATTENDEE;CN=Pablo Ruiz;ROLE=OPT-PARTICIPANT;PARTSTAT=TENTATIVE:mailto:pablo@despacho.example.org\r\n\
+END:VEVENT\r\nEND:VCALENDAR\r\n",
+        f(now - Duration::minutes(40)),
+        f(start),
+        f(end)
+    );
+    let body = "Hola Laura,\r\n\r\nTe envío la invitación para la revisión trimestral.\r\n\r\nCarmen";
+    let env = MessageEnvelope {
+        account,
+        folder: inbox.id,
+        message_id: Some("sample-invite@northwind.example.com".into()),
+        from: vec![Mailbox::new("Carmen Brown", "carmen.brown@northwind.example.com")],
+        to: vec![Mailbox::new("Laura Méndez", me)],
+        subject: "Invitación: Revisión trimestral con Northwind".into(),
+        date: now - Duration::minutes(40),
+        preview: make_preview(body),
+        ..Default::default()
+    };
+    let mut raw = String::new();
+    raw.push_str(&format!("From: {}\r\nTo: {}\r\n", fmt_addrs(&env.from), fmt_addrs(&env.to)));
+    raw.push_str(&format!("Subject: {}\r\nDate: {}\r\n", env.subject, env.date.to_rfc2822()));
+    raw.push_str("Message-ID: <sample-invite@northwind.example.com>\r\nMIME-Version: 1.0\r\n");
+    raw.push_str("Content-Type: multipart/alternative; boundary=\"inv\"\r\n\r\n--inv\r\n");
+    raw.push_str("Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n");
+    raw.push_str(body);
+    raw.push_str("\r\n--inv\r\nContent-Type: text/calendar; charset=utf-8; method=REQUEST\r\n");
+    raw.push_str("Content-Transfer-Encoding: 8bit\r\n\r\n");
+    raw.push_str(&ics);
+    raw.push_str("--inv--\r\n");
+    store.put_messages(vec![NewMessage { envelope: env, raw: Some(raw.into_bytes()), body_text: Some(body.into()) }])?;
+    store.rethread_account(account)?;
+    Ok(())
 }
 
 /// Abre (o crea) un almacén de demostración en `dir`. Si está vacío lo llena con

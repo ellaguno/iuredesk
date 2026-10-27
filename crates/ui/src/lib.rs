@@ -15,10 +15,13 @@
 mod app;
 mod calendar;
 mod compose;
+mod event_editor;
 mod html;
+mod invitation;
 mod mail;
 mod onboarding;
 mod pim;
+mod reminders;
 mod rich_edit;
 mod settings;
 mod widgets;
