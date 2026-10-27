@@ -7,7 +7,7 @@
 //! versión de esquema.
 
 use chrono::{DateTime, Utc};
-use redb::ReadableDatabase;
+use redb::{ReadableDatabase, ReadableTable};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;

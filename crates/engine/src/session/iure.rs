@@ -229,7 +229,10 @@ fn user_agent() -> String {
 fn mailbox_text(m: &[Mailbox]) -> String {
     m.iter()
         .take(20)
-        .map(|b| if b.name.is_empty() { b.addr.clone() } else { format!("{} <{}>", b.name, b.addr) })
+        .map(|b| match b.name.as_deref().filter(|n| !n.is_empty()) {
+            None => b.addr.clone(),
+            Some(n) => format!("{n} <{}>", b.addr),
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -455,7 +458,7 @@ impl Session {
             .filter(|o| !o.trim().is_empty());
         ContextQuery {
             email: iure::clip(&other.addr, 254),
-            name: iure::clip(if other.name.is_empty() { &other.addr } else { &other.name }, 200),
+            name: iure::clip(other.name.as_deref().filter(|n| !n.is_empty()).unwrap_or(&other.addr), 200),
             org,
             subject: iure::clip(&env.subject, 300),
             case_refs: crate::context::case_refs(&env.subject).into_iter().take(3).collect(),
@@ -811,7 +814,7 @@ impl Session {
     pub fn iure_task_form(&mut self, id: MessageId) -> TaskForm {
         let Some(env) = self.envelope(id).cloned() else { return TaskForm::default() };
         let (base, _) = iuredesk_model::normalize_subject(&env.subject);
-        let who = env.from.first().map(|m| if m.name.is_empty() { m.addr.clone() } else { m.name.clone() });
+        let who = env.from.first().map(|m| m.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| m.addr.clone()));
         let case_id = self
             .iure_panel(id)
             .context
@@ -899,7 +902,7 @@ impl Session {
                 if let Some(b) = addr.bcc.filter(|b| b.contains('@')) {
                     cd.draft.bcc.push(Mailbox::new("", iure::clip(&b, 254)));
                 }
-                self.iure.pending_compose.push(cd);
+                self.iure.pending_compose.push(*cd);
             }
             Ok(_) => {}
             Err(e) => self.notices.push(Notice::error(e.text())),
