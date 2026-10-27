@@ -11,8 +11,8 @@ use iuredesk_engine::{DensityPref, FolderSel, ListRow};
 use iuredesk_model::{AccountId, FolderRole, MessageEnvelope, MessageId};
 use iurefficient_ui::list::{Column, ListState, ListView, RowStyle};
 use iurefficient_ui::{
-    BadgeKind, Banner, EmptyState, Icon, PaneKind, SearchField, Severity, avatar, badge, icons, pick, section_label,
-    segmented, sidebar_item, split, theme,
+    BadgeKind, Banner, EmptyState, Icon, PaneKind, Severity, avatar, badge, icons, pick, section_label, sidebar_item,
+    split, theme,
 };
 
 use crate::app::DeskApp;

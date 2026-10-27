@@ -165,7 +165,7 @@ fn press(ctx: &Context, b: WindowButton) {
 
 /// Lo que se ve en el centro: ancho guardado del grupo de la derecha (del cuadro anterior).
 fn right_width_id() -> Id {
-    Id::new("iuredesk-header-right-width")
+    Id::unique("iuredesk-header-right-width")
 }
 
 /// La barra. `full` = con búsqueda y «Comandos» (no en la bienvenida).
@@ -179,7 +179,8 @@ pub(crate) fn show(app: &mut DeskApp, ui: &mut Ui, full: bool) {
     let frame = Frame::new().fill(c.surface_alt).inner_margin(Margin { left: 10, right: right_pad, top: 0, bottom: 0 });
     egui::Panel::top("app-header").exact_size(h).resizable(false).frame(frame).show(ui, |ui| {
         let inner = ui.max_rect();
-        let whole = Rect::from_min_max(pos2(inner.left() - 10.0, inner.top()), pos2(inner.right() + 8.0, inner.bottom()));
+        let whole =
+            Rect::from_min_max(pos2(inner.left() - 10.0, inner.top()), pos2(inner.right() + 8.0, inner.bottom()));
         // El fondo arrastra la ventana; los controles se agregan después y tienen prioridad.
         if chrome.is_some() {
             drag_area(ui, whole);
@@ -204,7 +205,11 @@ pub(crate) fn show(app: &mut DeskApp, ui: &mut Ui, full: bool) {
         }
         app_mark(&mut left, h);
         let title = app.header_title();
-        left.add(egui::Label::new(RichText::new(&title).font(theme::semibold_font(&ctx, 13.5)).color(c.text)).selectable(false).truncate());
+        left.add(
+            egui::Label::new(RichText::new(&title).font(theme::semibold_font(&ctx, 13.5)).color(c.text))
+                .selectable(false)
+                .truncate(),
+        );
         sync_dot(app, &mut left);
         let left_end = left.min_rect().right();
 
@@ -248,7 +253,7 @@ pub(crate) fn show(app: &mut DeskApp, ui: &mut Ui, full: bool) {
 /// Fondo de la barra: arrastrar mueve, doble clic maximiza, clic derecho abre el menú de ventana.
 fn drag_area(ui: &mut Ui, rect: Rect) {
     let ctx = ui.ctx().clone();
-    let resp = ui.interact(rect, Id::new("iuredesk-header-drag"), Sense::click_and_drag());
+    let resp = ui.interact(rect, Id::unique("iuredesk-header-drag"), Sense::click_and_drag());
     a11y::area(&resp, pick("Title bar", "Barra de título"));
     if resp.drag_started_by(PointerButton::Primary) {
         ctx.send_viewport_cmd(ViewportCommand::StartDrag);
@@ -292,7 +297,11 @@ fn app_mark(ui: &mut Ui, h: f32) {
     let card = Rect::from_min_max(at(144.0, 200.0), at(880.0, 840.0));
     p.rect_filled(card, 96.0 * k, Color32::WHITE);
     let band = Rect::from_min_max(at(144.0, 200.0), at(880.0, 376.0));
-    p.rect_filled(band, egui::CornerRadius { nw: (96.0 * k) as u8, ne: (96.0 * k) as u8, sw: 0, se: 0 }, iurefficient_ui::tokens::brand::BLUE);
+    p.rect_filled(
+        band,
+        egui::CornerRadius { nw: (96.0 * k) as u8, ne: (96.0 * k) as u8, sw: 0, se: 0 },
+        iurefficient_ui::tokens::brand::BLUE,
+    );
     p.add(egui::Shape::line(
         vec![at(248.0, 470.0), at(512.0, 660.0), at(776.0, 470.0)],
         Stroke::new((80.0 * k).max(1.2), navy),
@@ -341,11 +350,15 @@ fn search(app: &mut DeskApp, ui: &mut Ui, width: f32) {
         app.mail.focus_search = false;
         ui.memory_mut(|m| m.request_focus(search_id));
     }
-    let shortcut = iuredesk_engine::command::shortcut("mail.search", scheme).and_then(|c| crate::app::keyboard_shortcut(&c));
+    let shortcut =
+        iuredesk_engine::command::shortcut("mail.search", scheme).and_then(|c| crate::app::keyboard_shortcut(&c));
     let (text, hint) = if contacts {
         (&mut app.pim.contact_filter, pick("Find a person", "Buscar una persona"))
     } else {
-        (&mut app.mail.search, pick("Search mail  (from: has:attachment …)", "Buscar en el correo  (de: tiene:adjunto …)"))
+        (
+            &mut app.mail.search,
+            pick("Search mail  (from: has:attachment …)", "Buscar en el correo  (de: tiene:adjunto …)"),
+        )
     };
     let mut field = SearchField::new(text).id_salt(id_salt).hint(hint).desired_width(width);
     if let Some(s) = shortcut {
@@ -371,12 +384,9 @@ fn commands_button(app: &mut DeskApp, ui: &mut Ui) {
     let label = pick("Commands", "Comandos");
     let small = theme::small_font(&ctx);
     let r = ui.add(
-        egui::Button::new((
-            RichText::new(label).color(c.text),
-            RichText::new(&keys).font(small).color(c.text_muted),
-        ))
-        .fill(c.surface)
-        .stroke(Stroke::new(1.0, c.separator)),
+        egui::Button::new((RichText::new(label).color(c.text), RichText::new(&keys).font(small).color(c.text_muted)))
+            .fill(c.surface)
+            .stroke(Stroke::new(1.0, c.separator)),
     );
     a11y::button(&r, label);
     if r.on_hover_text(pick("Everything IureDesk can do", "Todo lo que IureDesk puede hacer")).clicked() {
@@ -528,14 +538,14 @@ pub(crate) fn window_frame(app: &DeskApp, ui: &mut Ui) {
     }
     let r = ctx.content_rect();
     let c = theme::colors(ui);
-    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new("iuredesk-window-border"))).rect_stroke(
+    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::unique("iuredesk-window-border"))).rect_stroke(
         r,
         0.0,
         Stroke::new(1.0, c.separator),
         egui::StrokeKind::Inside,
     );
     for (i, (dir, rect, cursor)) in grips(r).into_iter().enumerate() {
-        let resp = ui.interact(rect, Id::new(("iuredesk-resize", i)), Sense::drag());
+        let resp = ui.interact(rect, Id::unique(("iuredesk-resize", i)), Sense::drag());
         if resp.hovered() || resp.dragged() {
             ctx.set_cursor_icon(cursor);
         }
@@ -592,7 +602,10 @@ mod tests {
         assert!(ButtonLayout::parse("tonterías").is_none());
         assert!(ButtonLayout::parse(&"close,".repeat(200)).is_none());
         assert!(ButtonLayout::parse(&":".repeat(40)).is_some_and(|l| l.left.is_empty() && l.right.is_empty()));
-        assert_eq!(WindowChrome::for_this_os(Some("")).layout.right.len(), if cfg!(target_os = "macos") { 0 } else { 3 });
+        assert_eq!(
+            WindowChrome::for_this_os(Some("")).layout.right.len(),
+            if cfg!(target_os = "macos") { 0 } else { 3 }
+        );
     }
 
     #[test]

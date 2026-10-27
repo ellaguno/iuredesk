@@ -792,16 +792,16 @@ pub(crate) fn keyboard_shortcut(c: &Chord) -> Option<egui::KeyboardShortcut> {
     let key = Key::from_name(&name)?;
     let mut m = Modifiers::NONE;
     if c.command || (c.ctrl && !cfg!(target_os = "macos")) {
-        m = m | Modifiers::COMMAND;
+        m |= Modifiers::COMMAND;
     }
     if c.ctrl && cfg!(target_os = "macos") {
-        m = m | Modifiers::CTRL;
+        m |= Modifiers::CTRL;
     }
     if c.shift {
-        m = m | Modifiers::SHIFT;
+        m |= Modifiers::SHIFT;
     }
     if c.alt {
-        m = m | Modifiers::ALT;
+        m |= Modifiers::ALT;
     }
     Some(egui::KeyboardShortcut::new(m, key))
 }

@@ -183,8 +183,8 @@ fn integrated_header_has_named_window_controls_and_a_drag_area() {
     // La zona de arrastre ocupa la barra de lado a lado, arriba de todo.
     let drag = h.get_by_label("Barra de título").rect();
     assert!(drag.top() <= 1.0 && drag.width() >= 1270.0, "{drag:?}");
-    // La búsqueda de la barra filtra el correo.
-    h.get_by_label("Buscar en el correo  (de: tiene:adjunto …)").click();
+    // La búsqueda de la barra filtra el correo; se enfoca con el atajo del esquema (Ctrl+E).
+    h.key_press_modifiers(Modifiers::COMMAND, Key::E);
     h.run();
     h.event(egui::Event::Text("Northwind".into()));
     settle(&mut h);

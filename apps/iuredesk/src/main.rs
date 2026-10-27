@@ -184,10 +184,7 @@ fn main() -> ExitCode {
         },
     );
 
-    let options = eframe::NativeOptions {
-        viewport,
-        ..Default::default()
-    };
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
     match eframe::run_native("IureDesk", options, Box::new(|_| Ok(Box::new(App { app, _bridge: bridge })))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

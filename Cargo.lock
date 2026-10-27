@@ -3319,6 +3319,7 @@ dependencies = [
  "chrono",
  "egui",
  "egui_kittest",
+ "image",
  "iuredesk-accounts",
  "iuredesk-engine",
  "iuredesk-html-view",

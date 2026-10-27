@@ -5,8 +5,7 @@ use egui::{Align, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use iuredesk_model::{ContactId, NoteId, Task, TaskListId};
 use iurefficient_ui::list::{Column, ListState, ListView};
 use iurefficient_ui::{
-    BadgeKind, EmptyState, Icon, PaneKind, SearchField, avatar, badge, fuzzy, icons, pick, section_label, sidebar_item,
-    split, theme,
+    BadgeKind, EmptyState, Icon, PaneKind, avatar, badge, fuzzy, icons, pick, section_label, sidebar_item, split, theme,
 };
 
 use crate::app::DeskApp;
@@ -16,7 +15,7 @@ use crate::widgets::{hairline, info_row, pane_title};
 #[derive(Default)]
 pub struct PimState {
     contact: Option<ContactId>,
-    contact_filter: String,
+    pub(crate) contact_filter: String,
     contact_list: ListState,
     contact_cols: Vec<Column>,
     note: Option<NoteId>,
