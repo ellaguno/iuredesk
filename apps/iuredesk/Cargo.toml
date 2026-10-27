@@ -19,7 +19,10 @@ iuredesk-ui = { workspace = true }
 # `iuredesk --mcp` y el puente IPC con la ventana abierta (F4.2).
 iuredesk-mcp = { workspace = true }
 egui = { workspace = true }
-eframe = { workspace = true, features = ["wgpu", "wayland", "x11", "accesskit", "default_fonts"] }
+eframe = { workspace = true, features = ["wgpu", "wayland", "x11", "accesskit", "default_fonts", "clipboard"] }
+# Marco de ventana estilo Adwaita en GNOME/Wayland (sctk-adwaita, Rust puro). Sin esto winit dibuja
+# un marco genérico. En KDE y otros compositores con xdg-decoration el marco lo pone el sistema.
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
 dirs = { workspace = true }
 
 # Notificaciones del escritorio por D-Bus con zbus (Rust puro, sin libdbus).

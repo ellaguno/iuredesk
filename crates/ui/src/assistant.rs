@@ -1407,13 +1407,8 @@ pub fn settings_section(app: &mut DeskApp, ui: &mut Ui) {
         let has = app.ai.hub.has_api_key(&app.session, &choice);
         ui.horizontal(|ui| {
             let l = ui.label(RichText::new(pick("API key", "Clave de API")).color(c.text_muted));
-            ui.add(
-                egui::TextEdit::singleline(&mut app.ai.key_input)
-                    .password(true)
-                    .desired_width(240.0)
-                    .hint_text(if has { pick("saved in the keyring", "guardada en el llavero") } else { "sk-…" }),
-            )
-            .labelled_by(l.id);
+            let hint = if has { pick("saved in the keyring", "guardada en el llavero") } else { "sk-…" };
+            crate::widgets::secret_field(ui, &mut app.ai.key_input, "ai-key", hint, 240.0).labelled_by(l.id);
             if ui.button(pick("Save key", "Guardar clave")).clicked() {
                 // Primero la configuración (la clave se guarda por id de proveedor).
                 if changed {

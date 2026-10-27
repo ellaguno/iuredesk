@@ -728,7 +728,7 @@ pub fn settings_section(app: &mut DeskApp, ui: &mut Ui) {
                     field(ui, pick("Instance", "Instancia"), &mut app.iure.domain);
                     field(ui, pick("Email", "Correo"), &mut app.iure.email);
                     let l = ui.label(RichText::new(pick("Password", "Contraseña")).color(c.text_muted));
-                    ui.add(egui::TextEdit::singleline(&mut app.iure.password).password(true).desired_width(f32::INFINITY)).labelled_by(l.id);
+                    crate::widgets::secret_field(ui, &mut app.iure.password, "iure-password", "", f32::INFINITY).labelled_by(l.id);
                     ui.label(small(ui, pick(
                         "The session (never the password) is kept in the system keyring and shared with the other Iurefficient apps.",
                         "La sesión (nunca la contraseña) se guarda en el llavero del sistema y se comparte con las demás apps de Iurefficient.",

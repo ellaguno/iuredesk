@@ -145,6 +145,55 @@ pub fn human_size(n: usize) -> String {
     }
 }
 
+/// Campo de contraseña con botón para mostrarla u ocultarla (estado por `id_salt`).
+/// Acepta pegar como cualquier campo de texto.
+pub fn secret_field(ui: &mut Ui, value: &mut String, id_salt: &str, hint: &str, width: f32) -> Response {
+    let id = ui.make_persistent_id(("secret-visible", id_salt));
+    let mut visible = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+    // El ancho se calcula fuera de la fila: dentro de `horizontal` el disponible puede ser infinito.
+    let avail = ui.available_width();
+    let w = if width.is_finite() {
+        width
+    } else if avail.is_finite() {
+        (avail - 34.0).max(80.0)
+    } else {
+        280.0
+    };
+    let inner = ui.horizontal(|ui| {
+        let r = ui.add(egui::TextEdit::singleline(value).password(!visible).hint_text(hint).desired_width(w));
+        let tip = if visible {
+            iurefficient_ui::pick("Hide password", "Ocultar contraseña")
+        } else {
+            iurefficient_ui::pick("Show password", "Mostrar contraseña")
+        };
+        let (rect, b) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
+        let c = theme::colors(ui);
+        let ink = if b.hovered() { c.text } else { c.text_muted };
+        let p = ui.painter();
+        // Ojo dibujado: contorno de almendra, pupila y, si está oculta, una diagonal.
+        let ctr = rect.center();
+        let pts: Vec<egui::Pos2> = (0..=24)
+            .map(|i| {
+                let t = std::f32::consts::TAU * i as f32 / 24.0;
+                egui::pos2(ctr.x + 8.0 * t.cos(), ctr.y + 4.6 * t.sin())
+            })
+            .collect();
+        p.add(egui::Shape::line(pts, Stroke::new(1.4, ink)));
+        p.circle_filled(ctr, 2.3, ink);
+        if !visible {
+            p.line_segment([ctr + vec2(-7.0, 6.0), ctr + vec2(7.0, -6.0)], Stroke::new(1.4, ink));
+        }
+        b.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
+        let b = b.on_hover_text(tip);
+        if b.clicked() {
+            visible = !visible;
+        }
+        r
+    });
+    ui.data_mut(|d| d.insert_temp(id, visible));
+    inner.inner
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -346,9 +346,7 @@ fn password_and_test(app: &mut DeskApp, ui: &mut Ui, label: &str) {
     let mut go = false;
     if let Some(w) = app.session.wizard.as_mut() {
         ui.label(RichText::new(label).color(c.text));
-        let r = ui.add(
-            egui::TextEdit::singleline(&mut w.password).password(true).hint_text(label).desired_width(f32::INFINITY),
-        );
+        let r = crate::widgets::secret_field(ui, &mut w.password, "wizard-password", label, f32::INFINITY);
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !w.password.is_empty() {
             go = true;
         }

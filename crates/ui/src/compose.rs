@@ -194,8 +194,10 @@ pub fn show_all(app: &mut DeskApp, ctx: &Context) {
         egui::Window::new(w.title())
             .id(egui::Id::unique(("compose", w.id)))
             .open(&mut open)
-            .default_size([700.0, 580.0])
+            .default_size([720.0, 600.0])
             .min_size([420.0, 340.0])
+            // En pantallas anchas no crece a todo lo ancho: los campos piden ancho infinito.
+            .max_width(compose_max_width(ctx))
             .collapsible(false)
             .show(ctx, |ui| form(ui, w, &identities, &presets, &mut mine));
         if !open {
@@ -828,4 +830,10 @@ fn bottom_bar(ui: &mut Ui, w: &mut ComposeWindow, presets: &[(Text, DateTime<Utc
     if mine && ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) {
         acts.push(Act::Send);
     }
+}
+/// Ancho máximo del redactor: en pantallas anchas no crece a todo lo ancho (los campos piden
+/// ancho infinito). Sin pantalla conocida (pruebas), un valor fijo.
+fn compose_max_width(ctx: &egui::Context) -> f32 {
+    let w = ctx.content_rect().width();
+    if w.is_finite() && w > 0.0 { (w * 0.7).clamp(560.0, 960.0) } else { 900.0 }
 }
