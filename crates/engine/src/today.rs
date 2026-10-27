@@ -14,8 +14,8 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use iuredesk_model::{
-    AccountId, Calendar, ContactId, EventId, EventTime, Folder, FolderId, FolderRole, MessageEnvelope, MessageId,
-    Task, TaskList, TaskListId,
+    AccountId, Calendar, ContactId, EventId, EventTime, Folder, FolderId, FolderRole, MessageEnvelope, MessageId, Task,
+    TaskList, TaskListId,
 };
 use iuredesk_store::{AccountLabel, Store};
 
@@ -28,7 +28,7 @@ use crate::time::Zone;
 /// Un correo «espera respuesta» si lleva al menos esto sin contestar…
 const NEEDS_REPLY_AFTER_HOURS: i64 = 24;
 /// …y no es más viejo que esto (lo antiguo ya no es «de hoy»).
-const NEEDS_REPLY_WINDOW_DAYS: i64 = 21;
+const NEEDS_REPLY_WINDOW_DAYS: i64 = 10;
 /// Sobres que se leen por carpeta (entrada y enviados).
 const MAIL_SCAN: usize = 400;
 /// Elementos como máximo por grupo.
@@ -307,9 +307,19 @@ pub fn meeting_link(texts: &[&str]) -> Option<MeetingLink> {
 fn is_bulk(addr: &str) -> bool {
     let a = addr.to_ascii_lowercase();
     let local = a.split('@').next().unwrap_or("");
-    ["noreply", "no-reply", "donotreply", "do-not-reply", "newsletter", "news", "promo", "notifications", "mailer-daemon"]
-        .iter()
-        .any(|k| local == *k || local.starts_with(&format!("{k}-")) || local.starts_with(&format!("{k}.")))
+    [
+        "noreply",
+        "no-reply",
+        "donotreply",
+        "do-not-reply",
+        "newsletter",
+        "news",
+        "promo",
+        "notifications",
+        "mailer-daemon",
+    ]
+    .iter()
+    .any(|k| local == *k || local.starts_with(&format!("{k}-")) || local.starts_with(&format!("{k}.")))
         || local.contains("noreply")
         || local.contains("no-reply")
 }
@@ -375,7 +385,9 @@ pub fn build(i: &DayInput) -> DaySummary {
     // --- Tareas de todas las fuentes.
     let mut tasks = DayTasks::default();
     let labels: HashMap<AccountId, &AccountMail> = i.accounts.iter().map(|a| (a.account, a)).collect();
-    for t in i.tasks.iter().take(MAX_TASKS).filter(|t| !t.is_done() && t.status != iuredesk_model::TaskStatus::Cancelled) {
+    for t in
+        i.tasks.iter().take(MAX_TASKS).filter(|t| !t.is_done() && t.status != iuredesk_model::TaskStatus::Cancelled)
+    {
         let Some(due) = t.due.as_ref().map(|d| due_date(d, i.zone)) else { continue };
         if due > today + Duration::days(UPCOMING_DAYS) {
             continue;
@@ -469,7 +481,7 @@ pub fn build(i: &DayInput) -> DaySummary {
     }
     let needs_reply = needs_reply(i, &me, &from_me);
     let mut flagged: Vec<MailItem> = i.flagged.iter().filter(|e| !e.flags.deleted).map(mail_item).collect();
-    flagged.sort_by(|a, b| b.date.cmp(&a.date));
+    flagged.sort_by_key(|m| std::cmp::Reverse(m.date));
     flagged.dedup_by_key(|m| m.id);
     flagged.truncate(MAX_ITEMS);
 
@@ -520,8 +532,8 @@ fn next_birthday(born: NaiveDate, today: NaiveDate) -> Option<NaiveDate> {
     if this >= today { Some(this) } else { on(today.year().checked_add(1)?) }
 }
 
-/// Hilos cuyo último mensaje es para mí, sin responder, de hace más de un día (y menos de tres
-/// semanas). Lo más reciente primero.
+/// Hilos cuyo último mensaje es para mí, sin responder, de hace más de un día (y menos de diez
+/// días). Lo más reciente primero.
 fn needs_reply(i: &DayInput, me: &HashSet<String>, from_me: &dyn Fn(&MessageEnvelope) -> bool) -> Vec<MailItem> {
     if me.is_empty() {
         return Vec::new();
@@ -556,7 +568,7 @@ fn needs_reply(i: &DayInput, me: &HashSet<String>, from_me: &dyn Fn(&MessageEnve
     let mut seen = HashSet::new();
     let mut out: Vec<MailItem> = Vec::new();
     let mut inbox: Vec<&MessageEnvelope> = i.inbox.iter().collect();
-    inbox.sort_by(|a, b| b.date.cmp(&a.date));
+    inbox.sort_by_key(|e| std::cmp::Reverse(e.date));
     for e in inbox {
         if from_me(e) || e.flags.answered || e.flags.draft || e.flags.deleted {
             continue;
@@ -679,12 +691,8 @@ pub fn gather(store: &Store, a: GatherArgs) -> DayInput {
         .filter(|f| matches!(f.role, FolderRole::Trash | FolderRole::Junk | FolderRole::Drafts))
         .map(|f| f.id)
         .collect();
-    let flagged: Vec<MessageEnvelope> = store
-        .search("is:flagged", 200)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|e| !skip.contains(&e.folder))
-        .collect();
+    let flagged: Vec<MessageEnvelope> =
+        store.search("is:flagged", 200).unwrap_or_default().into_iter().filter(|e| !skip.contains(&e.folder)).collect();
 
     let mut known = HashSet::new();
     let mut birthdays = Vec::new();
@@ -906,7 +914,12 @@ mod tests {
         i.events = vec![occ(1, 1, "Junta", 8, 30, 30), allday, cancelled, tomorrow, team];
         i.calendars = vec![
             Calendar { id: CalendarId(1), name: "Trabajo".into(), ..Default::default() },
-            Calendar { id: CalendarId(2), name: "Iurefficient".into(), remote_path: IURE_CALENDAR_PATH.into(), ..Default::default() },
+            Calendar {
+                id: CalendarId(2),
+                name: "Iurefficient".into(),
+                remote_path: IURE_CALENDAR_PATH.into(),
+                ..Default::default()
+            },
         ];
         let s = build(&i);
         let names: Vec<_> = s.events.iter().map(|e| e.occ.summary.as_str()).collect();
@@ -922,7 +935,10 @@ mod tests {
     fn meeting_links_are_detected_safely() {
         let l = meeting_link(&["Sala 2", "Únete: <https://us02web.zoom.us/j/8123?pwd=x>."]).unwrap();
         assert_eq!((l.provider, l.url.as_str()), ("Zoom", "https://us02web.zoom.us/j/8123?pwd=x"));
-        assert_eq!(meeting_link(&["https://meet.google.com/abc-defg-hij,"]).unwrap().url, "https://meet.google.com/abc-defg-hij");
+        assert_eq!(
+            meeting_link(&["https://meet.google.com/abc-defg-hij,"]).unwrap().url,
+            "https://meet.google.com/abc-defg-hij"
+        );
         assert!(meeting_link(&["http://meet.google.com/abc"]).is_none(), "solo https");
         assert!(meeting_link(&["https://zoom.us.evil.example/j/1"]).is_none());
         assert!(meeting_link(&["https://evil.example/?u=https://zoom.us/j/1"]).is_none());

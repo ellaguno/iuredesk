@@ -16,7 +16,7 @@ use iuredesk_engine::iure::FeedItem;
 use iuredesk_engine::today::{self, AgendaItem, DaySummary, DayTask, MailItem, NextState, TaskSource};
 use iuredesk_engine::{FolderSel, Module, Notice};
 use iuredesk_model::{ContactId, FolderId, TaskId, TaskListId};
-use iurefficient_ui::{Icon, PaneKind, avatar, icons, pick, split, theme};
+use iurefficient_ui::{Icon, PaneKind, icons, pick, split, theme};
 
 use crate::app::DeskApp;
 
@@ -78,9 +78,9 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("today-page").show(ui, |ui| {
             let full = ui.available_width();
             let pad = ((full - MAX_WIDTH) / 2.0).max(if full < 760.0 { 16.0 } else { 28.0 });
-            egui::Frame::new()
-                .inner_margin(Margin { left: pad as i8, right: pad as i8, top: 22, bottom: 28 })
-                .show(ui, |ui| {
+            egui::Frame::new().inner_margin(Margin { left: pad as i8, right: pad as i8, top: 22, bottom: 28 }).show(
+                ui,
+                |ui| {
                     let w = ui.available_width();
                     ui.set_width(w);
                     let Some(s) = summary.as_ref() else {
@@ -90,7 +90,8 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
                     header(app, ui, s, now, &mut acts);
                     ui.add_space(18.0);
                     columns(app, ui, s, now, w, &mut acts);
-                });
+                },
+            );
         });
     });
     for a in acts {
@@ -225,16 +226,19 @@ fn columns(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, w
     }
     let left = ((w - GAP) * if w > 1000.0 { 0.56 } else { 0.52 }).floor();
     let right = (w - GAP - left).floor();
+    let spacing = ui.spacing().item_spacing;
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.allocate_ui_with_layout(vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
             ui.set_width(left);
+            ui.spacing_mut().item_spacing = spacing;
             agenda_card(app, ui, s, now, acts);
             mail_card(app, ui, s, now, acts);
         });
         ui.add_space(GAP);
         ui.allocate_ui_with_layout(vec2(right, 0.0), Layout::top_down(Align::Min), |ui| {
             ui.set_width(right);
+            ui.spacing_mut().item_spacing = spacing;
             tasks_card(app, ui, s, acts);
             iure_card(ui, s, now, acts);
             reminders_card(ui, s, acts);
@@ -244,14 +248,7 @@ fn columns(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, w
 
 /// Tarjeta con cabecera (icono, título, cifra) y una acción a la derecha. Devuelve si se pulsó la
 /// acción.
-fn card(
-    ui: &mut Ui,
-    ic: Icon,
-    title: &str,
-    detail: &str,
-    action: Option<&str>,
-    add: impl FnOnce(&mut Ui),
-) -> bool {
+fn card(ui: &mut Ui, ic: Icon, title: &str, detail: &str, action: Option<&str>, add: impl FnOnce(&mut Ui)) -> bool {
     let c = theme::colors(ui);
     let ctx = ui.ctx().clone();
     let mut clicked = false;
@@ -263,6 +260,7 @@ fn card(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
                 let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                 icons::paint(ui.painter(), r, ic, c.accent, c.accent);
                 ui.label(RichText::new(title).font(theme::semibold_font(&ctx, 15.0)).color(c.text));
@@ -288,9 +286,7 @@ fn card(
 fn link(ui: &mut Ui, text: &str) -> egui::Response {
     let c = theme::colors(ui);
     let r = ui.add(
-        egui::Button::new(RichText::new(format!("{text} ›")).color(c.accent))
-            .frame(false)
-            .min_size(vec2(0.0, 22.0)),
+        egui::Button::new(RichText::new(format!("{text} ›")).color(c.accent)).frame(false).min_size(vec2(0.0, 22.0)),
     );
     if r.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -362,71 +358,86 @@ fn hm(app: &DeskApp, t: DateTime<Utc>) -> String {
 
 fn agenda_card(app: &DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, acts: &mut Vec<Act>) {
     let n = s.events.len();
-    let detail = if n == 0 { String::new() } else { format!("· {n}") };
-    let open = card(ui, Icon::Calendar, pick("Agenda", "Agenda"), &detail, Some(pick("Calendar", "Calendario")), |ui| {
-        let c = theme::colors(ui);
-        if s.events.is_empty() {
-            quiet(
-                ui,
-                Icon::Sun,
-                pick("A clear day", "Día despejado"),
-                pick("No events today. Time for deep work.", "No tienes citas hoy. Buen momento para concentrarte."),
-            );
-        }
-        let next = s.next_event(now);
-        if let Some((i, st)) = next
-            && let Some(e) = s.events.get(i)
-        {
-            next_box(app, ui, e, st, acts);
-            ui.add_space(10.0);
-        } else if !s.events.is_empty() {
-            muted(ui, pick("That's all for today.", "Eso es todo por hoy."));
-            ui.add_space(6.0);
-        }
-        // Días completos, en una línea.
-        let all_day: Vec<&AgendaItem> = s.events.iter().filter(|e| e.occ.all_day).collect();
-        for e in &all_day {
-            let (rect, resp) = row(ui, 26.0, &e.occ.summary);
-            let pill = Rect::from_min_size(pos2(rect.left(), rect.center().y - 10.0), vec2(rect.width(), 20.0));
-            ui.painter().rect_filled(pill, 5.0, crate::widgets::rgb(e.occ.color).gamma_multiply(0.16));
-            let font = theme::small_font(ui.ctx());
-            let label = format!("{} · {}", pick("All day", "Todo el día"), e.occ.summary);
-            text_at(ui, pos2(pill.left() + 8.0, pill.center().y - 7.5), &label, font, c.text, pill.width() - 16.0);
-            if resp.clicked() {
-                acts.push(Act::Event(Box::new(e.occ.clone())));
+    let detail = if n == 0 { String::new() } else { n.to_string() };
+    let open =
+        card(ui, Icon::Calendar, pick("Agenda", "Agenda"), &detail, Some(pick("Calendar", "Calendario")), |ui| {
+            let c = theme::colors(ui);
+            if s.events.is_empty() {
+                quiet(
+                    ui,
+                    Icon::Sun,
+                    pick("A clear day", "Día despejado"),
+                    pick(
+                        "No events today. Time for deep work.",
+                        "No tienes citas hoy. Buen momento para concentrarte.",
+                    ),
+                );
             }
-        }
-        // La línea de tiempo.
-        let timed: Vec<&AgendaItem> = s.events.iter().filter(|e| !e.occ.all_day).collect();
-        let mut drew_now = false;
-        for e in &timed {
-            if !drew_now && e.occ.start > now && s.date == app.session.today() {
+            let next = s.next_event(now);
+            if let Some((i, st)) = next
+                && let Some(e) = s.events.get(i)
+            {
+                next_box(app, ui, e, st, acts);
+                ui.add_space(10.0);
+            } else if !s.events.is_empty() {
+                muted(ui, pick("That's all for today.", "Eso es todo por hoy."));
+                ui.add_space(6.0);
+            }
+            // Días completos, en una línea.
+            let all_day: Vec<&AgendaItem> = s.events.iter().filter(|e| e.occ.all_day).collect();
+            for e in &all_day {
+                let (rect, resp) = row(ui, 26.0, &e.occ.summary);
+                let pill = Rect::from_min_size(pos2(rect.left(), rect.center().y - 10.0), vec2(rect.width(), 20.0));
+                ui.painter().rect_filled(pill, 5.0, crate::widgets::rgb(e.occ.color).gamma_multiply(0.16));
+                let font = theme::small_font(ui.ctx());
+                let label = format!("{} · {}", pick("All day", "Todo el día"), e.occ.summary);
+                text_at(ui, pos2(pill.left() + 8.0, pill.center().y - 7.5), &label, font, c.text, pill.width() - 16.0);
+                if resp.clicked() {
+                    acts.push(Act::Event(Box::new(e.occ.clone())));
+                }
+            }
+            // La línea de tiempo.
+            let timed: Vec<&AgendaItem> = s.events.iter().filter(|e| !e.occ.all_day).collect();
+            let mut drew_now = false;
+            for e in &timed {
+                if !drew_now && e.occ.start > now && s.date == app.session.today() {
+                    now_line(app, ui, now);
+                    drew_now = true;
+                }
+                if timeline_row(app, ui, e, now) {
+                    acts.push(Act::Event(Box::new(e.occ.clone())));
+                }
+            }
+            if !drew_now && !timed.is_empty() && s.date == app.session.today() {
                 now_line(app, ui, now);
-                drew_now = true;
             }
-            if timeline_row(app, ui, e, now) {
-                acts.push(Act::Event(Box::new(e.occ.clone())));
+            // Mañana.
+            if let Some(t) = &s.tomorrow {
+                ui.add_space(8.0);
+                crate::widgets::hairline(ui);
+                ui.add_space(6.0);
+                let when =
+                    if t.occ.all_day { pick("all day", "todo el día").to_string() } else { hm(app, t.occ.start) };
+                let label = format!("{} · {when} · {}", pick("Tomorrow", "Mañana"), t.occ.summary);
+                let (rect, resp) = row(ui, 24.0, &label);
+                let (ir, x) = (
+                    Rect::from_min_size(pos2(rect.left(), rect.center().y - 7.0), vec2(14.0, 14.0)),
+                    rect.left() + 22.0,
+                );
+                icons::paint(ui.painter(), ir, Icon::ChevronRight, c.text_muted, c.text_muted);
+                text_at(
+                    ui,
+                    pos2(x, rect.center().y - 8.0),
+                    &label,
+                    theme::body_font(ui.ctx()),
+                    c.text_muted,
+                    rect.right() - x,
+                );
+                if resp.clicked() {
+                    acts.push(Act::Event(Box::new(t.occ.clone())));
+                }
             }
-        }
-        if !drew_now && !timed.is_empty() && s.date == app.session.today() {
-            now_line(app, ui, now);
-        }
-        // Mañana.
-        if let Some(t) = &s.tomorrow {
-            ui.add_space(8.0);
-            crate::widgets::hairline(ui);
-            ui.add_space(6.0);
-            let when = if t.occ.all_day { pick("all day", "todo el día").to_string() } else { hm(app, t.occ.start) };
-            let label = format!("{} · {when} · {}", pick("Tomorrow", "Mañana"), t.occ.summary);
-            let (rect, resp) = row(ui, 24.0, &label);
-            let (ir, x) = (Rect::from_min_size(pos2(rect.left(), rect.center().y - 7.0), vec2(14.0, 14.0)), rect.left() + 22.0);
-            icons::paint(ui.painter(), ir, Icon::ChevronRight, c.text_muted, c.text_muted);
-            text_at(ui, pos2(x, rect.center().y - 8.0), &label, theme::body_font(ui.ctx()), c.text_muted, rect.right() - x);
-            if resp.clicked() {
-                acts.push(Act::Event(Box::new(t.occ.clone())));
-            }
-        }
-    });
+        });
     if open {
         acts.push(Act::Calendar);
     }
@@ -460,7 +471,13 @@ fn next_box(app: &DeskApp, ui: &mut Ui, e: &AgendaItem, st: NextState, acts: &mu
                             .color(tint),
                     );
                     let w = (ui.available_width() - if e.join.is_some() { 150.0 } else { 0.0 }).max(80.0);
-                    let g = iurefficient_ui::widgets::text::elided(ui, &e.occ.summary, theme::semibold_font(&ctx, 17.0), c.text, w);
+                    let g = iurefficient_ui::widgets::text::elided(
+                        ui,
+                        &e.occ.summary,
+                        theme::semibold_font(&ctx, 17.0),
+                        c.text,
+                        w,
+                    );
                     ui.label(egui::WidgetText::Galley(g));
                     let mut meta = format!("{} – {}", hm(app, e.occ.start), hm(app, e.occ.end));
                     if !e.occ.location.trim().is_empty() && !e.occ.location.starts_with("https://") {
@@ -533,7 +550,8 @@ fn timeline_row(app: &DeskApp, ui: &mut Ui, e: &AgendaItem, now: DateTime<Utc>) 
     if e.iurefficient {
         right -= tag(ui, pos2(right, rect.top() + 5.0), "Iurefficient", crate::widgets::rgb(IURE_COLOR)) + 6.0;
     }
-    let title_font = if past { theme::body_font(&ctx) } else { theme::medium_font(&ctx, theme::density(&ctx).body_size()) };
+    let title_font =
+        if past { theme::body_font(&ctx) } else { theme::medium_font(&ctx, theme::density(&ctx).body_size()) };
     text_at(ui, pos2(x, rect.top() + 4.0), &e.occ.summary, title_font, ink, right - x);
     let mut meta = Vec::new();
     if !e.occ.location.trim().is_empty() && !e.occ.location.starts_with("https://") {
@@ -543,7 +561,14 @@ fn timeline_row(app: &DeskApp, ui: &mut Ui, e: &AgendaItem, now: DateTime<Utc>) 
         meta.push(e.calendar.clone());
     }
     if !meta.is_empty() {
-        text_at(ui, pos2(x, rect.top() + 23.0), &meta.join(" · "), theme::small_font(&ctx), c.text_muted, rect.right() - x);
+        text_at(
+            ui,
+            pos2(x, rect.top() + 23.0),
+            &meta.join(" · "),
+            theme::small_font(&ctx),
+            c.text_muted,
+            rect.right() - x,
+        );
     }
     resp.clicked()
 }
@@ -582,7 +607,7 @@ fn now_line(app: &DeskApp, ui: &mut Ui, now: DateTime<Utc>) {
 fn tasks_card(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, acts: &mut Vec<Act>) {
     let t = &s.tasks;
     let open = t.overdue.len() + t.today.len();
-    let detail = if open == 0 { String::new() } else { format!("· {open}") };
+    let detail = if open == 0 { String::new() } else { open.to_string() };
     let go = card(ui, Icon::Tasks, pick("Tasks", "Tareas"), &detail, Some(pick("All tasks", "Todas")), |ui| {
         let c = theme::colors(ui);
         if t.is_empty() {
@@ -623,14 +648,20 @@ fn task_row(app: &DeskApp, ui: &mut Ui, dt: &DayTask, today: chrono::NaiveDate, 
     let (rect, resp) = row(ui, 34.0, &dt.task.summary);
     // La casilla tiene su propia respuesta (encima de la fila).
     let box_r = Rect::from_center_size(pos2(rect.left() + 10.0, rect.center().y), vec2(18.0, 18.0));
-    let check = ui.interact(box_r.expand(4.0), ui.id().with(("today-task", dt.task.id.get())), Sense::click());
+    let check = ui.interact(box_r.expand(4.0), ui.scope_id().with(("today-task", dt.task.id.get())), Sense::click());
     let label = format!("{} {}", pick("Complete", "Terminar"), dt.task.summary);
     iurefficient_ui::a11y::toggle(&check, &label, done);
     if done {
         ui.painter().circle_filled(box_r.center(), 9.0, c.accent);
         icons::paint(ui.painter(), box_r.shrink(3.0), Icon::Check, c.on_accent, c.on_accent);
     } else {
-        let ring = if check.hovered() { c.accent } else if dt.overdue_days > 0 { c.danger } else { c.text_muted };
+        let ring = if check.hovered() {
+            c.accent
+        } else if dt.overdue_days > 0 {
+            c.danger
+        } else {
+            c.text_muted
+        };
         ui.painter().circle_stroke(box_r.center(), 8.5, Stroke::new(1.5, ring));
     }
     let x = box_r.right() + 10.0;
@@ -640,7 +671,10 @@ fn task_row(app: &DeskApp, ui: &mut Ui, dt: &DayTask, today: chrono::NaiveDate, 
         let (txt, col) = if dt.overdue_days == 1 {
             (pick("yesterday", "ayer").to_string(), c.danger)
         } else if dt.overdue_days > 1 {
-            (format!("{} {} {}", pick("", "hace"), dt.overdue_days, pick("days ago", "días")).trim().to_string(), c.danger)
+            (
+                format!("{} {} {}", pick("", "hace"), dt.overdue_days, pick("days ago", "días")).trim().to_string(),
+                c.danger,
+            )
         } else if due == today {
             (pick("today", "hoy").to_string(), c.accent)
         } else if Some(due) == today.succ_opt() {
@@ -689,7 +723,7 @@ fn task_row(app: &DeskApp, ui: &mut Ui, dt: &DayTask, today: chrono::NaiveDate, 
 
 fn mail_card(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, acts: &mut Vec<Act>) {
     let unread = s.unread();
-    let detail = if unread == 0 { String::new() } else { format!("· {unread} {}", pick("unread", "sin leer")) };
+    let detail = if unread == 0 { String::new() } else { format!("{unread} {}", pick("unread", "sin leer")) };
     let go = card(ui, Icon::Mail, pick("Mail", "Correo"), &detail, Some(pick("Inbox", "Bandeja")), |ui| {
         let c = theme::colors(ui);
         let ctx = ui.ctx().clone();
@@ -709,7 +743,11 @@ fn mail_card(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>,
             let x = rect.left() + 36.0;
             let mut right = rect.right();
             if a.important > 0 {
-                let t = format!("{} {}", a.important, pick("important", "importantes"));
+                let t = if a.important == 1 {
+                    pick("1 important", "1 importante").to_string()
+                } else {
+                    format!("{} {}", a.important, pick("important", "importantes"))
+                };
                 right -= tag(ui, pos2(right, rect.center().y - 8.0), &t, c.warning) + 10.0;
             }
             let t = format!("{} {}", a.unread, pick("unread", "sin leer"));
@@ -760,16 +798,8 @@ fn mail_card(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>,
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let running = crate::assistant::triage_running(app);
-            let r = ui.add_enabled(
-                !running,
-                egui::Button::new(RichText::new(format!(
-                    "✦  {}",
-                    pick("What needs my attention today?", "¿Qué necesito atender hoy?")
-                )))
-                .corner_radius(8)
-                .min_size(vec2(0.0, 28.0)),
-            );
-            if r.clicked() {
+            let label = pick("What needs my attention today?", "¿Qué necesito atender hoy?");
+            if chip(ui, Icon::Sparkle, label, None).clicked() && !running {
                 acts.push(Act::Triage);
             }
             if running {
@@ -813,7 +843,8 @@ fn mail_row(ui: &mut Ui, m: &MailItem, when: &str, ic: Icon) -> bool {
     let max = rect.right() - gw - 12.0 - x;
     let name_w = (max * 0.38).min(170.0);
     let y = rect.center().y - 9.0;
-    let w = text_at(ui, pos2(x, y), &m.from, theme::medium_font(&ctx, theme::density(&ctx).body_size()), c.text, name_w);
+    let w =
+        text_at(ui, pos2(x, y), &m.from, theme::medium_font(&ctx, theme::density(&ctx).body_size()), c.text, name_w);
     text_at(ui, pos2(x + w + 8.0, y), &m.subject, theme::body_font(&ctx), c.text_muted, max - w - 8.0);
     resp.clicked()
 }
@@ -833,11 +864,15 @@ fn iure_card(ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, acts: &mut Vec<Act
         let c = theme::colors(ui);
         let ctx = ui.ctx().clone();
         if iure_events + iure_tasks > 0 {
-            let t = format!(
-                "{iure_events} {} · {iure_tasks} {}",
-                pick("events left today", "citas hoy"),
-                pick("tasks due", "tareas para hoy o vencidas")
-            );
+            let ev = match iure_events {
+                1 => pick("1 event today", "1 cita hoy").to_string(),
+                n => format!("{n} {}", pick("events today", "citas hoy")),
+            };
+            let ta = match iure_tasks {
+                1 => pick("1 task due or overdue", "1 tarea para hoy o vencida").to_string(),
+                n => format!("{n} {}", pick("tasks due or overdue", "tareas para hoy o vencidas")),
+            };
+            let t = format!("{ev} · {ta}");
             muted(ui, &t);
             ui.add_space(4.0);
         }
@@ -851,8 +886,19 @@ fn iure_card(ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, acts: &mut Vec<Act
             let ic = if it.mention { Icon::Comment } else { Icon::Bell };
             icons::paint(ui.painter(), ir, ic, if it.read { c.text_muted } else { c.accent }, c.accent);
             let x = rect.left() + 24.0;
-            let font = if it.read { theme::body_font(&ctx) } else { theme::medium_font(&ctx, theme::density(&ctx).body_size()) };
-            text_at(ui, pos2(x, rect.top() + 3.0), &it.title, font, if it.read { c.text_muted } else { c.text }, rect.right() - x);
+            let font = if it.read {
+                theme::body_font(&ctx)
+            } else {
+                theme::medium_font(&ctx, theme::density(&ctx).body_size())
+            };
+            text_at(
+                ui,
+                pos2(x, rect.top() + 3.0),
+                &it.title,
+                font,
+                if it.read { c.text_muted } else { c.text },
+                rect.right() - x,
+            );
             if let Some(m) = &it.message {
                 text_at(ui, pos2(x, rect.top() + 21.0), m, theme::small_font(&ctx), c.text_muted, rect.right() - x);
             }
@@ -899,7 +945,11 @@ fn reminders_card(ui: &mut Ui, s: &DaySummary, acts: &mut Vec<Act>) {
             let gw = g.size().x;
             ui.painter().galley(pos2(rect.right() - gw, rect.center().y - g.size().y / 2.0), g, col);
             let x = rect.left() + 24.0;
-            let font = if b.in_days == 0 { theme::medium_font(&ctx, theme::density(&ctx).body_size()) } else { theme::body_font(&ctx) };
+            let font = if b.in_days == 0 {
+                theme::medium_font(&ctx, theme::density(&ctx).body_size())
+            } else {
+                theme::body_font(&ctx)
+            };
             text_at(ui, pos2(x, rect.center().y - 9.0), &label, font, c.text, rect.right() - gw - 12.0 - x);
             if resp.clicked() {
                 acts.push(Act::Contact(b.contact));
