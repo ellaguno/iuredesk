@@ -18,9 +18,12 @@ use crate::account::{Creds, PimAccount, PimSource};
 use crate::caldav::{CalDav, server_schedules};
 use crate::error::{PimError, Result};
 use crate::graph::Graph;
+
+mod freebusy;
 use crate::ops::{self, ImipReply, PimOp};
 use crate::provider::{Ctx, Provider};
 use crate::{FriendlyError, PimEvent, PimSyncOptions};
+pub use freebusy::{BusySlot, FreeBusy};
 
 /// Capacidad del canal de eventos.
 const EVENT_CAPACITY: usize = 4_096;

@@ -47,6 +47,17 @@ pub(crate) fn server_schedules(store: &Store, acct: iuredesk_model::AccountId) -
         .is_some_and(|d| d.outbox.is_some())
 }
 
+/// Buzón de salida de agenda (RFC 6638) que guardó el descubrimiento, si el servidor tiene.
+pub(crate) fn discovered_outbox(store: &Store, acct: iuredesk_model::AccountId) -> Option<String> {
+    let key = format!("pim/{}/dav-discovery", acct.get());
+    store
+        .sync_state(&key)
+        .ok()
+        .flatten()
+        .and_then(|b| serde_json::from_slice::<DiscoveryState>(&b).ok())
+        .and_then(|d| d.outbox)
+}
+
 pub(crate) struct CalDav {
     client: DavClient,
     caldav: Option<String>,
@@ -67,6 +78,20 @@ impl CalDav {
             }
         };
         Ok(Self { client, caldav, carddav })
+    }
+
+    /// Disponibilidad de `attendees` por el buzón de salida `outbox` (RFC 6638).
+    pub(crate) async fn schedule_free_busy(
+        &self,
+        outbox: &str,
+        organizer: &str,
+        attendees: &[&str],
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<iuredesk_dav::dav::FreeBusyReply>> {
+        let url = Url::parse(outbox).map_err(|e| PimError::Invalid(e.to_string()))?;
+        let uid = ops::new_uid("iuredesk-fb");
+        Ok(self.client.free_busy(&url, organizer, attendees, start, end, &uid).await?)
     }
 
     async fn discovery(&self, ctx: &Ctx) -> Result<DiscoveryState> {

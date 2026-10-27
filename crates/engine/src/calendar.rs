@@ -6,7 +6,15 @@
 //! `RECURRENCE-ID`, zonas) vive en `iuredesk-dav` y se conecta con la sincronización CalDAV (F2).
 
 use chrono::{DateTime, Datelike, Duration, Months, NaiveDate, Utc, Weekday};
-use iuredesk_model::{Event, EventId, EventStatus};
+use iuredesk_model::{CalendarId, Event, EventId, EventStatus, Transparency};
+
+pub mod draft;
+pub mod drag;
+pub mod invite;
+pub mod nav;
+pub mod reminders;
+pub mod repeat;
+pub mod schedule;
 
 /// Repeticiones máximas que se generan por serie y ventana.
 const MAX_PER_SERIES: usize = 400;
@@ -26,6 +34,14 @@ pub struct Occurrence {
     pub color: u32,
     pub tentative: bool,
     pub recurring: bool,
+    /// Calendario del evento.
+    pub calendar: CalendarId,
+    /// Inicio original de la aparición en su serie (`RECURRENCE-ID`), si se repite.
+    pub recurrence_id: Option<DateTime<Utc>>,
+    /// Ocupa tiempo en la disponibilidad (`TRANSP:OPAQUE`).
+    pub busy: bool,
+    /// Cancelado.
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Default)]
@@ -94,6 +110,10 @@ fn occurrence(e: &Event, start: DateTime<Utc>, len: Duration, color: u32) -> Occ
         color,
         tentative: e.status == EventStatus::Tentative,
         recurring: e.is_recurring(),
+        calendar: e.calendar,
+        recurrence_id: e.is_recurring().then_some(start),
+        busy: e.transparency == Transparency::Opaque,
+        cancelled: e.status == EventStatus::Cancelled,
     }
 }
 
@@ -121,6 +141,10 @@ pub fn from_pim(o: &iuredesk_model::EventOccurrence, color: u32, tz: chrono_tz::
         color,
         tentative: o.status == EventStatus::Tentative,
         recurring: o.recurring,
+        calendar: o.calendar,
+        recurrence_id: if o.recurring { o.recurrence_id.or(Some(start)) } else { None },
+        busy: o.transparency == Transparency::Opaque,
+        cancelled: o.status == EventStatus::Cancelled,
     }
 }
 

@@ -106,6 +106,7 @@ fn key_label(key: &str, shift: bool) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Group {
     Mail,
+    Calendar,
     Navigate,
     View,
     App,
@@ -115,6 +116,7 @@ impl Group {
     pub fn label(self) -> &'static str {
         match self {
             Group::Mail => crate::lang::pick("Mail", "Correo"),
+            Group::Calendar => crate::lang::pick("Calendar", "Calendario"),
             Group::Navigate => crate::lang::pick("Go to", "Ir a"),
             Group::View => crate::lang::pick("View", "Vista"),
             Group::App => "IureDesk",
@@ -187,6 +189,29 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::View,
         "threads conversation hilos",
     ),
+    c("cal.new_event", "New event", "Nuevo evento", "plus", Group::Calendar, "appointment meeting cita reunion evento"),
+    c("cal.today", "Go to today", "Ir a hoy", "calendar", Group::Calendar, "today hoy"),
+    c("cal.prev", "Previous period", "Periodo anterior", "chevron_left", Group::Calendar, "back previous anterior"),
+    c("cal.next", "Next period", "Periodo siguiente", "chevron_right", Group::Calendar, "forward next siguiente"),
+    c("cal.view.day", "Calendar: day", "Calendario: día", "calendar", Group::Calendar, "day dia view vista"),
+    c(
+        "cal.view.work_week",
+        "Calendar: work week",
+        "Calendario: semana laboral",
+        "calendar",
+        Group::Calendar,
+        "work week semana laboral",
+    ),
+    c("cal.view.week", "Calendar: week", "Calendario: semana", "calendar", Group::Calendar, "week semana"),
+    c("cal.view.month", "Calendar: month", "Calendario: mes", "calendar", Group::Calendar, "month mes"),
+    c(
+        "cal.view.agenda",
+        "Calendar: agenda",
+        "Calendario: agenda",
+        "list",
+        Group::Calendar,
+        "agenda list lista schedule",
+    ),
     c("nav.mail", "Go to Mail", "Ir a Correo", "mail", Group::Navigate, "inbox bandeja"),
     c("nav.calendar", "Go to Calendar", "Ir a Calendario", "calendar", Group::Navigate, "agenda events citas"),
     c("nav.contacts", "Go to Contacts", "Ir a Contactos", "contacts", Group::Navigate, "people personas"),
@@ -251,6 +276,25 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
     };
     if common.is_some() {
         return common;
+    }
+    // Calendario (solo se disparan en el módulo de calendario).
+    let view = |n: &'static str| match scheme {
+        Outlook => Chord { command: true, ctrl: false, shift: false, alt: true, key: n },
+        Gmail | AppleMail => Chord::key(n),
+    };
+    let cal = match id {
+        "cal.prev" => Some(Chord::key("ArrowLeft")),
+        "cal.next" => Some(Chord::key("ArrowRight")),
+        "cal.today" => Some(if scheme == AppleMail { Chord::cmd("T") } else { Chord::key("T") }),
+        "cal.view.day" => Some(view("Num1")),
+        "cal.view.work_week" => Some(view(if scheme == Outlook { "Num2" } else { "Num4" })),
+        "cal.view.week" => Some(view(if scheme == Outlook { "Num3" } else { "Num2" })),
+        "cal.view.month" => Some(view(if scheme == Outlook { "Num4" } else { "Num3" })),
+        "cal.view.agenda" => Some(view("Num5")),
+        _ => None,
+    };
+    if cal.is_some() {
+        return cal;
     }
     match (scheme, id) {
         // Outlook para Windows.

@@ -21,6 +21,8 @@ iuredesk-pim-sync = { workspace = true }
 # F3.1: Iurefficient (panel contextual, vínculos, avisos, agenda y tareas de la instancia).
 iurefficient-connect = { workspace = true }
 anyhow = { workspace = true }
+# F2.4: invitaciones iTIP en el correo.
+iuredesk-dav = { workspace = true }
 chrono-tz = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

@@ -2,7 +2,7 @@
 //!
 //! `cargo run -p iuredesk-ui --example ui_shot -- /tmp/shot.png [--dark] [--density dense|compact|comfortable]
 //!  [--module mail|calendar|contacts|notes|tasks|assistant|onboarding|provider] [--palette[=texto]]
-//!  [--html] [--month] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]`
+//!  [--html] [--month] [--view day|agenda|week|work_week|month] [--editor] [--invite] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]`
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -84,9 +84,13 @@ fn main() -> Result<(), String> {
     if session.module == Module::Mail && !onboarding {
         let html = args.iter().any(|a| a == "--html");
         let rows: Vec<_> = session.rows().iter().take(400).copied().collect();
+        let invite = args.iter().any(|a| a == "--invite");
         let pick = rows
             .iter()
             .find(|r| {
+                if invite {
+                    return session.envelope(r.id).is_some_and(|e| e.subject.starts_with("Invitación:"));
+                }
                 session.envelope(r.id).is_some_and(|e| {
                     if html { e.subject.starts_with("Boletín") } else { e.subject.contains("241/2026") && r.count > 1 }
                 })
@@ -108,6 +112,15 @@ fn main() -> Result<(), String> {
     }
     if args.iter().any(|a| a == "--month") {
         app.set_calendar_month();
+    }
+    if let Some(v) = flag("--view") {
+        app.set_calendar_view(&v);
+    }
+    if args.iter().any(|a| a == "--editor") {
+        app.demo_event_editor();
+    }
+    if !args.iter().any(|a| a == "--reminders") {
+        app.dismiss_reminders();
     }
     if let Some(q) = args.iter().find_map(|a| a.strip_prefix("--palette")) {
         app.palette.open_with(q.strip_prefix('=').unwrap_or(""));

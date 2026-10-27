@@ -137,6 +137,18 @@ pub struct Prefs {
     /// Cada cuántos segundos se consultan los avisos y menciones de Iurefficient (60–3600).
     #[serde(default = "default_iure_poll")]
     pub iure_poll_secs: u32,
+    /// Vista del calendario.
+    #[serde(default)]
+    pub cal_view: crate::calendar::nav::CalView,
+    /// Calendarios ocultos (ids locales).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_calendars: Vec<u64>,
+    /// Segunda zona horaria en la rejilla del calendario (IANA).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secondary_tz: Option<String>,
+    /// Avisar con una notificación del escritorio de los recordatorios.
+    #[serde(default = "yes")]
+    pub notify_reminders: bool,
 }
 
 fn default_iure_poll() -> u32 {
@@ -165,6 +177,10 @@ impl Default for Prefs {
             send_undo_secs: default_undo_send(),
             notify_new_mail: true,
             iure_poll_secs: default_iure_poll(),
+            cal_view: crate::calendar::nav::CalView::default(),
+            hidden_calendars: Vec::new(),
+            secondary_tz: None,
+            notify_reminders: true,
         }
     }
 }

@@ -6,12 +6,14 @@
 //! deshacer con su inversa. Deshacer cancela la operación si aún no salió de la máquina o encola
 //! la inversa si ya se replicó.
 
+mod cal;
 mod iure;
 mod live;
 mod mailops;
 mod outbox;
 mod pim;
 
+pub use cal::{CalState, PimBackend, occurrence_start};
 pub use iure::{IURE_CALENDAR_PATH, IURE_TASKS_PATH, IurePanel, IureSetup, LeadSuggestions, LoginState};
 pub use live::{AccountSync, SyncStatus};
 pub use mailops::AccountRow;
@@ -173,6 +175,8 @@ pub enum Outcome {
     FocusSearch,
     /// Cambió el tema o la densidad: volver a aplicar el estilo.
     Restyle,
+    /// Abrir el editor de eventos con este formulario.
+    EditEvent(Box<crate::calendar::draft::EventDraft>),
 }
 
 /// Resultados de trabajos de fondo que interpreta la sesión.
@@ -242,6 +246,8 @@ enum Inverse {
     Task(Box<Task>),
     /// Sacar el mensaje de la bandeja de salida.
     Send(OutboxId),
+    /// Edición de calendario.
+    Calendar(Box<cal::CalUndo>),
 }
 
 #[derive(Clone, Debug)]
@@ -337,6 +343,8 @@ pub struct Session {
     pim_last_error: Option<Text>,
     /// Iurefficient (F3.1).
     iure: iure::Iure,
+    /// Calendario: día de referencia, invitaciones, disponibilidad, recordatorios.
+    pub cal: cal::CalState,
 }
 
 impl std::fmt::Debug for Session {
@@ -398,6 +406,7 @@ impl Session {
             pim: pim::Pim::default(),
             pim_last_error: None,
             iure: iure::Iure::default(),
+            cal: cal::CalState::default(),
         };
         s.signatures = SignatureBook::load(&s.store).unwrap_or_default();
         s.reload_accounts()?;
@@ -1012,6 +1021,11 @@ impl Session {
             }));
         }
         match base {
+            // «Nuevo» en el calendario es un evento (como en Outlook).
+            "mail.new" | "cal.new_event" if self.module == Module::Calendar || base == "cal.new_event" => {
+                self.run_calendar("cal.new_event")
+            }
+            b if b.starts_with("cal.") => self.run_calendar(b),
             "mail.new" => {
                 let account = match self.folder {
                     FolderSel::Folder(f) => self.folder(f).map(|f| f.account),
@@ -1313,6 +1327,7 @@ impl Session {
                 Inverse::Send(outbox_id) => {
                     return Ok(self.undo_send(outbox_id));
                 }
+                Inverse::Calendar(u) => self.undo_calendar(*u)?,
                 Inverse::Task(t) => {
                     self.store.put_task(&t).map_err(store_err)?;
                     self.data_gen = self.data_gen.wrapping_add(1);
