@@ -2,8 +2,10 @@
 //!
 //! `cargo run -p iuredesk-ui --example ui_shot -- /tmp/shot.png [--dark] [--density dense|compact|comfortable]
 //!  [--module mail|calendar|contacts|notes|tasks|assistant|onboarding|provider] [--palette[=texto]]
-//!  [--html] [--month] [--view day|agenda|week|work_week|month] [--editor] [--invite] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]`
+//!  [--html] [--month] [--view day|agenda|week|work_week|month] [--editor] [--invite] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]
+//!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]`
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -121,6 +123,34 @@ fn main() -> Result<(), String> {
     }
     if !args.iter().any(|a| a == "--reminders") {
         app.dismiss_reminders();
+    }
+    if let Some(what) = flag("--ai") {
+        app.demo_assistant(&what);
+    }
+    let import_dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+    if args.iter().any(|a| a == "--import") {
+        use iuredesk_engine::iuredesk_import::{DetectedSource, SourceKind};
+        let mbox = import_dir.path().join("Clientes 2025.mbox");
+        std::fs::write(&mbox, "From a@example.com Mon Oct 20 10:00:00 2026\nSubject: Uno\n\nHola\n")
+            .map_err(|e| e.to_string())?;
+        let home = PathBuf::from("/home/laura");
+        app.demo_import(
+            vec![
+                DetectedSource {
+                    kind: SourceKind::ThunderbirdProfile,
+                    path: home.join(".thunderbird/x1y2z3.default-release"),
+                    label: "Thunderbird — default-release".into(),
+                    bytes: 1_843_200_000,
+                },
+                DetectedSource {
+                    kind: SourceKind::OutlookPst,
+                    path: home.join("Documentos/Outlook/archivo2024.pst"),
+                    label: "archivo2024.pst".into(),
+                    bytes: 734_003_200,
+                },
+            ],
+            vec![home.join(".thunderbird/x1y2z3.default-release"), mbox],
+        );
     }
     if let Some(q) = args.iter().find_map(|a| a.strip_prefix("--palette")) {
         app.palette.open_with(q.strip_prefix('=').unwrap_or(""));

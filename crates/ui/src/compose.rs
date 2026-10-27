@@ -48,7 +48,9 @@ struct Suggest {
 pub struct ComposeWindow {
     pub id: u64,
     pub cd: ComposeDraft,
-    editor: EditorState,
+    pub(crate) editor: EditorState,
+    /// Panel ✦ (F4.2).
+    pub(crate) ai: crate::assistant::ComposeAi,
     inputs: [String; 3],
     show_cc: bool,
     link_url: Option<String>,
@@ -82,6 +84,7 @@ impl ComposeWindow {
             id,
             cd,
             editor: EditorState::new(doc),
+            ai: Default::default(),
             inputs: Default::default(),
             show_cc,
             link_url: None,
@@ -184,6 +187,7 @@ pub fn show_all(app: &mut DeskApp, ctx: &Context) {
     let identities = app.session.identities();
     let presets: Vec<(Text, DateTime<Utc>)> = schedule_presets(app.session.now(), app.session.zone());
     let mut acts: Vec<(usize, Act)> = Vec::new();
+    crate::assistant::compose_sync(app);
     for (i, w) in app.composers.iter_mut().enumerate() {
         let mut open = w.open;
         let mut mine = Vec::new();
@@ -209,6 +213,7 @@ pub fn show_all(app: &mut DeskApp, ctx: &Context) {
     for (i, act) in acts {
         run_act(app, ctx, i, act);
     }
+    crate::assistant::compose_pump(app);
     // Guardado automático (solo local) tras unos segundos sin escribir.
     let mut autosave = Vec::new();
     for (i, w) in app.composers.iter().enumerate() {
@@ -607,6 +612,7 @@ fn form(
         {
             acts.push(Act::Signature);
         }
+        crate::assistant::compose_buttons(ui, &mut w.ai, w.id);
     });
     if let Some(url) = w.link_url.as_mut() {
         let mut done = None;
@@ -648,6 +654,7 @@ fn form(
             None => {}
         }
     }
+    crate::assistant::compose_panel(ui, &mut w.ai, &w.editor);
     ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
         ui.add_space(2.0);
         bottom_bar(ui, w, presets, acts);

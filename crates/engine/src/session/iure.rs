@@ -347,7 +347,7 @@ impl Session {
         });
     }
 
-    fn iure_remote(&self) -> Option<Arc<Remote>> {
+    pub(crate) fn iure_remote(&self) -> Option<Arc<Remote>> {
         match &self.iure.backend {
             Backend::Live(s) => Some(Arc::clone(s)),
             _ => None,

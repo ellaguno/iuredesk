@@ -311,6 +311,7 @@ fn full_editor(app: &mut DeskApp, ctx: &Context) {
                     ui.add_enabled_ui(!f.read_only, |ui| editor_body(app, ui, &mut f));
                 });
             ui.separator();
+            crate::suite_ui::event_actions(app, ui, &f.draft.title);
             ui.horizontal(|ui| {
                 if f.draft.id.is_some() && !f.read_only {
                     let c = theme::colors(ui);

@@ -1,7 +1,7 @@
 //! Contactos (lista + ficha), notas (lista + texto con formato Markdown sencillo), tareas (listas
 //! con casillas) y el asistente (llega en F3).
 
-use egui::{Align, Layout, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Align, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use iuredesk_model::{ContactId, NoteId, Task, TaskListId};
 use iurefficient_ui::list::{Column, ListState, ListView};
 use iurefficient_ui::{
@@ -493,20 +493,3 @@ fn task_row(app: &DeskApp, ui: &mut Ui, t: &Task) -> bool {
 
 // ---------------------------------------------------------------------------------------------
 // Asistente
-
-pub fn assistant(app: &mut DeskApp, ui: &mut Ui) {
-    let ctx = ui.ctx().clone();
-    split::center(ui, PaneKind::Detail, |ui| {
-        let go = EmptyState::new(Icon::Sparkle, pick("The assistant arrives in F3", "El asistente llega en F3"))
-            .body(pick(
-                "Summaries, replies, minutes and leads with Iurefficient AI or the provider you choose. The AI proposes; you confirm.",
-                "Resúmenes, respuestas, minutas y leads con la IA de Iurefficient o el proveedor que elijas. La IA propone; tú confirmas.",
-            ))
-            .action(pick("Back to mail", "Volver al correo"))
-            .show(ui);
-        if go {
-            app.run(&ctx, "nav.mail");
-        }
-    });
-    let _ = Layout::left_to_right(Align::Center);
-}

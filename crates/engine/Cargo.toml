@@ -20,6 +20,11 @@ iuredesk-compose = { workspace = true }
 iuredesk-pim-sync = { workspace = true }
 # F3.1: Iurefficient (panel contextual, vínculos, avisos, agenda y tareas de la instancia).
 iurefficient-connect = { workspace = true }
+# F4.2: asistente ✦, apps hermanas, importación y servidor MCP en la aplicación.
+iuredesk-assistant = { workspace = true }
+iuredesk-integrations = { workspace = true }
+iuredesk-import = { workspace = true }
+iuredesk-mcp = { workspace = true }
 anyhow = { workspace = true }
 # F2.4: invitaciones iTIP en el correo.
 iuredesk-dav = { workspace = true }

@@ -6,6 +6,7 @@
 //! deshacer con su inversa. Deshacer cancela la operación si aún no salió de la máquina o encola
 //! la inversa si ya se replicó.
 
+mod assist_glue;
 mod cal;
 mod iure;
 mod live;
@@ -175,6 +176,9 @@ pub enum Outcome {
     FocusSearch,
     /// Cambió el tema o la densidad: volver a aplicar el estilo.
     Restyle,
+    /// Comando del asistente, la suite o la importación (`ai.*`, `suite.*`, `app.import`): lo
+    /// atiende la UI con sus ventanas.
+    Assist(String),
     /// Abrir el editor de eventos con este formulario.
     EditEvent(Box<crate::calendar::draft::EventDraft>),
 }
@@ -773,10 +777,17 @@ impl Session {
             }
             None => {
                 // Mientras se recalculan las filas, la petición espera.
-                if !self.loading {
-                    self.focus_request = None;
+                if self.loading {
+                    return None;
                 }
-                None
+                self.focus_request = None;
+                // Agrupado por conversación: la fila que representa su hilo (triage, enlaces).
+                let thread = self.envelope(id).and_then(|e| e.thread)?;
+                let rows = Arc::clone(&self.rows);
+                rows.iter()
+                    .take(MAX_BATCH)
+                    .position(|r| self.envelope(r.id).is_some_and(|e| e.thread == Some(thread)))
+                    .and_then(|idx| rows.get(idx).map(|r| (idx, r.id)))
             }
         }
     }
@@ -1026,6 +1037,7 @@ impl Session {
                 self.run_calendar("cal.new_event")
             }
             b if b.starts_with("cal.") => self.run_calendar(b),
+            b if b.starts_with("ai.") || b.starts_with("suite.") || b == "app.import" => self.run_assist(b),
             "mail.new" => {
                 let account = match self.folder {
                     FolderSel::Folder(f) => self.folder(f).map(|f| f.account),

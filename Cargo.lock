@@ -2914,9 +2914,12 @@ dependencies = [
  "egui",
  "iuredesk-accounts",
  "iuredesk-engine",
+ "iuredesk-mcp",
  "iuredesk-store",
  "iuredesk-ui",
  "notify-rust",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -3027,10 +3030,14 @@ dependencies = [
  "chrono-tz",
  "dirs",
  "iuredesk-accounts",
+ "iuredesk-assistant",
  "iuredesk-autoconfig",
  "iuredesk-compose",
  "iuredesk-dav",
  "iuredesk-imap",
+ "iuredesk-import",
+ "iuredesk-integrations",
+ "iuredesk-mcp",
  "iuredesk-model",
  "iuredesk-oauth",
  "iuredesk-pim-sync",

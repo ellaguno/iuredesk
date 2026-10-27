@@ -11,6 +11,7 @@
     clippy::unreachable
 )]
 
+pub mod assist;
 pub mod background;
 pub mod body;
 pub mod calendar;
@@ -19,9 +20,11 @@ pub mod compose;
 pub mod context;
 pub mod iure;
 pub mod lang;
+pub mod migrate;
 pub mod onboarding;
 pub mod prefs;
 pub mod session;
+pub mod suite;
 pub mod time;
 
 pub use background::{JobId, JobOutput};
@@ -29,7 +32,12 @@ pub use background::{JobId, JobOutput};
 pub use chrono_tz;
 pub use command::{COMMANDS, Chord, CommandSpec};
 pub use compose::{ComposeDraft, ComposeKind, Mailto};
+/// F4.2: asistente, suite, importación y servidor MCP.
+pub use iuredesk_assistant;
 pub use iuredesk_compose;
+pub use iuredesk_import;
+pub use iuredesk_integrations;
+pub use iuredesk_mcp;
 pub use iuredesk_pim_sync::SeriesScope;
 pub use iuredesk_sync;
 pub use lang::{Text, pick};
