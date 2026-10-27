@@ -227,6 +227,11 @@ impl MailboxInfo {
         !self.has_attr("\\Noselect") && !self.has_attr("\\NonExistent")
     }
 
+    /// Es la carpeta con todo el correo (`\\All`, «Todos» de Gmail).
+    pub fn is_all_mail(&self) -> bool {
+        self.has_attr("\\All")
+    }
+
     /// Carpeta virtual que duplica otras (Gmail «Todos» y «Destacados»).
     pub fn is_virtual(&self) -> bool {
         self.has_attr("\\All") || self.has_attr("\\Flagged")

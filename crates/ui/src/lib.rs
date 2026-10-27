@@ -19,10 +19,11 @@ mod html;
 mod mail;
 mod onboarding;
 mod pim;
+mod rich_edit;
 mod settings;
 mod widgets;
 
-pub use app::{DeskApp, Options};
+pub use app::{DeskApp, Notifier, Options};
 pub use iurefficient_ui;
 
 /// Abre un enlace en el navegador del sistema (solo `http`, `https` y `mailto`). Nunca bloquea.

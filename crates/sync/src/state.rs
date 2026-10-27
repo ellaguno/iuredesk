@@ -93,6 +93,35 @@ pub fn account_id(store: &Store, account: &Account) -> Result<AccountId> {
     Ok(id)
 }
 
+/// Id local ya asignado a una cuenta, sin crear nada.
+pub fn lookup_account(store: &Store, account_id: &str) -> Option<AccountId> {
+    let key = format!("acct-map/{}", account_id.chars().take(200).collect::<String>());
+    let bytes = store.sync_state(&key).ok()??;
+    let v = u64::from_le_bytes(<[u8; 8]>::try_from(bytes.as_slice()).ok()?);
+    (v != 0).then_some(AccountId(v))
+}
+
+/// Asocia una cuenta (`Account::id`) a un id local ya reservado (el asistente de alta crea la
+/// etiqueta y las carpetas antes de la primera sincronización).
+pub fn bind_account(store: &Store, account_id: &str, id: AccountId) -> Result<()> {
+    let key = format!("acct-map/{}", account_id.chars().take(200).collect::<String>());
+    store.put_sync_state(&key, &id.get().to_le_bytes())?;
+    Ok(())
+}
+
+/// Olvida el estado de una cuenta que se quita (asociación y estado por carpeta).
+pub fn forget_account(store: &Store, account_id: &str, id: AccountId, folders: &[FolderId]) -> Result<()> {
+    let key = format!("acct-map/{}", account_id.chars().take(200).collect::<String>());
+    store.delete_sync_state(&key)?;
+    store.delete_sync_state(&pop3_key(id))?;
+    for f in folders {
+        store.delete_sync_state(&folder_key(id, *f))?;
+        store.delete_sync_state(&backfill_key(id, *f))?;
+        store.delete_sync_state(&format!("adopt/{}", f.get()))?;
+    }
+    Ok(())
+}
+
 /// Apunta un mensaje local que espera su UID en `folder`.
 pub fn add_adopt(store: &Store, folder: FolderId, msg: MessageId) -> Result<()> {
     let key = format!("adopt/{}", folder.get());

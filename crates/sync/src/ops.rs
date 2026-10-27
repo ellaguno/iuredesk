@@ -141,50 +141,68 @@ pub fn classify(kind: &str, payload: &[u8]) -> Option<Option<QueueWork>> {
     }
 }
 
-/// Cambia las banderas en local y encola el cambio.
-pub fn set_flags(store: &Store, msg: MessageId, flags: Flags) -> Result<()> {
+/// Cambia las banderas en local y encola el cambio. Devuelve el número de la operación
+/// encolada (`None` si no hizo falta: sin cambios o mensaje que aún no está en el servidor), que
+/// sirve para cancelarla al deshacer antes de que salga.
+pub fn set_flags(store: &Store, msg: MessageId, flags: Flags) -> Result<Option<u64>> {
     let env = store.get_envelope(msg)?.ok_or_else(|| SyncError::MessageNotFound(msg.to_string()))?;
     let old = env.flags;
     if old == flags {
-        return Ok(());
+        return Ok(None);
     }
     store.set_flags(msg, flags)?;
-    let Some(uid) = uid_of(env.remote_id.as_deref()) else { return Ok(()) };
+    let Some(uid) = uid_of(env.remote_id.as_deref()) else { return Ok(None) };
     let folder = store.get_folder(env.folder)?.ok_or_else(|| SyncError::MessageNotFound(msg.to_string()))?;
     let (new_l, old_l) = (imap_flags(flags), imap_flags(old));
     let add: Vec<String> = new_l.iter().filter(|f| !old_l.contains(f)).cloned().collect();
     let remove: Vec<String> = old_l.iter().filter(|f| !new_l.contains(f)).cloned().collect();
-    enqueue(store, folder.account, &MailOp::Flags { msg, folder: folder.remote_path, uid, add, remove })?;
-    Ok(())
+    let seq = enqueue(store, folder.account, &MailOp::Flags { msg, folder: folder.remote_path, uid, add, remove })?;
+    Ok(Some(seq))
 }
 
-/// Mueve en local y encola el movimiento.
-pub fn move_message(store: &Store, msg: MessageId, to: FolderId) -> Result<()> {
+/// Mueve en local y encola el movimiento. Devuelve el número de la operación encolada.
+pub fn move_message(store: &Store, msg: MessageId, to: FolderId) -> Result<Option<u64>> {
     let env = store.get_envelope(msg)?.ok_or_else(|| SyncError::MessageNotFound(msg.to_string()))?;
     if env.folder == to {
-        return Ok(());
+        return Ok(None);
     }
     let from = store.get_folder(env.folder)?.ok_or_else(|| SyncError::MessageNotFound(msg.to_string()))?;
     let dest = store.get_folder(to)?.ok_or_else(|| SyncError::MessageNotFound(to.to_string()))?;
     store.move_message(msg, to)?;
+    let mut seq = None;
     if let Some(uid) = uid_of(env.remote_id.as_deref()) {
-        enqueue(
+        seq = Some(enqueue(
             store,
             from.account,
             &MailOp::Move { msg, from: from.remote_path, uid, to: dest.remote_path, to_folder: to },
-        )?;
+        )?);
         add_adopt(store, to, msg)?;
     }
-    Ok(())
+    Ok(seq)
 }
 
 /// Borra en local y encola el borrado definitivo en el servidor.
-pub fn delete_message(store: &Store, msg: MessageId) -> Result<()> {
-    let Some(env) = store.get_envelope(msg)? else { return Ok(()) };
+pub fn delete_message(store: &Store, msg: MessageId) -> Result<Option<u64>> {
+    let Some(env) = store.get_envelope(msg)? else { return Ok(None) };
     let folder = store.get_folder(env.folder)?;
     store.delete_message(msg)?;
     if let (Some(uid), Some(folder)) = (uid_of(env.remote_id.as_deref()), folder) {
-        enqueue(store, folder.account, &MailOp::Expunge { folder: folder.remote_path, uid })?;
+        return Ok(Some(enqueue(store, folder.account, &MailOp::Expunge { folder: folder.remote_path, uid })?));
+    }
+    Ok(None)
+}
+
+/// Deshace un movimiento que aún no salió de la máquina: cancela la operación `seq`, devuelve
+/// el mensaje a `folder` con el UID que tenía allí y lo saca de la espera de UID del destino.
+pub fn cancel_move(store: &Store, seq: u64, msg: MessageId, folder: FolderId, remote_id: Option<String>) -> Result<()> {
+    let dest = store.get_envelope(msg)?.map(|e| e.folder);
+    store.ack_op(seq)?;
+    store.move_message(msg, folder)?;
+    store.set_remote_id(msg, remote_id)?;
+    if let Some(d) = dest {
+        let mut list = crate::state::adopt_list(store, d);
+        list.retain(|m| *m != msg);
+        crate::state::set_adopt(store, d, &list)?;
     }
     Ok(())
 }

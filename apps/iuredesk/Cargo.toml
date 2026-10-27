@@ -20,5 +20,9 @@ egui = { workspace = true }
 eframe = { workspace = true, features = ["wgpu", "wayland", "x11", "accesskit", "default_fonts"] }
 dirs = { workspace = true }
 
+# Notificaciones del escritorio por D-Bus con zbus (Rust puro, sin libdbus).
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust = { workspace = true }
+
 [lints]
 workspace = true

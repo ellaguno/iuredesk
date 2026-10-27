@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use egui::{Context, Key, Modifiers, Ui};
 use iuredesk_engine::command::{self, Chord};
-use iuredesk_engine::{Event, Module, Notice, NoticeKind, Outcome, Session};
+use iuredesk_engine::{Event, Module, Notice, NoticeKind, Outcome, Session, SyncStatus};
 use iurefficient_ui::palette::{CommandPalette, PaletteItem};
 use iurefficient_ui::widgets::nav_rail::rail_width;
 use iurefficient_ui::{NavItem, PaneKind, Severity, Toasts, lang, nav_rail, pick, split, system, theme};
@@ -17,8 +17,11 @@ use crate::mail::MailState;
 use crate::pim::PimState;
 use crate::widgets::{kit_density, kit_theme};
 
+/// Notificación del escritorio: (título, texto). La pone la app (en Linux, D-Bus con zbus).
+pub type Notifier = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
 /// Opciones de arranque.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct Options {
     /// Usar las fuentes del sistema (las capturas sin pantalla también las usan si existen).
     pub system_fonts: bool,
@@ -26,6 +29,25 @@ pub struct Options {
     pub no_theme_watch: bool,
     /// Enlace `mailto:` con el que se abrió la aplicación.
     pub mailto: Option<String>,
+    /// Notificaciones del escritorio para el correo nuevo (`None` = solo avisos en la ventana).
+    pub notifier: Option<Notifier>,
+}
+
+impl std::fmt::Debug for Options {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Options")
+            .field("system_fonts", &self.system_fonts)
+            .field("no_theme_watch", &self.no_theme_watch)
+            .field("mailto", &self.mailto)
+            .field("notifier", &self.notifier.is_some())
+            .finish()
+    }
+}
+
+/// Qué hace el botón de un aviso.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ToastAction {
+    Retry,
 }
 
 /// Qué lista la paleta.
@@ -50,9 +72,16 @@ pub struct DeskApp {
     toasts: Toasts,
     /// Notificación que ofrece «Deshacer».
     undo_toast: Option<u64>,
+    /// Botones de los avisos (id del aviso → acción).
+    toast_actions: Vec<(u64, ToastAction)>,
+    /// Ventana del estado de la sincronización.
+    pub sync_open: bool,
+    /// Último error de sincronización avisado (para no repetirlo en cada cuadro).
+    last_sync_error: Option<String>,
     pub(crate) composers: Vec<ComposeWindow>,
     next_composer: u64,
     pub settings_open: bool,
+    pub(crate) settings_ui: crate::settings::AccountsUi,
     applied: Option<(iuredesk_engine::ThemePref, iuredesk_engine::DensityPref)>,
 }
 
@@ -71,17 +100,54 @@ impl DeskApp {
             palette_items: Vec::new(),
             toasts: Toasts::default(),
             undo_toast: None,
+            toast_actions: Vec::new(),
+            sync_open: false,
+            last_sync_error: None,
             composers: Vec::new(),
             next_composer: 0,
             settings_open: false,
+            settings_ui: Default::default(),
             applied: None,
         };
         if let Some(m) = app.options.mailto.clone()
-            && let Some(d) = iuredesk_engine::ComposeDraft::from_mailto(&m)
+            && let Some(d) = app.session.compose_mailto(&m)
         {
             app.open_composer(d);
         }
         app
+    }
+
+    /// Al cerrar: detiene la sincronización y la bandeja de salida (lo pendiente se conserva).
+    pub fn shutdown(&mut self) {
+        self.session.shutdown();
+    }
+
+    /// Redactor con un mensaje de ejemplo (capturas).
+    pub fn demo_compose(&mut self) {
+        use iuredesk_engine::iuredesk_compose::{Attachment, RichBody, SignaturePlacement, signature};
+        use iuredesk_model::Mailbox;
+        let mut cd = self.session.compose_new(None);
+        cd.draft.to = vec![Mailbox::new("Carmen Brown", "carmen.brown@example.net")];
+        cd.draft.cc = vec![Mailbox::new("Pablo Ruiz", "pablo@despacho.example.org")];
+        cd.draft.subject = "Propuesta de honorarios — caso 241/2026".into();
+        let mut body = RichBody::from_markdown(
+            "Hola Carmen,\n\nTe envío la **propuesta de honorarios** para el caso 241/2026. Los puntos principales:\n\n- Honorarios fijos por etapa\n- Gastos de juzgado *aparte*\n- Revisión mensual del avance\n\nEl detalle está en el [portal del despacho](https://despacho.example.org/casos/241).\n\nSaludos,",
+        );
+        let sig = RichBody::from_plain("Laura Méndez\nDespacho Méndez · Abogados\n+52 55 5555 0100");
+        signature::apply(&mut body, Some(&sig), SignaturePlacement::AboveQuote);
+        cd.draft.body = body;
+        cd.draft.attachments.push(Attachment::bytes("propuesta_honorarios.pdf", "application/pdf", vec![0; 184_320]));
+        self.open_composer(cd);
+    }
+
+    /// Ventanas de redacción abiertas (pruebas).
+    pub fn composer_count(&self) -> usize {
+        self.composers.len()
+    }
+
+    /// Asunto de la primera ventana de redacción (pruebas).
+    pub fn composer_subject(&self) -> Option<String> {
+        self.composers.first().map(|w| w.cd.draft.subject.clone())
     }
 
     /// Un cuadro completo. `ui` ocupa la ventana.
@@ -102,9 +168,12 @@ impl DeskApp {
         }
 
         let modal = self.palette.is_open() || self.session.wizard.is_some() || self.settings_open;
-        if !modal {
+        // Escribiendo en el redactor, los atajos de la aplicación no se disparan.
+        let composing = !self.composers.is_empty() && ctx.egui_wants_keyboard_input();
+        if !modal && !composing {
             self.shortcuts(&ctx);
         }
+        self.dropped_files(&ctx);
         if self.palette.handle_shortcut(&ctx) {
             self.palette_mode = PaletteMode::Commands;
         }
@@ -121,15 +190,60 @@ impl DeskApp {
 
         crate::compose::show_all(self, &ctx);
         crate::settings::show(self, &ctx);
+        self.sync_window(&ctx);
         if self.session.wizard.is_some() {
             crate::onboarding::modal(self, &ctx);
         }
         self.show_palette(&ctx);
-        if let Some(id) = self.toasts.show(&ctx)
-            && Some(id) == self.undo_toast
-        {
+        self.show_toasts(&ctx);
+        if let Some(d) = self.session.next_deadline() {
+            ctx.request_repaint_after(d.max(std::time::Duration::from_millis(16)));
+        }
+    }
+
+    fn show_toasts(&mut self, ctx: &Context) {
+        let Some(id) = self.toasts.show(ctx) else { return };
+        if Some(id) == self.undo_toast {
             self.undo_toast = None;
-            self.run(&ctx, "undo");
+            self.run(ctx, "undo");
+            return;
+        }
+        if let Some(pos) = self.toast_actions.iter().position(|(t, _)| *t == id) {
+            let (_, act) = self.toast_actions.remove(pos);
+            match act {
+                ToastAction::Retry => self.session.sync_now(),
+            }
+        }
+    }
+
+    /// Archivos soltados sobre la ventana: se adjuntan al redactor (o abren uno nuevo).
+    fn dropped_files(&mut self, ctx: &Context) {
+        let (hovering, dropped) = ctx.input(|i| {
+            (
+                !i.raw.hovered_files.is_empty(),
+                i.raw
+                    .dropped_files
+                    .iter()
+                    .map(|f| f.path().to_path_buf())
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        if hovering {
+            let rect = ctx.content_rect();
+            let painter =
+                ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("drop-overlay")));
+            painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(110));
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                pick("Drop to attach", "Suelta para adjuntar"),
+                egui::FontId::proportional(22.0),
+                egui::Color32::WHITE,
+            );
+        }
+        if !dropped.is_empty() && !self.session.needs_onboarding() {
+            crate::compose::on_dropped(self, dropped);
         }
     }
 
@@ -206,9 +320,32 @@ impl DeskApp {
         for ev in self.session.poll() {
             match ev {
                 Event::Notice(n) => self.notice(n),
+                Event::NewMail { summary, detail, account } => {
+                    let first = detail.lines().next().unwrap_or("").to_string();
+                    let text = if first.is_empty() {
+                        summary.get().to_string()
+                    } else {
+                        format!("{}: {first}", summary.get())
+                    };
+                    self.toasts.push(Severity::Info, text, None, 6.0);
+                    if self.session.prefs.notify_new_mail
+                        && let Some(n) = &self.options.notifier
+                    {
+                        let title = if account.is_empty() {
+                            summary.get().to_string()
+                        } else {
+                            format!("{} — {account}", summary.get())
+                        };
+                        n(&title, &detail);
+                    }
+                }
                 Event::Custom { id, value } => {
                     if let Some(f) = value.downcast_ref::<iuredesk_engine::Fetched>() {
                         self.html.on_fetched(f.clone());
+                    } else if value.is::<crate::compose::PickedFiles>() {
+                        if let Ok(p) = value.downcast::<crate::compose::PickedFiles>() {
+                            crate::compose::on_picked(self, *p);
+                        }
                     } else if let Ok(done) = value.downcast::<crate::html::HtmlDone>() {
                         self.html.on_done(ctx, id, *done);
                     }
@@ -228,7 +365,8 @@ impl DeskApp {
             if let Some(old) = self.undo_toast.take() {
                 self.toasts.dismiss(old);
             }
-            let id = self.toasts.push(sev, n.text.get(), Some(pick("Undo", "Deshacer")), 10.0);
+            let secs = n.secs.map_or(10.0, |s| s as f32);
+            let id = self.toasts.push(sev, n.text.get(), Some(pick("Undo", "Deshacer")), secs);
             self.undo_toast = Some(id);
         } else {
             self.toasts.push(sev, n.text.get(), None, if n.kind == NoticeKind::Error { 8.0 } else { 4.0 });
@@ -313,11 +451,34 @@ impl DeskApp {
         let short = |k: &str| labels.iter().find(|(id, _)| *id == k).and_then(|(_, s)| s.clone()).unwrap_or_default();
         let (s_mail, s_cal, s_con, s_not, s_tas, s_ai) =
             (short("mail"), short("calendar"), short("contacts"), short("notes"), short("tasks"), short("assistant"));
-        let sync_label = if self.session.is_sample() {
-            pick("Sample mailbox (offline)", "Buzón de ejemplo (sin conexión)")
-        } else {
-            pick("Sync arrives in F1", "La sincronización llega en F1")
+        let status = self.session.sync_status();
+        let (sync_icon, sync_label) = match &status {
+            SyncStatus::Off if self.session.is_sample() => (
+                iurefficient_ui::Icon::Sync,
+                pick("Sample mailbox (offline)", "Buzón de ejemplo (sin conexión)").to_string(),
+            ),
+            SyncStatus::Off => {
+                (iurefficient_ui::Icon::Sync, pick("No accounts to sync", "No hay cuentas que sincronizar").to_string())
+            }
+            SyncStatus::Idle => {
+                (iurefficient_ui::Icon::Sync, pick("Mail is up to date", "El correo está al día").to_string())
+            }
+            SyncStatus::Busy(t) => (iurefficient_ui::Icon::Sync, t.clone()),
+            SyncStatus::Offline(t) => {
+                (iurefficient_ui::Icon::Offline, format!("{} — {t}", pick("Offline", "Sin conexión")))
+            }
+            SyncStatus::Error { text, .. } => (iurefficient_ui::Icon::Alert, text.clone()),
         };
+        // Un error nuevo se avisa una vez, con «Reintentar».
+        if let SyncStatus::Error { text, .. } = &status {
+            if self.last_sync_error.as_deref() != Some(text.as_str()) {
+                self.last_sync_error = Some(text.clone());
+                let id = self.toasts.push(Severity::Error, text.clone(), Some(pick("Retry", "Reintentar")), 12.0);
+                self.toast_actions.push((id, ToastAction::Retry));
+            }
+        } else {
+            self.last_sync_error = None;
+        }
         let items = [
             NavItem::new("mail", iurefficient_ui::Icon::Mail, Module::Mail.label())
                 .badge(u32::try_from(unread).unwrap_or(u32::MAX))
@@ -330,28 +491,124 @@ impl DeskApp {
                 .shortcut(&s_tas),
             NavItem::new("assistant", iurefficient_ui::Icon::Sparkle, Module::Assistant.label()).shortcut(&s_ai),
             NavItem::new("settings", iurefficient_ui::Icon::Settings, pick("Settings", "Ajustes")).bottom(),
-            NavItem::new("sync", iurefficient_ui::Icon::Sync, sync_label).bottom(),
+            NavItem::new("sync", sync_icon, &sync_label).bottom(),
         ];
         let w = rail_width(ui.ctx());
         let current = self.session.module.key();
         let mut clicked: Option<String> = None;
         split::left(ui, "rail", PaneKind::Rail, w, w..=w, |ui| {
+            let full = ui.max_rect();
             if let Some(id) = nav_rail(ui, &items, current) {
                 clicked = Some(id.to_string());
+            }
+            // Estado sobre el botón de sincronización (el último del pie del riel).
+            let side = w - 12.0;
+            let center = egui::pos2(full.center().x, full.bottom() - 6.0 - side / 2.0);
+            let c = theme::colors(ui);
+            match &status {
+                SyncStatus::Busy(_) => {
+                    let t = ui.input(|i| i.time) as f32;
+                    let r = side * 0.36;
+                    let a0 = t * 4.0;
+                    let pts: Vec<egui::Pos2> = (0..=20)
+                        .map(|k| {
+                            let a = a0 + (k as f32 / 20.0) * std::f32::consts::PI * 1.4;
+                            center + egui::vec2(a.cos(), a.sin()) * r
+                        })
+                        .collect();
+                    ui.painter().add(egui::Shape::line(pts, egui::Stroke::new(2.0, c.accent)));
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+                }
+                SyncStatus::Error { .. } => {
+                    ui.painter().circle_filled(center + egui::vec2(side * 0.28, -side * 0.28), 4.5, c.danger);
+                }
+                SyncStatus::Offline(_) => {
+                    ui.painter().circle_filled(center + egui::vec2(side * 0.28, -side * 0.28), 4.0, c.warning);
+                }
+                _ => {}
             }
         });
         match clicked.as_deref() {
             Some("settings") => self.settings_open = true,
-            Some("sync") => self.notice(Notice::info(
-                "Server sync arrives in phase F1. Everything you do is kept in the local queue.",
-                "La sincronización con servidores llega en la fase F1. Lo que hagas queda en la cola local.",
-            )),
+            Some("sync") => {
+                if self.session.is_live() {
+                    self.sync_open = !self.sync_open;
+                } else if self.session.is_sample() {
+                    self.notice(Notice::info(
+                        "This is the sample mailbox: nothing is synced. Add your account to use real mail.",
+                        "Este es el buzón de ejemplo: no se sincroniza nada. Agrega tu cuenta para usar tu correo.",
+                    ));
+                } else {
+                    self.run(&ui.ctx().clone(), "app.add_account");
+                }
+            }
             Some(k) => {
                 if let Some(m) = Module::from_key(k) {
                     self.session.module = m;
                 }
             }
             None => {}
+        }
+    }
+
+    /// Ventana con el estado de cada cuenta, «Reintentar» y «Volver a iniciar sesión».
+    fn sync_window(&mut self, ctx: &Context) {
+        if !self.sync_open {
+            return;
+        }
+        let mut open = true;
+        let mut retry = false;
+        let mut reauth: Option<String> = None;
+        let rows = self.session.accounts_overview();
+        egui::Window::new(pick("Sync", "Sincronización"))
+            .id(egui::Id::unique("sync-window"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                let c = theme::colors(ui);
+                for r in &rows {
+                    ui.horizontal(|ui| {
+                        let (ink, label) = match &r.status {
+                            Some(iuredesk_engine::AccountSync::Error { .. }) => {
+                                (c.danger, r.status.as_ref().map(|s| s.label()).unwrap_or_default())
+                            }
+                            Some(iuredesk_engine::AccountSync::Offline(_)) => {
+                                (c.warning, r.status.as_ref().map(|s| s.label()).unwrap_or_default())
+                            }
+                            Some(s) => (c.success, s.label()),
+                            None => (c.text_muted, String::new()),
+                        };
+                        let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                        ui.painter().circle_filled(dot.center(), 4.0, ink);
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new(&r.email).strong().color(c.text));
+                            if !label.is_empty() {
+                                ui.add(egui::Label::new(egui::RichText::new(label).color(c.text_muted)).wrap());
+                            }
+                        });
+                    });
+                    if matches!(r.status, Some(iuredesk_engine::AccountSync::Error { reauth: true, .. }))
+                        && ui.button(pick("Sign in again…", "Volver a iniciar sesión…")).clicked()
+                    {
+                        reauth = Some(r.id.clone());
+                    }
+                    ui.add_space(6.0);
+                }
+                if iurefficient_ui::primary_button(ui, pick("Retry now", "Reintentar ahora")).clicked() {
+                    retry = true;
+                }
+            });
+        if retry {
+            self.session.sync_now();
+        }
+        if let Some(id) = reauth {
+            self.sync_open = false;
+            self.session.reauth_account(&id);
+        }
+        if !open {
+            self.sync_open = false;
         }
     }
 

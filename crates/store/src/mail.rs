@@ -612,6 +612,31 @@ impl Store {
         })
     }
 
+    /// Cambia el id remoto (UID) de un mensaje. Sirve para deshacer un movimiento que aún no salió
+    /// de la máquina: el mensaje vuelve a su carpeta con el UID que tenía allí.
+    pub fn set_remote_id(&self, id: MessageId, remote: Option<String>) -> Result<()> {
+        self.write(|tx, pending| {
+            let mut m = MailTx::open(tx)?;
+            let mut env: MessageEnvelope =
+                get_rec(&m.envelopes, id.get())?.ok_or_else(|| StoreError::not_found("mensaje", id))?;
+            if env.remote_id == remote {
+                return Ok(());
+            }
+            m.detach(&env, pending)?;
+            env.remote_id = remote.map(|r| clip(&r, MAX_KEY_LEN).to_string());
+            m.attach(&env, pending)?;
+            put_rec(&mut m.envelopes, id.get(), &env)
+        })
+    }
+
+    /// Borra la etiqueta de una cuenta (al quitarla; sus carpetas se borran aparte).
+    pub fn delete_account_label(&self, id: AccountId) -> Result<()> {
+        self.write(|tx, _| {
+            tx.open_table(ACCOUNTS)?.remove(id.get())?;
+            Ok(())
+        })
+    }
+
     /// Borra un mensaje del almacén local (el blob se conserva: puede compartirse; la
     /// recolección de blobs huérfanos es tarea aparte).
     pub fn delete_message(&self, id: MessageId) -> Result<()> {

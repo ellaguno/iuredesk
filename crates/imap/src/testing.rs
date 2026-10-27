@@ -258,6 +258,11 @@ impl FakeImap {
         });
     }
 
+    /// Quita un buzón (p. ej. para imitar a Gmail, que no tiene «Archive»).
+    pub fn remove_mailbox(&self, name: &str) {
+        self.shared.lock().mailboxes.remove(name);
+    }
+
     /// Añade un mensaje (como si llegara correo) y avisa a quien esté en IDLE. Devuelve el UID.
     pub fn deliver(&self, mailbox: &str, raw: &[u8], flags: &[&str], date: Option<DateTime<FixedOffset>>) -> u32 {
         let uid = {

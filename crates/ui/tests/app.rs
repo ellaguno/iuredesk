@@ -10,7 +10,7 @@ use egui::{Key, Modifiers, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use iuredesk_accounts::MemoryStore;
-use iuredesk_engine::{DensityPref, Session, SessionConfig, ShortcutScheme, ThemePref, Zone};
+use iuredesk_engine::{DensityPref, OfflineTransport, Session, SessionConfig, ShortcutScheme, ThemePref, Zone};
 use iuredesk_model::{AccountId, Folder, FolderRole, MessageId};
 use iuredesk_store::{AccountLabel, Store, sample};
 use iuredesk_ui::{DeskApp, Options};
@@ -36,9 +36,12 @@ fn session_on(store: Store, conversations: bool) -> Session {
         now: Some(now()),
         zone: Zone::utc(),
         sample: true,
+        sync: None,
+        transport: Some(Arc::new(OfflineTransport)),
     })
     .unwrap();
     s.prefs.theme = ThemePref::Light;
+    s.prefs.mark_read_delay_ms = 0;
     s.set_conversations(conversations);
     s
 }
@@ -47,7 +50,10 @@ fn sample_app(dir: &std::path::Path, conversations: bool) -> DeskApp {
     spanish();
     let store = Store::open(dir).unwrap();
     sample::populate(&store, sample::DEFAULT_SEED, now()).unwrap();
-    DeskApp::new(session_on(store, conversations), Options { system_fonts: false, no_theme_watch: true, mailto: None })
+    DeskApp::new(
+        session_on(store, conversations),
+        Options { system_fonts: false, no_theme_watch: true, ..Default::default() },
+    )
 }
 
 fn harness(app: DeskApp, size: egui::Vec2) -> Harness<'static, DeskApp> {
@@ -270,7 +276,10 @@ fn list_scrolling_over_100k_rows_stays_cheap() {
     }
     eprintln!("100 000 mensajes insertados en {:?}", t.elapsed());
     let mut h = harness(
-        DeskApp::new(session_on(store, false), Options { system_fonts: false, no_theme_watch: true, mailto: None }),
+        DeskApp::new(
+            session_on(store, false),
+            Options { system_fonts: false, no_theme_watch: true, ..Default::default() },
+        ),
         vec2(1280.0, 800.0),
     );
     settle(&mut h);
@@ -296,4 +305,57 @@ fn list_scrolling_over_100k_rows_stays_cheap() {
     let last = h.state().session.rows()[99_999].id;
     assert_eq!(h.state().session.focused(), Some(last), "Fin llega a la última fila");
     assert!(per_frame < Duration::from_millis(250), "{per_frame:?} por cuadro");
+}
+
+#[test]
+fn compose_send_lands_in_the_outbox_and_undo_reopens_it() {
+    use egui::accesskit::Role;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(sample_app(dir.path(), false), vec2(1440.0, 900.0));
+    settle(&mut h);
+    h.get_by_label("Nuevo mensaje").click();
+    settle(&mut h);
+    assert_eq!(h.state().composer_count(), 1);
+    // Destinatario: al escribir la coma se vuelve burbuja.
+    h.get_by_role_and_label(Role::TextInput, "Para").focus();
+    h.run();
+    h.event(egui::Event::Text("ana@example.com,".into()));
+    settle(&mut h);
+    assert!(h.query_all_by_label_contains("ana@example.com").next().is_some(), "burbuja del destinatario");
+    h.get_by_role_and_label(Role::TextInput, "Asunto").focus();
+    h.run();
+    h.event(egui::Event::Text("Prueba desde kittest".into()));
+    settle(&mut h);
+    assert!(h.query_all_by_label_contains("Nuevo mensaje: Prueba desde kittest").next().is_some());
+    h.get_by_label("Enviar").click();
+    settle(&mut h);
+    assert_eq!(h.state().composer_count(), 0, "la ventana se cierra al enviar");
+    assert_eq!(h.state().session.outbox_entries().len(), 1, "espera en la bandeja de salida");
+    assert!(h.query_all_by_label_contains("Enviando").next().is_some(), "aviso «Enviando… Deshacer»");
+    assert!(h.query_all_by_label_contains("Bandeja de salida").next().is_some(), "aparece en los favoritos");
+    h.get_by_label("Deshacer").click();
+    settle(&mut h);
+    assert!(h.state().session.outbox_entries().is_empty(), "deshacer lo saca de la cola");
+    assert_eq!(h.state().composer_count(), 1, "y vuelve al redactor");
+    assert_eq!(h.state().composer_subject().as_deref(), Some("Prueba desde kittest"));
+}
+
+#[test]
+fn quoted_history_is_collapsed_in_the_reading_pane() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(sample_app(dir.path(), false), vec2(1440.0, 900.0));
+    settle(&mut h);
+    let id = {
+        let s = &mut h.state_mut().session;
+        let rows: Vec<_> = s.rows().iter().map(|r| r.id).take(300).collect();
+        rows.into_iter().find(|&id| s.envelope(id).is_some_and(|e| e.in_reply_to.is_some())).unwrap()
+    };
+    h.state_mut().session.request_focus(id);
+    settle(&mut h);
+    let toggle = h.get_by_label("… mostrar texto citado");
+    toggle.click();
+    settle(&mut h);
+    assert!(h.query_by_label("Ocultar texto citado").is_some());
 }

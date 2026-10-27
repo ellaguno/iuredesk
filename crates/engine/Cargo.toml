@@ -13,6 +13,12 @@ iuredesk-store = { workspace = true }
 iuredesk-accounts = { workspace = true }
 iuredesk-autoconfig = { workspace = true }
 iuredesk-oauth = { workspace = true }
+# F1.3: sincronización real y envío (bandeja de salida con SMTP).
+iuredesk-sync = { workspace = true }
+iuredesk-compose = { workspace = true }
+# F2.3: expansión de recurrencias RFC 5545 para las vistas de calendario.
+iuredesk-pim-sync = { workspace = true }
+chrono-tz = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -25,6 +31,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macr
 
 [dev-dependencies]
 tempfile = { workspace = true }
+iuredesk-imap = { workspace = true, features = ["test-server"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macros", "net", "io-util"] }
 
 [lints]
 workspace = true

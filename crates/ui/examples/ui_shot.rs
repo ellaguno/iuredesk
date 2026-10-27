@@ -2,7 +2,7 @@
 //!
 //! `cargo run -p iuredesk-ui --example ui_shot -- /tmp/shot.png [--dark] [--density dense|compact|comfortable]
 //!  [--module mail|calendar|contacts|notes|tasks|assistant|onboarding|provider] [--palette[=texto]]
-//!  [--html] [--month] [--lang en|es] [--size 1440x900] [--ppp 1]`
+//!  [--html] [--month] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]`
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -60,6 +60,8 @@ fn main() -> Result<(), String> {
         now: Some(now),
         zone: Zone::utc(),
         sample: true,
+        sync: None,
+        transport: Some(Arc::new(iuredesk_engine::OfflineTransport)),
     })
     .map_err(|e| e.text().en)?;
     session.prefs.theme = if dark { ThemePref::Dark } else { ThemePref::Light };
@@ -95,7 +97,10 @@ fn main() -> Result<(), String> {
             session.request_focus(id);
         }
     }
-    let mut app = DeskApp::new(session, Options { system_fonts: true, no_theme_watch: true, mailto: None });
+    let mut app = DeskApp::new(session, Options { system_fonts: true, no_theme_watch: true, ..Default::default() });
+    if args.iter().any(|a| a == "--compose") {
+        app.demo_compose();
+    }
     if module == "provider" {
         app.demo_provider_step("laura.mendez@gmail.com");
     } else if module == "onboarding" {

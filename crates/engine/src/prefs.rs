@@ -125,6 +125,23 @@ pub struct Prefs {
     /// Marcar como leído al abrir un mensaje.
     #[serde(default = "yes")]
     pub mark_read_on_open: bool,
+    /// Espera antes de marcar como leído (ms): repasar la lista con las flechas no marca nada.
+    #[serde(default = "default_read_delay")]
+    pub mark_read_delay_ms: u32,
+    /// Ventana para deshacer un envío (segundos, 0–30).
+    #[serde(default = "default_undo_send")]
+    pub send_undo_secs: u32,
+    /// Avisar con una notificación del escritorio cuando llega correo.
+    #[serde(default = "yes")]
+    pub notify_new_mail: bool,
+}
+
+fn default_read_delay() -> u32 {
+    1_000
+}
+
+fn default_undo_send() -> u32 {
+    10
 }
 
 impl Default for Prefs {
@@ -137,6 +154,9 @@ impl Default for Prefs {
             lang: None,
             show_today: true,
             mark_read_on_open: true,
+            mark_read_delay_ms: default_read_delay(),
+            send_undo_secs: default_undo_send(),
+            notify_new_mail: true,
         }
     }
 }
