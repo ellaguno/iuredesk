@@ -29,6 +29,7 @@ mod reminders;
 mod rich_edit;
 mod settings;
 mod suite_ui;
+mod today;
 mod widgets;
 
 pub use app::{DeskApp, Notifier, Options};

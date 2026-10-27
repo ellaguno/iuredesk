@@ -1185,6 +1185,11 @@ pub mod sample {
         let due = |d: i64| (now.date_naive() + chrono::Duration::days(d)).format("%Y-%m-%d").to_string();
         Agenda {
             events: vec![
+                pim::CalendarEvent {
+                    meeting_url: Some("https://teams.microsoft.com/l/meetup-join/19%3ameeting_demo241".into()),
+                    location: Some("Videollamada".into()),
+                    ..ev("ie-3", "Videollamada con Constructora Altamira", 0, 16, "meeting")
+                },
                 ev("ie-1", "Audiencia de pruebas (Iurefficient)", 1, 15, "court"),
                 ev("ie-2", "Reunión con Altamira (Iurefficient)", 2, 17, "meeting"),
             ],
@@ -1194,6 +1199,23 @@ pub mod sample {
                     title: "Revisar escrito de contestación".into(),
                     status: "pending".into(),
                     due_date: Some(due(2)),
+                    case_title: Some("1452/2026".into()),
+                    ..Default::default()
+                },
+                pim::Task {
+                    id: "it-3".into(),
+                    title: "Presentar ofrecimiento de pruebas".into(),
+                    status: "pending".into(),
+                    priority: Some("high".into()),
+                    due_date: Some(due(0)),
+                    case_title: Some("241/2026".into()),
+                    ..Default::default()
+                },
+                pim::Task {
+                    id: "it-4".into(),
+                    title: "Llamar a la contraparte".into(),
+                    status: "pending".into(),
+                    due_date: Some(due(-1)),
                     case_title: Some("1452/2026".into()),
                     ..Default::default()
                 },

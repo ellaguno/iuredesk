@@ -149,13 +149,15 @@ fn main() -> ExitCode {
     }
 
     let changed = Arc::new(AtomicBool::new(false));
-    let (session, bridge) = match open_session(sample, &changed) {
+    let (mut session, bridge) = match open_session(sample, &changed) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("IureDesk no pudo abrir tus datos: {e}");
             return ExitCode::FAILURE;
         }
     };
+    // «Mi día» o donde se dejó la última vez (Ajustes → General).
+    session.open_at_start();
     let native = native_decorations(session.prefs.native_decorations);
     let chrome = (!native).then(|| iuredesk_ui::WindowChrome::for_this_os(button_layout().as_deref()));
     let mut viewport = egui::ViewportBuilder::default()

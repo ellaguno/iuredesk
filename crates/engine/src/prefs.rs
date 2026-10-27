@@ -100,6 +100,17 @@ impl ShortcutScheme {
     }
 }
 
+/// Qué se ve al abrir IureDesk (F6.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StartPref {
+    /// «Mi día»: el resumen del día.
+    #[default]
+    Today,
+    /// Donde se dejó la última vez (módulo y carpeta).
+    LastPlace,
+}
+
 fn yes() -> bool {
     true
 }
@@ -152,6 +163,15 @@ pub struct Prefs {
     /// Usar la barra de título del sistema en vez de la integrada (se aplica al reiniciar).
     #[serde(default)]
     pub native_decorations: bool,
+    /// Qué se ve al abrir.
+    #[serde(default)]
+    pub start: StartPref,
+    /// Último módulo visto (`mail`, `calendar`…), para «Donde lo dejé».
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_module: Option<String>,
+    /// Última carpeta del correo (`unified:inbox`, `folder:12`…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_folder: Option<String>,
 }
 
 fn default_iure_poll() -> u32 {
@@ -185,6 +205,9 @@ impl Default for Prefs {
             secondary_tz: None,
             notify_reminders: true,
             native_decorations: false,
+            start: StartPref::Today,
+            last_module: None,
+            last_folder: None,
         }
     }
 }

@@ -1,7 +1,7 @@
 //! Captura sin pantalla de IureDesk con el buzón de ejemplo y un «ahora» fijo (determinista).
 //!
 //! `cargo run -p iuredesk-ui --example ui_shot -- /tmp/shot.png [--dark] [--density dense|compact|comfortable]
-//!  [--module mail|calendar|contacts|notes|tasks|assistant|onboarding|provider] [--palette[=texto]]
+//!  [--module today|mail|calendar|contacts|notes|tasks|assistant|onboarding|provider] [--palette[=texto]]
 //!  [--html] [--month] [--view day|agenda|week|work_week|month] [--editor] [--invite] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]
 //!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]
 //!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]`
@@ -85,6 +85,7 @@ fn main() -> Result<(), String> {
         "notes" => Module::Notes,
         "tasks" => Module::Tasks,
         "assistant" => Module::Assistant,
+        "today" => Module::Today,
         _ => Module::Mail,
     };
     // Esperar a que la lista esté lista para elegir el mensaje que se muestra.

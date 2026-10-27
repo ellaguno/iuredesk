@@ -4,7 +4,7 @@
 //! datos. El generador pseudoaleatorio es SplitMix64 propio (sin dependencias). Los dominios son
 //! `example.com/.org/.net` (RFC 2606): nada apunta a personas o empresas reales.
 
-use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveTime, Offset, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveTime, Offset, TimeZone, Utc};
 use iuredesk_model::{
     AccountId, AddressBook, AttachmentMeta, Attendee, AttendeeRole, Calendar, Contact, Event, EventStatus, EventTime,
     Flags, Folder, FolderId, FolderRole, Labeled, Mailbox, MessageEnvelope, Note, PartStat, PostalAddress, Reminder,
@@ -392,6 +392,15 @@ pub fn populate_in(store: &Store, seed: u64, now: DateTime<Utc>, offset: FixedOf
                 ..Default::default()
             }],
             notes: if rng.chance(20) { "Prefiere llamadas por la mañana.".into() } else { String::new() },
+            // Dos cumpleaños cerca de `now` (no consumen azar: el resto del ejemplo no cambia).
+            birthday: match i {
+                4 => NaiveDate::from_ymd_opt(1984, now.month(), now.day()),
+                11 => {
+                    let d = (now + Duration::days(3)).date_naive();
+                    NaiveDate::from_ymd_opt(1991, d.month(), d.day())
+                }
+                _ => None,
+            },
             ..Default::default()
         })?;
         sum.contacts = sum.contacts.saturating_add(1);

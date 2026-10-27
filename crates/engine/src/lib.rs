@@ -26,6 +26,7 @@ pub mod prefs;
 pub mod session;
 pub mod suite;
 pub mod time;
+pub mod today;
 
 pub use background::{JobId, JobOutput};
 /// Reexportados para la UI y la app (redactor, envío, sincronización).
@@ -41,7 +42,7 @@ pub use iuredesk_mcp;
 pub use iuredesk_pim_sync::SeriesScope;
 pub use iuredesk_sync;
 pub use lang::{Text, pick};
-pub use prefs::{DensityPref, Prefs, ShortcutScheme, ThemePref};
+pub use prefs::{DensityPref, Prefs, ShortcutScheme, StartPref, ThemePref};
 pub use session::{
     AccountRow, AccountSync, CalState, Event, Fetched, FolderSel, IurePanel, IureSetup, LeadSuggestions, ListRow,
     LoginState, Module, Notice, NoticeKind, OfflineTransport, Outcome, PimBackend, Session, SessionConfig, SyncStatus,

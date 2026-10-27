@@ -3355,7 +3355,7 @@ dependencies = [
 [[package]]
 name = "iurefficient-ui"
 version = "0.1.0"
-source = "git+https://github.com/ellaguno/iurefficient-ui?branch=main#2fd3fe8e1db082b123b7192ccf640e4779e36c15"
+source = "git+https://github.com/ellaguno/iurefficient-ui?branch=main#ab45d8a1fd1608f5159de2f3954a2fbc36d35b37"
 dependencies = [
  "egui",
  "skrifa",

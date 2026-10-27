@@ -214,6 +214,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::Calendar,
         "agenda list lista schedule",
     ),
+    c("nav.today", "Go to My day", "Ir a Mi día", "sun", Group::Navigate, "today hoy home inicio resumen summary"),
     c("nav.mail", "Go to Mail", "Ir a Correo", "mail", Group::Navigate, "inbox bandeja"),
     c("nav.calendar", "Go to Calendar", "Ir a Calendario", "calendar", Group::Navigate, "agenda events citas"),
     c("nav.contacts", "Go to Contacts", "Ir a Contactos", "contacts", Group::Navigate, "people personas"),
@@ -369,6 +370,13 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
     if common.is_some() {
         return common;
     }
+    // «Mi día»: Ctrl+0 lo usa egui para el zoom; «H» de «home».
+    if id == "nav.today" {
+        return Some(match scheme {
+            Outlook | AppleMail => Chord::cmd_shift("H"),
+            Gmail => Chord::shift("H"),
+        });
+    }
     // Calendario (solo se disparan en el módulo de calendario).
     let view = |n: &'static str| match scheme {
         Outlook => Chord { command: true, ctrl: false, shift: false, alt: true, key: n },
@@ -460,6 +468,7 @@ mod tests {
             "mail.toggle_flag",
             "mail.move",
             "mail.search",
+            "nav.today",
             "nav.mail",
             "nav.calendar",
             "nav.contacts",

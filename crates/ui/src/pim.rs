@@ -14,12 +14,12 @@ use crate::widgets::{hairline, info_row, pane_title};
 /// Estado de contactos, notas y tareas.
 #[derive(Default)]
 pub struct PimState {
-    contact: Option<ContactId>,
+    pub(crate) contact: Option<ContactId>,
     pub(crate) contact_filter: String,
     contact_list: ListState,
     contact_cols: Vec<Column>,
     note: Option<NoteId>,
-    task_list: Option<TaskListId>,
+    pub(crate) task_list: Option<TaskListId>,
     show_done: bool,
 }
 
