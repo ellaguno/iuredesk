@@ -1,0 +1,86 @@
+# Puerta de calidad (`cargo xtask ci`) en Linux y compilación + pruebas en Windows y macOS, en cada
+# push a main y en cada pull request. El workspace depende del repo privado
+# ellaguno/iurefficient-ui: requiere el secreto SUITE_REPOS_TOKEN (token fino de solo lectura sobre
+# ese repo). Ver docs/publicacion.md.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # cargo usa el git del sistema, que respeta la reescritura de URL con el token (abajo).
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+jobs:
+  gate:
+    name: cargo xtask ci (Linux)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Acceso a los repos privados de la suite
+        env:
+          SUITE_REPOS_TOKEN: ${{ secrets.SUITE_REPOS_TOKEN }}
+        run: |
+          if [ -z "$SUITE_REPOS_TOKEN" ]; then
+            echo "::error::Falta el secreto SUITE_REPOS_TOKEN (docs/publicacion.md)"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${SUITE_REPOS_TOKEN}@github.com/".insteadOf "https://github.com/"
+      - name: Dependencias de compilación de Linux (winit, wgpu; sin GTK) y python3 (stylo)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libxkbcommon-dev libwayland-dev libx11-dev mesa-vulkan-drivers python3
+      - name: Rust estable
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Puerta de calidad
+        run: cargo xtask ci
+
+  build:
+    name: Compilación y pruebas (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Acceso a los repos privados de la suite
+        shell: bash
+        env:
+          SUITE_REPOS_TOKEN: ${{ secrets.SUITE_REPOS_TOKEN }}
+        run: |
+          if [ -z "$SUITE_REPOS_TOKEN" ]; then
+            echo "::error::Falta el secreto SUITE_REPOS_TOKEN (docs/publicacion.md)"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${SUITE_REPOS_TOKEN}@github.com/".insteadOf "https://github.com/"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rust estable
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compilar la app (release)
+        run: cargo build --release --locked -p iuredesk
+      - name: Pruebas
+        run: cargo test --workspace --locked -q

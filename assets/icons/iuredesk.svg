@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Icono de IureDesk (FSL-1.1-ALv2, proyecto IureDesk). Hoja de calendario detrás de un sobre,
+       sobre el marino Iurefficient. Dibujado a mano; sin activos de terceros. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1E3A68"/>
+      <stop offset="1" stop-color="#11284C"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E8EEF8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#050E1E" flood-opacity="0.45"/>
+    </filter>
+    <clipPath id="cal">
+      <rect x="196" y="196" width="520" height="470" rx="64"/>
+    </clipPath>
+  </defs>
+  <!-- fondo: cuadrado redondeado -->
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#bg)"/>
+  <g transform="translate(-14 26)">
+  <!-- calendario -->
+  <rect x="196" y="196" width="520" height="470" rx="64" fill="url(#paper)" filter="url(#shadow)"/>
+  <rect x="196" y="196" width="520" height="132" fill="#0650EC" clip-path="url(#cal)"/>
+  <rect x="300" y="148" width="44" height="104" rx="22" fill="#DCE4F2" stroke="#11284C" stroke-width="16"/>
+  <rect x="568" y="148" width="44" height="104" rx="22" fill="#DCE4F2" stroke="#11284C" stroke-width="16"/>
+  <g fill="#9FB1CE">
+    <rect x="252" y="380" width="64" height="52" rx="12"/>
+    <rect x="348" y="380" width="64" height="52" rx="12"/>
+    <rect x="444" y="380" width="64" height="52" rx="12" fill="#22C55E"/>
+    <rect x="252" y="464" width="64" height="52" rx="12"/>
+    <rect x="252" y="548" width="64" height="52" rx="12"/>
+  </g>
+  <!-- sobre (con halo del color del fondo para separarlo del calendario) -->
+  <rect x="356" y="452" width="500" height="372" rx="60" fill="#11284C" stroke="#11284C" stroke-width="40" filter="url(#shadow)"/>
+  <rect x="356" y="452" width="500" height="372" rx="60" fill="url(#paper)"/>
+  <path d="M398 504 L606 664 L814 504" fill="none" stroke="#0650EC" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
