@@ -5,8 +5,7 @@ use egui::{Align, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use iuredesk_model::{ContactId, NoteId, Task, TaskListId};
 use iurefficient_ui::list::{Column, ListState, ListView};
 use iurefficient_ui::{
-    BadgeKind, EmptyState, Icon, PaneKind, SearchField, avatar, badge, fuzzy, icons, pick, section_label, sidebar_item,
-    split, theme,
+    BadgeKind, EmptyState, Icon, PaneKind, avatar, badge, fuzzy, icons, pick, section_label, sidebar_item, split, theme,
 };
 
 use crate::app::DeskApp;
@@ -16,7 +15,7 @@ use crate::widgets::{hairline, info_row, pane_title};
 #[derive(Default)]
 pub struct PimState {
     contact: Option<ContactId>,
-    contact_filter: String,
+    pub(crate) contact_filter: String,
     contact_list: ListState,
     contact_cols: Vec<Column>,
     note: Option<NoteId>,
@@ -49,11 +48,6 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
     split::left(ui, "contacts-list", PaneKind::Sidebar, 320.0, 240.0..=480.0, |ui| {
         ui.add_space(4.0);
         pane_title(ui, pick("Contacts", "Contactos"), &all.len().to_string());
-        ui.add_space(6.0);
-        SearchField::new(&mut app.pim.contact_filter)
-            .id_salt("contact-search")
-            .hint(pick("Find a person", "Buscar una persona"))
-            .show(ui);
         ui.add_space(6.0);
         if app.pim.contact_cols.is_empty() {
             app.pim.contact_cols = vec![Column::new(pick("Name", "Nombre"), 200.0).grow()];

@@ -33,6 +33,9 @@ pub struct Options {
     pub notifier: Option<Notifier>,
     /// Bandera que el puente MCP marca cuando escribe en el almacén (recargar la vista).
     pub external_change: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Barra de título integrada (sin decoraciones del sistema). `None` = la del sistema: la
+    /// barra de la app se dibuja igual, sin botones de ventana ni arrastre.
+    pub chrome: Option<crate::header::WindowChrome>,
 }
 
 impl std::fmt::Debug for Options {
@@ -42,6 +45,7 @@ impl std::fmt::Debug for Options {
             .field("no_theme_watch", &self.no_theme_watch)
             .field("mailto", &self.mailto)
             .field("notifier", &self.notifier.is_some())
+            .field("chrome", &self.chrome)
             .finish()
     }
 }
@@ -190,9 +194,11 @@ impl DeskApp {
             if self.session.wizard.is_none() {
                 self.session.wizard_begin();
             }
+            crate::header::show(self, ui, false);
             crate::onboarding::page(self, ui);
             crate::import_ui::frame(self, &ctx);
             self.toasts.show(&ctx);
+            crate::header::window_frame(self, ui);
             return;
         }
 
@@ -213,6 +219,7 @@ impl DeskApp {
             self.palette_mode = PaletteMode::Commands;
         }
 
+        crate::header::show(self, ui, true);
         self.rail(ui);
         match self.session.module {
             Module::Mail => crate::mail::show(self, ui),
@@ -240,6 +247,55 @@ impl DeskApp {
         self.show_toasts(&ctx);
         if let Some(d) = self.session.next_deadline() {
             ctx.request_repaint_after(d.max(std::time::Duration::from_millis(16)));
+        }
+        crate::header::window_frame(self, ui);
+    }
+
+    /// La barra de título integrada, si la ventana no lleva la del sistema.
+    pub(crate) fn chrome(&self) -> Option<&crate::header::WindowChrome> {
+        self.options.chrome.as_ref()
+    }
+
+    /// Título de la barra: la carpeta y su total en el correo; el módulo en los demás.
+    pub(crate) fn header_title(&self) -> String {
+        match self.session.module {
+            Module::Mail => format!("{} · {}", self.session.folder_title(), self.session.rows().len()),
+            m => m.label().to_string(),
+        }
+    }
+
+    /// Icono y texto del estado de la sincronización.
+    pub(crate) fn sync_label(&self, status: &SyncStatus) -> (iurefficient_ui::Icon, String) {
+        match status {
+            SyncStatus::Off if self.session.is_sample() => (
+                iurefficient_ui::Icon::Sync,
+                pick("Sample mailbox (offline)", "Buzón de ejemplo (sin conexión)").to_string(),
+            ),
+            SyncStatus::Off => {
+                (iurefficient_ui::Icon::Sync, pick("No accounts to sync", "No hay cuentas que sincronizar").to_string())
+            }
+            SyncStatus::Idle => {
+                (iurefficient_ui::Icon::Sync, pick("Mail is up to date", "El correo está al día").to_string())
+            }
+            SyncStatus::Busy(t) => (iurefficient_ui::Icon::Sync, t.clone()),
+            SyncStatus::Offline(t) => {
+                (iurefficient_ui::Icon::Offline, format!("{} — {t}", pick("Offline", "Sin conexión")))
+            }
+            SyncStatus::Error { text, .. } => (iurefficient_ui::Icon::Alert, text.clone()),
+        }
+    }
+
+    /// Clic en el estado de la sincronización (riel o barra).
+    pub(crate) fn sync_clicked(&mut self, ctx: &Context) {
+        if self.session.is_live() {
+            self.sync_open = !self.sync_open;
+        } else if self.session.is_sample() {
+            self.notice(Notice::info(
+                "This is the sample mailbox: nothing is synced. Add your account to use real mail.",
+                "Este es el buzón de ejemplo: no se sincroniza nada. Agrega tu cuenta para usar tu correo.",
+            ));
+        } else {
+            self.run(ctx, "app.add_account");
         }
     }
 
@@ -511,23 +567,7 @@ impl DeskApp {
         let (s_mail, s_cal, s_con, s_not, s_tas, s_ai) =
             (short("mail"), short("calendar"), short("contacts"), short("notes"), short("tasks"), short("assistant"));
         let status = self.session.sync_status();
-        let (sync_icon, sync_label) = match &status {
-            SyncStatus::Off if self.session.is_sample() => (
-                iurefficient_ui::Icon::Sync,
-                pick("Sample mailbox (offline)", "Buzón de ejemplo (sin conexión)").to_string(),
-            ),
-            SyncStatus::Off => {
-                (iurefficient_ui::Icon::Sync, pick("No accounts to sync", "No hay cuentas que sincronizar").to_string())
-            }
-            SyncStatus::Idle => {
-                (iurefficient_ui::Icon::Sync, pick("Mail is up to date", "El correo está al día").to_string())
-            }
-            SyncStatus::Busy(t) => (iurefficient_ui::Icon::Sync, t.clone()),
-            SyncStatus::Offline(t) => {
-                (iurefficient_ui::Icon::Offline, format!("{} — {t}", pick("Offline", "Sin conexión")))
-            }
-            SyncStatus::Error { text, .. } => (iurefficient_ui::Icon::Alert, text.clone()),
-        };
+        let (sync_icon, sync_label) = self.sync_label(&status);
         // Un error nuevo se avisa una vez, con «Reintentar».
         if let SyncStatus::Error { text, .. } = &status {
             if self.last_sync_error.as_deref() != Some(text.as_str()) {
@@ -552,19 +592,7 @@ impl DeskApp {
             NavItem::new("settings", iurefficient_ui::Icon::Settings, pick("Settings", "Ajustes")).bottom(),
             NavItem::new("sync", sync_icon, &sync_label).bottom(),
         ];
-        // Campana de Iurefficient solo si hay sesión (o se recuerda una).
-        let bell_label = pick("Iurefficient notifications", "Avisos de Iurefficient");
-        let bell = NavItem::new("iure-bell", iurefficient_ui::Icon::Bell, bell_label)
-            .badge(u32::try_from(self.session.iure_feed().unread).unwrap_or(u32::MAX))
-            .bottom();
-        let show_bell = matches!(
-            self.session.iure_status(),
-            iuredesk_engine::iure::IureStatus::Ready { .. } | iuredesk_engine::iure::IureStatus::Offline { .. }
-        );
-        let mut items = items.to_vec();
-        if show_bell {
-            items.insert(items.len().saturating_sub(2), bell);
-        }
+        // La campana de Iurefficient está en la barra de título (UI-HEADER).
         let w = rail_width(ui.ctx());
         let current = self.session.module.key();
         let mut clicked: Option<String> = None;
@@ -602,19 +630,7 @@ impl DeskApp {
         });
         match clicked.as_deref() {
             Some("settings") => self.settings_open = true,
-            Some("iure-bell") => self.iure.bell_open = !self.iure.bell_open,
-            Some("sync") => {
-                if self.session.is_live() {
-                    self.sync_open = !self.sync_open;
-                } else if self.session.is_sample() {
-                    self.notice(Notice::info(
-                        "This is the sample mailbox: nothing is synced. Add your account to use real mail.",
-                        "Este es el buzón de ejemplo: no se sincroniza nada. Agrega tu cuenta para usar tu correo.",
-                    ));
-                } else {
-                    self.run(&ui.ctx().clone(), "app.add_account");
-                }
-            }
+            Some("sync") => self.sync_clicked(&ui.ctx().clone()),
             Some(k) => {
                 if let Some(m) = Module::from_key(k) {
                     self.session.module = m;
@@ -761,6 +777,33 @@ pub fn set_language(l: lang::Lang) {
     } else {
         iuredesk_engine::lang::Lang::Es
     });
+}
+
+/// La combinación como atajo de egui (solo si lleva modificadores: los de una tecla no se
+/// muestran ni se consumen en un campo).
+pub(crate) fn keyboard_shortcut(c: &Chord) -> Option<egui::KeyboardShortcut> {
+    if !c.has_modifier() {
+        return None;
+    }
+    let name = match c.key.strip_prefix("Num") {
+        Some(d) if d.len() == 1 => format!("Digit{d}"),
+        _ => c.key.to_string(),
+    };
+    let key = Key::from_name(&name)?;
+    let mut m = Modifiers::NONE;
+    if c.command || (c.ctrl && !cfg!(target_os = "macos")) {
+        m |= Modifiers::COMMAND;
+    }
+    if c.ctrl && cfg!(target_os = "macos") {
+        m |= Modifiers::CTRL;
+    }
+    if c.shift {
+        m |= Modifiers::SHIFT;
+    }
+    if c.alt {
+        m |= Modifiers::ALT;
+    }
+    Some(egui::KeyboardShortcut::new(m, key))
 }
 
 /// ¿La tecla y los modificadores son exactamente la combinación?

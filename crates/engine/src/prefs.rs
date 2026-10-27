@@ -149,6 +149,9 @@ pub struct Prefs {
     /// Avisar con una notificación del escritorio de los recordatorios.
     #[serde(default = "yes")]
     pub notify_reminders: bool,
+    /// Usar la barra de título del sistema en vez de la integrada (se aplica al reiniciar).
+    #[serde(default)]
+    pub native_decorations: bool,
 }
 
 fn default_iure_poll() -> u32 {
@@ -181,6 +184,7 @@ impl Default for Prefs {
             hidden_calendars: Vec::new(),
             secondary_tz: None,
             notify_reminders: true,
+            native_decorations: false,
         }
     }
 }

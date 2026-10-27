@@ -8,6 +8,8 @@
 //!   corre dentro de ella por el puente IPC; si no, abre el almacén solo durante la llamada.
 //! - `IUREDESK_DATA_DIR=/ruta` usa esa carpeta para todo (almacén, cuentas y preferencias): sirve
 //!   para probar con una cuenta real sin tocar la instalación normal.
+//! - `IUREDESK_NATIVE_DECORATIONS=1` usa la barra de título del sistema (`0`, la integrada); sin
+//!   la variable decide la preferencia «Barra de título del sistema».
 #![deny(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -38,6 +40,7 @@ Uso: iuredesk [--sample] [mailto:…]
 
 Variables:
   IUREDESK_DATA_DIR=/ruta   carpeta de datos propia (almacén, cuentas y preferencias)
+  IUREDESK_NATIVE_DECORATIONS=1   barra de título del sistema (0 = la integrada)
 ";
 
 /// Carpeta de datos elegida con `IUREDESK_DATA_DIR`, si hay.
@@ -68,6 +71,64 @@ fn notifier() -> Option<Notifier> {
     None
 }
 
+/// ¿Barra de título del sistema? La variable manda sobre la preferencia.
+fn native_decorations(pref: bool) -> bool {
+    match std::env::var("IUREDESK_NATIVE_DECORATIONS").ok().as_deref().map(str::trim) {
+        Some("1" | "true" | "yes") => true,
+        Some("0" | "false" | "no") => false,
+        _ => pref,
+    }
+}
+
+/// Orden de los botones de la ventana del escritorio (GNOME: `button-layout`) por el portal de
+/// configuración XDG. Se espera como mucho 300 ms: si el bus tarda, se usa el orden de siempre.
+#[cfg(target_os = "linux")]
+fn button_layout() -> Option<String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("iuredesk-button-layout".into())
+        .spawn(move || {
+            let _ = tx.send(read_button_layout());
+        })
+        .ok()?;
+    rx.recv_timeout(std::time::Duration::from_millis(300)).ok().flatten()
+}
+
+#[cfg(target_os = "linux")]
+fn read_button_layout() -> Option<String> {
+    use zbus::zvariant::{OwnedValue, Value};
+    let conn = zbus::blocking::Connection::session().ok()?;
+    let call = |method: &str| {
+        conn.call_method(
+            Some("org.freedesktop.portal.Desktop"),
+            "/org/freedesktop/portal/desktop",
+            Some("org.freedesktop.portal.Settings"),
+            method,
+            &("org.gnome.desktop.wm.preferences", "button-layout"),
+        )
+    };
+    // `ReadOne` (portales nuevos) da el valor; `Read` (viejos) lo da dentro de otra variante.
+    let value: OwnedValue = match call("ReadOne") {
+        Ok(m) => m.body().deserialize().ok()?,
+        Err(_) => call("Read").ok()?.body().deserialize().ok()?,
+    };
+    let mut v: &Value = &value;
+    // Variantes anidadas, con límite.
+    for _ in 0..4 {
+        match v {
+            Value::Value(inner) => v = inner,
+            Value::Str(s) => return Some(s.as_str().chars().take(256).collect()),
+            _ => return None,
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn button_layout() -> Option<String> {
+    None
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Antes de cualquier salida: en modo MCP, stdout es solo del protocolo.
@@ -95,6 +156,22 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let native = native_decorations(session.prefs.native_decorations);
+    let chrome = (!native).then(|| iuredesk_ui::WindowChrome::for_this_os(button_layout().as_deref()));
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("IureDesk")
+        .with_app_id("iuredesk")
+        .with_inner_size([1440.0, 900.0])
+        .with_min_inner_size([880.0, 560.0]);
+    if chrome.is_some() {
+        // macOS: los semáforos del sistema se quedan sobre nuestra barra; en Linux y Windows la
+        // barra entera es nuestra (sin decoraciones, ventana opaca).
+        viewport = if cfg!(target_os = "macos") {
+            viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false)
+        } else {
+            viewport.with_decorations(false).with_transparent(false)
+        };
+    }
     let app = DeskApp::new(
         session,
         Options {
@@ -103,17 +180,11 @@ fn main() -> ExitCode {
             mailto,
             notifier: notifier(),
             external_change: Some(changed),
+            chrome,
         },
     );
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("IureDesk")
-            .with_app_id("iuredesk")
-            .with_inner_size([1440.0, 900.0])
-            .with_min_inner_size([880.0, 560.0]),
-        ..Default::default()
-    };
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
     match eframe::run_native("IureDesk", options, Box::new(|_| Ok(Box::new(App { app, _bridge: bridge })))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

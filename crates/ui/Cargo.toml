@@ -24,6 +24,8 @@ rfd = { workspace = true }
 iuredesk-accounts = { workspace = true }
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
 tempfile = { workspace = true }
+# Recorte de las capturas de `ui_shot` (`--crop-height`).
+image = { workspace = true }
 
 [lints]
 workspace = true
