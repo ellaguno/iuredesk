@@ -3048,6 +3048,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "iuredesk-import"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "chrono-tz",
+ "dirs",
+ "iuredesk-dav",
+ "iuredesk-model",
+ "iuredesk-pim-sync",
+ "iuredesk-store",
+ "iuredesk-sync",
+ "mail-builder",
+ "mail-parser",
+ "outlook-pst",
+ "outlook-pst-rw",
+ "proptest",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "iuredesk-model"
 version = "0.1.0-alpha.0"
 dependencies = [
@@ -4318,6 +4344,28 @@ checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "outlook-pst"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "299eace9d895cc31490927d7de779f8e8f3deb5fb6bd1e68eb192aa1da19bd47"
+dependencies = [
+ "byteorder",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "outlook-pst-rw"
+version = "1.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "133b2dfbd0c150b480245dd058a81f0e7b5d122d92502f1554b59476fa5decdf"
+dependencies = [
+ "byteorder",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

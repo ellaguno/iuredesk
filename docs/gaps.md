@@ -36,3 +36,9 @@ Ids `F<fase>.<n>`. Estado: ☐ pendiente · ◐ en curso · ☑ hecho.
 | Id | Tarea | Estado |
 |---|---|---|
 | F3.0 | Inventario de la API de la instancia para el PIM y propuesta de lo que falta (REST + CalDAV/CardDAV, vincular correo) en `docs/iurefficient-api.md`; módulo `pim` en `iurefficient-connect` (rama `iuredesk`, sin publicar) | ◐ |
+
+## F5 · Paridad y pulido
+
+| Id | Tarea | Estado |
+|---|---|---|
+| F5.1 | `import` (L3): migración local, por flujo, reanudable (`import/checkpoint.json`), con eventos de progreso e informe (recuentos, omitidos con motivo es/en, avisos). Thunderbird (perfiles de `profiles.ini` en Linux/macOS/Windows, `prefs.js`, mbox con `.sbd`/`.msf`, Maildir, `X-Mozilla-Status`/`Keys`, libretas `abook.sqlite` con lector SQLite propio + WAL), Apple Mail (`V<n>`, `.emlx` con plist, `.partial.emlx` con adjuntos reinsertados, buzones anidados y exportados), Outlook `.pst` con `outlook-pst` de Microsoft (correo + carpetas + adjuntos + cabeceras originales, RTF LZFu, contactos, citas con `RRULE`/`EXDATE` y zonas de Windows, tareas, notas; pánicos del lector aislados), Gmail Takeout (`X-Gmail-Labels` → carpetas/etiquetas/banderas), `.mbox`, Maildir++, `.eml`, `.emlx`, `.ics` (eventos/tareas/diario, series con excepciones como objeto crudo), `.vcf` (2.1 QP, 3.0, 4.0, UTF-16); deduplicación `Message-ID` + huella, por `UID` en PIM; funciones de carpeta por nombre en 8 idiomas; `find_installed`/`detect`; ejemplo `import`; `docs/import.md`. Pendiente: asistente en la UI/comando del motor, `.ost` modernos y `.msg`, excepciones de citas de Outlook, listas de distribución, calendario `local.sqlite` y `.mab` de Thunderbird, mensajes > 128 MiB por partes | ◐ |

@@ -13,6 +13,7 @@ members = [
     "crates/dav",
     "crates/pim-sync",
     "crates/compose",
+    "crates/import",
     "crates/engine",
     "crates/html-view",
     "crates/ui",
@@ -42,6 +43,7 @@ iuredesk-sync = { path = "crates/sync" }
 iuredesk-dav = { path = "crates/dav" }
 iuredesk-pim-sync = { path = "crates/pim-sync" }
 iuredesk-compose = { path = "crates/compose" }
+iuredesk-import = { path = "crates/import" }
 iuredesk-engine = { path = "crates/engine" }
 iuredesk-html-view = { path = "crates/html-view" }
 iuredesk-ui = { path = "crates/ui" }
@@ -77,6 +79,10 @@ mail-builder = { version = "0.4", default-features = false }
 pulldown-cmark = { version = "0.13", default-features = false }
 idna = "1"
 proptest = "1"
+# importación (F5.1): lector PST de Microsoft (Rust puro, MIT) y, solo en pruebas, su bifurcación
+# con escritor para generar archivos PST sintéticos
+outlook-pst = "1.2"
+pst-writer = { package = "outlook-pst-rw", version = "1.2.14" }
 anyhow = "1"
 # recurrencias RFC 5545 (Rust puro; ver la elección en crates/dav/src/lib.rs)
 rrule = { version = "0.14", default-features = false }
