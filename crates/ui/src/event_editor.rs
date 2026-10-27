@@ -7,16 +7,16 @@
 
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Weekday};
 use egui::{Align, Color32, Context, Layout, Pos2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
+use iuredesk_engine::SeriesScope;
 use iuredesk_engine::calendar::Occurrence;
-use iuredesk_engine::calendar::drag::DAY_MIN;
 use iuredesk_engine::calendar::draft::{COMMON_ZONES, EventDraft, REMINDER_CHOICES, reminder_label};
+use iuredesk_engine::calendar::drag::DAY_MIN;
 use iuredesk_engine::calendar::invite::partstat_label;
 use iuredesk_engine::calendar::repeat::{Freq, MonthlyBy, Preset, Repeat, RepeatEnd, weekday_letter};
 use iuredesk_engine::calendar::schedule::{Availability, suggest};
 use iuredesk_engine::time::{month_name, weekday_short};
 use iuredesk_engine::{Notice, Outcome};
 use iuredesk_model::{AttendeeRole, EventTime, Mailbox};
-use iuredesk_engine::SeriesScope;
 use iurefficient_ui::{Icon, icons, pick, primary_button, section_label, theme};
 
 use crate::app::DeskApp;
@@ -102,10 +102,8 @@ pub(crate) fn open_occurrence(app: &mut DeskApp, o: &Occurrence) {
 pub(crate) fn quick_create(app: &mut DeskApp, start: NaiveDateTime, end: NaiveDateTime, all_day: bool, pos: Pos2) {
     match app.session.new_event_draft(start, end, all_day) {
         Some(draft) => app.calendar.editor.quick = Some(Quick { draft, pos, focused: false }),
-        None => app.notice(Notice::info(
-            "Add an account with a calendar first.",
-            "Primero agrega una cuenta con calendario.",
-        )),
+        None => app
+            .notice(Notice::info("Add an account with a calendar first.", "Primero agrega una cuenta con calendario.")),
     }
 }
 
@@ -198,11 +196,12 @@ fn calendar_combo(app: &DeskApp, ui: &mut Ui, id: &str, draft: &mut EventDraft, 
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
         ui.painter().circle_filled(r.center(), 5.0, rgb(dot));
-        egui::ComboBox::from_id_salt(id).width(width).selected_text(text).show_ui(ui, |ui| {
+        let combo = egui::ComboBox::from_id_salt(id).width(width).selected_text(text).show_ui(ui, |ui| {
             for c in &cals {
                 ui.selectable_value(&mut draft.calendar, c.id, &c.name);
             }
         });
+        crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Calendar", "Calendario"));
     });
 }
 
@@ -212,7 +211,10 @@ fn quick_popover(app: &mut DeskApp, ctx: &Context) {
     let Some(mut q) = app.calendar.editor.quick.take() else { return };
     let screen = ctx.content_rect();
     let w = 300.0;
-    let pos = pos2((q.pos.x + 8.0).min(screen.right() - w - 12.0).max(screen.left() + 8.0), q.pos.y.clamp(60.0, screen.bottom() - 220.0));
+    let pos = pos2(
+        (q.pos.x + 8.0).min(screen.right() - w - 12.0).max(screen.left() + 8.0),
+        q.pos.y.clamp(60.0, screen.bottom() - 220.0),
+    );
     let mut keep = true;
     let mut more = false;
     let mut do_save = false;
@@ -221,7 +223,11 @@ fn quick_popover(app: &mut DeskApp, ctx: &Context) {
         egui::Frame::popup(ui.style()).corner_radius(10.0).inner_margin(14.0).show(ui, |ui| {
             ui.set_width(w);
             ui.horizontal(|ui| {
-                ui.label(RichText::new(pick("New event", "Nuevo evento")).font(theme::bold_font(ui.ctx(), 14.0)).color(c.text));
+                ui.label(
+                    RichText::new(pick("New event", "Nuevo evento"))
+                        .font(theme::bold_font(ui.ctx(), 14.0))
+                        .color(c.text),
+                );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if icons::icon_button(ui, Icon::Close, pick("Close", "Cerrar"), true).clicked() {
                         keep = false;
@@ -298,9 +304,12 @@ fn full_editor(app: &mut DeskApp, ctx: &Context) {
         .max_height(ctx.content_rect().height() - 40.0)
         .default_pos(ctx.content_rect().center() - vec2(310.0, 320.0))
         .show(ctx, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, true]).max_height(ctx.content_rect().height() - 150.0).show(ui, |ui| {
-                ui.add_enabled_ui(!f.read_only, |ui| editor_body(app, ui, &mut f));
-            });
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, true])
+                .max_height(ctx.content_rect().height() - 150.0)
+                .show(ui, |ui| {
+                    ui.add_enabled_ui(!f.read_only, |ui| editor_body(app, ui, &mut f));
+                });
             ui.separator();
             ui.horizontal(|ui| {
                 if f.draft.id.is_some() && !f.read_only {
@@ -310,7 +319,10 @@ fn full_editor(app: &mut DeskApp, ctx: &Context) {
                     }
                 }
                 if f.read_only {
-                    ui.label(RichText::new(pick("Read-only calendar", "Calendario de solo lectura")).color(theme::colors(ui).text_muted));
+                    ui.label(
+                        RichText::new(pick("Read-only calendar", "Calendario de solo lectura"))
+                            .color(theme::colors(ui).text_muted),
+                    );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if !f.read_only && primary_button(ui, pick("Save", "Guardar")).clicked() {
@@ -358,7 +370,7 @@ fn row_icon(ui: &mut Ui, ic: Icon) {
 
 fn time_combo(ui: &mut Ui, id: (&str, u8), min: &mut i64, end: bool) {
     let mut v = *min;
-    egui::ComboBox::from_id_salt(id).width(74.0).selected_text(hm(v)).height(280.0).show_ui(ui, |ui| {
+    let combo = egui::ComboBox::from_id_salt(id).width(74.0).selected_text(hm(v)).height(280.0).show_ui(ui, |ui| {
         let from = if end { 15 } else { 0 };
         let to = if end { DAY_MIN } else { DAY_MIN - 15 };
         let mut m = from;
@@ -367,12 +379,13 @@ fn time_combo(ui: &mut Ui, id: (&str, u8), min: &mut i64, end: bool) {
             m += 15;
         }
     });
+    crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Time", "Hora"));
     *min = v;
 }
 
 fn date_field(ui: &mut Ui, text: &mut String, value: &mut NaiveDate) -> bool {
     let r = ui.add(egui::TextEdit::singleline(text).desired_width(96.0).hint_text(pick("YYYY-MM-DD", "AAAA-MM-DD")));
-    iurefficient_ui::a11y::label(&r, pick("Date", "Fecha"));
+    crate::widgets::named(&r, egui::Role::TextInput, pick("Date", "Fecha"));
     if r.changed()
         && let Ok(d) = NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d")
     {
@@ -395,7 +408,7 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
             .font(theme::bold_font(ui.ctx(), 18.0))
             .desired_width(f32::INFINITY),
     );
-    iurefficient_ui::a11y::label(&t, pick("Title", "Título"));
+    crate::widgets::named(&t, egui::Role::TextInput, pick("Title", "Título"));
     if !f.focused {
         if f.draft.id.is_none() {
             t.request_focus();
@@ -409,7 +422,7 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
                 .hint_text(pick("Add a location or video link", "Añade un lugar o enlace de videollamada"))
                 .desired_width(f32::INFINITY),
         );
-        iurefficient_ui::a11y::label(&r, pick("Location", "Lugar"));
+        crate::widgets::named(&r, egui::Role::TextInput, pick("Location", "Lugar"));
     });
 
     // Cuándo.
@@ -421,9 +434,14 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
             if !f.draft.all_day {
                 let current = f.draft.tz.clone();
                 let mut chosen = current.clone();
-                egui::ComboBox::from_id_salt("ev-tz")
+                let combo = egui::ComboBox::from_id_salt("ev-tz")
                     .width(170.0)
-                    .selected_text(current.as_deref().map(tz_label).unwrap_or_else(|| pick("My time zone", "Mi zona horaria").into()))
+                    .selected_text(
+                        current
+                            .as_deref()
+                            .map(tz_label)
+                            .unwrap_or_else(|| pick("My time zone", "Mi zona horaria").into()),
+                    )
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut chosen, None, pick("My time zone", "Mi zona horaria"));
                         if let Some(cur) = &current
@@ -435,6 +453,7 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
                             ui.selectable_value(&mut chosen, Some(z.to_string()), tz_label(z));
                         }
                     });
+                crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Time zone", "Zona horaria"));
                 if chosen != current {
                     // Las horas siguen siendo el mismo instante en la zona nueva.
                     let (s, e) = f.draft.times(zone);
@@ -496,11 +515,13 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
         row_icon(ui, Icon::Bell);
         let mut remove = None;
         for (i, m) in f.draft.reminders.iter_mut().enumerate() {
-            egui::ComboBox::from_id_salt(("ev-rem", i)).selected_text(reminder_label(*m)).show_ui(ui, |ui| {
-                for choice in REMINDER_CHOICES {
-                    ui.selectable_value(m, choice, reminder_label(choice));
-                }
-            });
+            let combo =
+                egui::ComboBox::from_id_salt(("ev-rem", i)).selected_text(reminder_label(*m)).show_ui(ui, |ui| {
+                    for choice in REMINDER_CHOICES {
+                        ui.selectable_value(m, choice, reminder_label(choice));
+                    }
+                });
+            crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Reminder", "Recordatorio"));
             if icons::icon_button(ui, Icon::Close, pick("Remove reminder", "Quitar recordatorio"), true).clicked() {
                 remove = Some(i);
             }
@@ -530,12 +551,17 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
         row_icon(ui, Icon::Calendar);
         calendar_combo(app, ui, "ev-cal", &mut f.draft, 180.0);
         ui.add_space(8.0);
-        egui::ComboBox::from_id_salt("ev-busy")
-            .selected_text(if f.draft.busy { pick("Show as busy", "Mostrar como ocupado") } else { pick("Show as free", "Mostrar como disponible") })
+        let combo = egui::ComboBox::from_id_salt("ev-busy")
+            .selected_text(if f.draft.busy {
+                pick("Show as busy", "Mostrar como ocupado")
+            } else {
+                pick("Show as free", "Mostrar como disponible")
+            })
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut f.draft.busy, true, pick("Busy", "Ocupado"));
                 ui.selectable_value(&mut f.draft.busy, false, pick("Free", "Disponible"));
             });
+        crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Show as", "Mostrar como"));
         ui.add_space(8.0);
         ui.checkbox(&mut f.draft.private, pick("Private", "Privado"));
     });
@@ -558,11 +584,14 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
     } else {
         let r = ui.add(
             egui::TextEdit::multiline(&mut f.draft.description)
-                .hint_text(pick("Notes (Markdown: **bold**, - lists, # headings)", "Notas (Markdown: **negrita**, - listas, # títulos)"))
+                .hint_text(pick(
+                    "Notes (Markdown: **bold**, - lists, # headings)",
+                    "Notas (Markdown: **negrita**, - listas, # títulos)",
+                ))
                 .desired_rows(4)
                 .desired_width(f32::INFINITY),
         );
-        iurefficient_ui::a11y::label(&r, pick("Description", "Descripción"));
+        crate::widgets::named(&r, egui::Role::TextInput, pick("Description", "Descripción"));
     }
 }
 
@@ -573,11 +602,12 @@ fn repeat_editor(ui: &mut Ui, f: &mut Full) {
     ui.horizontal(|ui| {
         row_icon(ui, Icon::Sync);
         let mut p = preset;
-        egui::ComboBox::from_id_salt("ev-repeat").width(220.0).selected_text(p.label()).show_ui(ui, |ui| {
+        let combo = egui::ComboBox::from_id_salt("ev-repeat").width(220.0).selected_text(p.label()).show_ui(ui, |ui| {
             for x in Preset::ALL {
                 ui.selectable_value(&mut p, x, x.label());
             }
         });
+        crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Repeat", "Repetir"));
         if p != preset {
             f.draft.repeat = f.draft.repeat.from_preset(p, start);
         }
@@ -598,7 +628,7 @@ fn repeat_editor(ui: &mut Ui, f: &mut Full) {
             let mut n = r.interval.max(1);
             ui.add(egui::DragValue::new(&mut n).range(1..=99));
             r.interval = n;
-            egui::ComboBox::from_id_salt("ev-freq")
+            let combo = egui::ComboBox::from_id_salt("ev-freq")
                 .selected_text(match r.freq {
                     Freq::Daily => pick("days", "días"),
                     Freq::Weekly => pick("weeks", "semanas"),
@@ -612,10 +642,13 @@ fn repeat_editor(ui: &mut Ui, f: &mut Full) {
                     ui.selectable_value(&mut r.freq, Freq::Monthly, pick("months", "meses"));
                     ui.selectable_value(&mut r.freq, Freq::Yearly, pick("years", "años"));
                 });
+            crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Frequency", "Frecuencia"));
         });
         if r.freq == Freq::Weekly {
             ui.horizontal(|ui| {
-                for w in [Weekday::Mon, Weekday::Tue, Weekday::Wed, Weekday::Thu, Weekday::Fri, Weekday::Sat, Weekday::Sun] {
+                for w in
+                    [Weekday::Mon, Weekday::Tue, Weekday::Wed, Weekday::Thu, Weekday::Fri, Weekday::Sat, Weekday::Sun]
+                {
                     let on = r.weekdays.contains(&w) || (r.weekdays.is_empty() && w == start.weekday());
                     if ui.selectable_label(on, weekday_letter(w)).clicked() {
                         if r.weekdays.is_empty() {
@@ -632,9 +665,16 @@ fn repeat_editor(ui: &mut Ui, f: &mut Full) {
         }
         if r.freq == Freq::Monthly {
             ui.horizontal(|ui| {
-                ui.radio_value(&mut r.monthly, MonthlyBy::Date, format!("{} {}", pick("On day", "El día"), start.day()));
-                let nth = Repeat { freq: Freq::Monthly, monthly: MonthlyBy::NthWeekday, ..Repeat::none() }.describe(start);
-                let nth = nth.split_once(' ').map_or(nth.clone(), |(_, rest)| rest.split_once(' ').map_or(rest.to_string(), |(_, r)| r.to_string()));
+                ui.radio_value(
+                    &mut r.monthly,
+                    MonthlyBy::Date,
+                    format!("{} {}", pick("On day", "El día"), start.day()),
+                );
+                let nth =
+                    Repeat { freq: Freq::Monthly, monthly: MonthlyBy::NthWeekday, ..Repeat::none() }.describe(start);
+                let nth = nth.split_once(' ').map_or(nth.clone(), |(_, rest)| {
+                    rest.split_once(' ').map_or(rest.to_string(), |(_, r)| r.to_string())
+                });
                 ui.radio_value(&mut r.monthly, MonthlyBy::NthWeekday, nth);
             });
         }
@@ -678,7 +718,7 @@ fn attendees_editor(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
                 .hint_text(pick("Invite people (name or email)", "Invitar personas (nombre o correo)"))
                 .desired_width(ui.available_width() - 110.0),
         );
-        iurefficient_ui::a11y::label(&r, pick("Invite people", "Invitar personas"));
+        crate::widgets::named(&r, egui::Role::TextInput, pick("Invite people", "Invitar personas"));
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && f.attendee.contains('@') {
             add = Some(Mailbox { name: None, addr: f.attendee.trim().to_string() });
         }
@@ -724,13 +764,14 @@ fn attendees_editor(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
                     remove = Some(i);
                 }
                 let mut opt = a.role == AttendeeRole::Optional;
-                egui::ComboBox::from_id_salt(("ev-role", i))
+                let combo = egui::ComboBox::from_id_salt(("ev-role", i))
                     .width(96.0)
                     .selected_text(if opt { pick("Optional", "Opcional") } else { pick("Required", "Obligatorio") })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut opt, false, pick("Required", "Obligatorio"));
                         ui.selectable_value(&mut opt, true, pick("Optional", "Opcional"));
                     });
+                crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Role", "Papel"));
                 a.role = if opt { AttendeeRole::Optional } else { AttendeeRole::Required };
             });
         });
@@ -771,31 +812,57 @@ fn scheduling_assistant(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
         let x = x_of(h * 60);
         p.vline(x, (rect.top() + 14.0)..=rect.bottom(), Stroke::new(1.0, mix(c.surface, c.separator, 0.6)));
         if h % 2 == 1 && h < h1 {
-            p.text(pos2(x, rect.top() + 6.0), egui::Align2::CENTER_CENTER, format!("{h}"), egui::FontId::proportional(10.0), c.text_muted);
+            p.text(
+                pos2(x, rect.top() + 6.0),
+                egui::Align2::CENTER_CENTER,
+                format!("{h}"),
+                egui::FontId::proportional(10.0),
+                c.text_muted,
+            );
         }
     }
     let day_start = zone.day_start(day);
     let min_of = |t: chrono::DateTime<chrono::Utc>| (t - day_start).num_minutes();
     for (i, (name, av)) in rows.iter().enumerate() {
         let y = rect.top() + 16.0 + row_h * i as f32;
-        p.text(pos2(rect.left() + 26.0, y + row_h / 2.0), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(12.0), c.text);
+        p.text(
+            pos2(rect.left() + 26.0, y + row_h / 2.0),
+            egui::Align2::LEFT_CENTER,
+            name,
+            egui::FontId::proportional(12.0),
+            c.text,
+        );
         let lane = Rect::from_min_max(pos2(x0, y + 3.0), pos2(x0 + bar_w, y + row_h - 3.0));
         p.rect_filled(lane, 3.0, c.surface_alt);
         match av {
             Availability::Busy(b) => {
                 for (s, e, tentative) in b {
-                    let r = Rect::from_min_max(pos2(x_of(min_of(*s)), lane.top()), pos2(x_of(min_of(*e)), lane.bottom()));
+                    let r =
+                        Rect::from_min_max(pos2(x_of(min_of(*s)), lane.top()), pos2(x_of(min_of(*e)), lane.bottom()));
                     if r.width() > 0.5 {
-                        let col = if *tentative { mix(c.surface, c.accent, 0.35) } else { mix(c.surface, c.accent, 0.75) };
+                        let col =
+                            if *tentative { mix(c.surface, c.accent, 0.35) } else { mix(c.surface, c.accent, 0.75) };
                         p.rect_filled(r, 2.0, col);
                     }
                 }
             }
             Availability::Unknown => {
-                p.text(lane.left_center() + vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, pick("availability unknown", "disponibilidad desconocida"), egui::FontId::proportional(11.0), c.text_muted);
+                p.text(
+                    lane.left_center() + vec2(8.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    pick("availability unknown", "disponibilidad desconocida"),
+                    egui::FontId::proportional(11.0),
+                    c.text_muted,
+                );
             }
             Availability::Loading => {
-                p.text(lane.left_center() + vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, pick("checking…", "consultando…"), egui::FontId::proportional(11.0), c.text_muted);
+                p.text(
+                    lane.left_center() + vec2(8.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    pick("checking…", "consultando…"),
+                    egui::FontId::proportional(11.0),
+                    c.text_muted,
+                );
             }
         }
     }
@@ -814,7 +881,10 @@ fn scheduling_assistant(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
         ui.add_space(26.0);
         ui.label(RichText::new(pick("Suggested:", "Sugerencias:")).color(c.text_muted));
         if slots.is_empty() {
-            ui.label(RichText::new(pick("no common gap in the next two weeks", "ningún hueco común en dos semanas")).color(c.text_muted));
+            ui.label(
+                RichText::new(pick("no common gap in the next two weeks", "ningún hueco común en dos semanas"))
+                    .color(c.text_muted),
+            );
         }
         for s in slots {
             let l = zone.local(s);
@@ -887,8 +957,14 @@ fn scope_question(app: &mut DeskApp, ctx: &Context) {
     let Some(pending) = app.calendar.editor.ask.take() else { return };
     let mut choice: Option<Option<SeriesScope>> = None;
     let (title, body) = match &pending {
-        Pending::Delete(_) => (pick("Delete a repeating event", "Eliminar un evento que se repite"), pick("Which events do you want to delete?", "¿Qué eventos quieres eliminar?")),
-        _ => (pick("Change a repeating event", "Cambiar un evento que se repite"), pick("Which events do you want to change?", "¿Qué eventos quieres cambiar?")),
+        Pending::Delete(_) => (
+            pick("Delete a repeating event", "Eliminar un evento que se repite"),
+            pick("Which events do you want to delete?", "¿Qué eventos quieres eliminar?"),
+        ),
+        _ => (
+            pick("Change a repeating event", "Cambiar un evento que se repite"),
+            pick("Which events do you want to change?", "¿Qué eventos quieres cambiar?"),
+        ),
     };
     egui::Modal::new(egui::Id::unique("series-scope")).show(ctx, |ui| {
         let c = theme::colors(ui);
@@ -932,5 +1008,45 @@ fn scope_question(app: &mut DeskApp, ctx: &Context) {
             };
             finish(app, r);
         }
+    }
+}
+
+// ------------------------------------------------------------------ pruebas y capturas
+
+impl DeskApp {
+    /// Cambia la vista del calendario (`day`, `work_week`, `week`, `month`, `agenda`).
+    pub fn set_calendar_view(&mut self, key: &str) {
+        if let Some(v) = iuredesk_engine::calendar::nav::CalView::from_key(key) {
+            self.session.set_cal_view(v);
+        }
+    }
+
+    /// Abre el editor sobre una cita de esta semana con invitados (capturas y pruebas).
+    pub fn demo_event_editor(&mut self) -> bool {
+        let zone = self.session.zone();
+        let mon = iuredesk_engine::time::monday_of(self.session.today());
+        let occ = self.session.visible_occurrences(zone.day_start(mon), zone.day_start(mon + Duration::days(5)));
+        let found = occ.iter().find(|o| {
+            !o.recurring
+                && !o.all_day
+                && self.session.calendar_event(o.id).is_some_and(|e| e.attendees.len() >= 2 && !e.location.is_empty())
+        });
+        match found.cloned() {
+            Some(o) => {
+                open_occurrence(self, &o);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// ¿Está abierto el editor de eventos?
+    pub fn event_editor_open(&self) -> bool {
+        self.calendar.editor.full.is_some()
+    }
+
+    /// ¿Está abierto el aviso de crear rápido?
+    pub fn quick_create_open(&self) -> bool {
+        self.calendar.editor.quick.is_some()
     }
 }

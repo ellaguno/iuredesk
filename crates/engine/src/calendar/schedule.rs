@@ -87,7 +87,14 @@ mod tests {
         let me = Availability::Busy(vec![(at(21, 9, 0), at(21, 11, 0), false)]);
         let ana = Availability::Busy(vec![(at(21, 11, 0), at(21, 12, 0), true)]);
         let unknown = Availability::Unknown;
-        let s = suggest(&[me, ana, unknown], NaiveDate::from_ymd_opt(2026, 10, 21).unwrap(), 60, Zone::utc(), at(21, 8, 0), 3);
+        let s = suggest(
+            &[me, ana, unknown],
+            NaiveDate::from_ymd_opt(2026, 10, 21).unwrap(),
+            60,
+            Zone::utc(),
+            at(21, 8, 0),
+            3,
+        );
         assert_eq!(s, vec![at(21, 12, 0), at(21, 13, 0), at(21, 14, 0)]);
         // Sábado 24 → el lunes 26.
         let s = suggest(&[], NaiveDate::from_ymd_opt(2026, 10, 24).unwrap(), 30, Zone::utc(), at(21, 8, 0), 1);

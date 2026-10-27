@@ -118,6 +118,14 @@ pub fn info_row(ui: &mut Ui, ic: Icon, label: &str, value: &str) {
     });
 }
 
+/// Nombre accesible de un control sin etiqueta visible (campo de texto, desplegable), sin cambiar
+/// su papel.
+pub fn named(resp: &Response, typ: egui::Role, name: &str) {
+    let enabled = resp.enabled();
+    let name = name.to_string();
+    resp.widget_info(move || egui::WidgetInfo::labeled(typ, enabled, name.clone()));
+}
+
 /// Separador horizontal fino con el color del tema.
 pub fn hairline(ui: &mut Ui) {
     let c = theme::colors(ui);

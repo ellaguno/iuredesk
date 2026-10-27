@@ -75,8 +75,10 @@ pub fn calendar_parts(raw: &[u8]) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
     for part in msg.parts.iter().take(MAX_PARTS) {
         let Some(ct) = part.content_type() else { continue };
-        let is_cal = ct.ctype().eq_ignore_ascii_case("text") && ct.subtype().is_some_and(|s| s.eq_ignore_ascii_case("calendar"))
-            || ct.ctype().eq_ignore_ascii_case("application") && ct.subtype().is_some_and(|s| s.eq_ignore_ascii_case("ics"));
+        let is_cal = ct.ctype().eq_ignore_ascii_case("text")
+            && ct.subtype().is_some_and(|s| s.eq_ignore_ascii_case("calendar"))
+            || ct.ctype().eq_ignore_ascii_case("application")
+                && ct.subtype().is_some_and(|s| s.eq_ignore_ascii_case("ics"));
         if !is_cal {
             continue;
         }

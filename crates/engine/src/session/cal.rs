@@ -20,7 +20,7 @@ use iuredesk_store::{PimRef, Store};
 use super::{Inverse, Module, Notice, Outcome, Session};
 use crate::calendar::Occurrence;
 use crate::calendar::draft::EventDraft;
-use crate::calendar::invite::{Freshness, InviteKind, Invitation, freshness, parse_invitation};
+use crate::calendar::invite::{Freshness, Invitation, InviteKind, freshness, parse_invitation};
 use crate::calendar::nav::{CalView, shift};
 use crate::calendar::reminders::{Candidate, DueReminder, ReminderKey, ReminderState};
 use crate::calendar::schedule::Availability;
@@ -323,10 +323,7 @@ impl Session {
             let start = occurrence_start(o);
             let (s, e) = match (o.days, o.all_day) {
                 (Some((a, b)), true) => (EventTime::Date(a), EventTime::Date(b)),
-                _ => (
-                    EventTime::DateTime { utc: o.start, tzid: None },
-                    EventTime::DateTime { utc: o.end, tzid: None },
-                ),
+                _ => (EventTime::DateTime { utc: o.start, tzid: None }, EventTime::DateTime { utc: o.end, tzid: None }),
             };
             let _ = start;
             Some((s, e))
@@ -380,7 +377,13 @@ impl Session {
     }
 
     /// Mueve o estira una aparición (arrastre en la rejilla).
-    pub fn reschedule(&mut self, o: &Occurrence, start: EventTime, end: EventTime, scope: SeriesScope) -> Result<Outcome> {
+    pub fn reschedule(
+        &mut self,
+        o: &Occurrence,
+        start: EventTime,
+        end: EventTime,
+        scope: SeriesScope,
+    ) -> Result<Outcome> {
         let Some(ev) = self.calendar_event(o.id) else { return Err(EngineError::NoSelection) };
         let mut edited = ev.clone();
         edited.start = start;
@@ -567,9 +570,10 @@ impl Session {
             if self.cal.invitations.len() >= INVITE_CACHE {
                 self.cal.invitations.clear();
             }
-            self.cal
-                .invitations
-                .insert(msg, CachedInvite { parsed, data_gen: gen_now.wrapping_sub(1), enriched: None, conflicts: Vec::new() });
+            self.cal.invitations.insert(
+                msg,
+                CachedInvite { parsed, data_gen: gen_now.wrapping_sub(1), enriched: None, conflicts: Vec::new() },
+            );
         }
         let cached = self.cal.invitations.get(&msg)?.clone();
         let parsed = cached.parsed?;
@@ -627,12 +631,7 @@ impl Session {
     /// Responde a la invitación del mensaje (`Accepted`, `Tentative`, `Declined`): la guarda o
     /// actualiza en mi calendario y responde al organizador (iMIP por la bandeja de salida o el
     /// servidor).
-    pub fn respond_invitation(
-        &mut self,
-        msg: MessageId,
-        partstat: PartStat,
-        comment: Option<&str>,
-    ) -> Result<Outcome> {
+    pub fn respond_invitation(&mut self, msg: MessageId, partstat: PartStat, comment: Option<&str>) -> Result<Outcome> {
         let (inv, _) = self.invitation(msg).ok_or(EngineError::NoSelection)?;
         let backend = self.backend();
         let id = self.import_invitation(msg, &inv)?;
@@ -741,7 +740,8 @@ impl Session {
     /// Contrapropuesta (soy el organizador): acepta el horario propuesto.
     pub fn accept_counter(&mut self, msg: MessageId) -> Result<Outcome> {
         let (inv, _) = self.invitation(msg).ok_or(EngineError::NoSelection)?;
-        let (Some(ev), Some((s, e))) = (inv.existing.and_then(|id| self.calendar_event(id)), inv.proposed.clone()) else {
+        let (Some(ev), Some((s, e))) = (inv.existing.and_then(|id| self.calendar_event(id)), inv.proposed.clone())
+        else {
             return Ok(Outcome::Notice(Notice::info("It is not in your calendar.", "No está en tu calendario.")));
         };
         let mut edited = ev.clone();
@@ -800,9 +800,11 @@ impl Session {
         let to = self.zone.day_start(day + Duration::days(1));
         let shared = Arc::clone(&self.cal.free_busy);
         self.bg.spawn(async move {
-            let res =
-                tokio::time::timeout(std::time::Duration::from_secs(30), handle.free_busy(cal, missing.clone(), from, to))
-                    .await;
+            let res = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                handle.free_busy(cal, missing.clone(), from, to),
+            )
+            .await;
             let mut map = shared.lock().unwrap_or_else(PoisonError::into_inner);
             match res {
                 Ok(Ok(list)) => {
@@ -840,7 +842,9 @@ impl Session {
         let busy = self
             .occurrences_uncached(from, to)
             .into_iter()
-            .filter(|o| o.busy && !o.cancelled && !o.all_day && Some(o.id) != skip && !hidden.contains(&o.calendar.get()))
+            .filter(|o| {
+                o.busy && !o.cancelled && !o.all_day && Some(o.id) != skip && !hidden.contains(&o.calendar.get())
+            })
             .map(|o| (o.start, o.end, o.tentative))
             .collect();
         Availability::Busy(busy)
@@ -938,7 +942,9 @@ fn whole_series(master: &Event, at: &EventTime, edited: &Event) -> Event {
                 (EventTime::DateTime { utc, tzid }, EventTime::DateTime { .. }) => {
                     EventTime::DateTime { utc: *utc + len_utc, tzid: tzid.clone() }
                 }
-                (EventTime::Date(d), EventTime::Date(_)) => EventTime::Date(*d + Duration::days(len_utc.num_days().max(1))),
+                (EventTime::Date(d), EventTime::Date(_)) => {
+                    EventTime::Date(*d + Duration::days(len_utc.num_days().max(1)))
+                }
                 _ => edited.end.clone(),
             };
             ev.start = s;

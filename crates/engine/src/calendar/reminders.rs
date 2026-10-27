@@ -53,10 +53,7 @@ pub struct ReminderState {
 
 /// Primera hora de aviso de una aparición (el recordatorio más temprano).
 pub fn first_fire(start: DateTime<Utc>, reminders: &[Reminder]) -> Option<DateTime<Utc>> {
-    reminders
-        .iter()
-        .map(|r| start - Duration::minutes(r.minutes_before.clamp(-10_080, 60 * 24 * 60)))
-        .min()
+    reminders.iter().map(|r| start - Duration::minutes(r.minutes_before.clamp(-10_080, 60 * 24 * 60))).min()
 }
 
 impl ReminderState {

@@ -154,9 +154,11 @@ pub fn truncate_before(master: &Event, at: &EventTime) -> Option<Event> {
 /// quedaba. Si `at` es la primera aparición, la serie recortada es `None`: hay que editar la
 /// serie entera en su lugar.
 pub fn split_series(master: &Event, at: &EventTime, edited: &Event, user_tz: Tz) -> Result<(Option<Event>, Event)> {
-    let rrule = master.rrule.as_deref().filter(|r| !r.trim().is_empty()).ok_or_else(|| {
-        PimError::Invalid("el evento no se repite".into())
-    })?;
+    let rrule = master
+        .rrule
+        .as_deref()
+        .filter(|r| !r.trim().is_empty())
+        .ok_or_else(|| PimError::Invalid("el evento no se repite".into()))?;
     let head = truncate_before(master, at);
     let mut tail = fresh_copy(edited);
     let cut = instant(at);

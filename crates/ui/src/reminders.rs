@@ -50,7 +50,11 @@ pub(crate) fn show(app: &mut DeskApp, ctx: &Context) {
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
                     icons::paint(ui.painter(), r, Icon::Bell, c.accent, c.accent);
-                    ui.label(RichText::new(pick("Reminders", "Recordatorios")).font(theme::bold_font(ui.ctx(), 13.5)).color(c.text));
+                    ui.label(
+                        RichText::new(pick("Reminders", "Recordatorios"))
+                            .font(theme::bold_font(ui.ctx(), 13.5))
+                            .color(c.text),
+                    );
                     if due.len() > 1 {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if ui.link(pick("Dismiss all", "Descartar todos")).clicked() {
@@ -68,12 +72,17 @@ pub(crate) fn show(app: &mut DeskApp, ctx: &Context) {
                     } else if mins > 0 {
                         format!("{} {} min · {}", pick("In", "En"), mins, zone.local(r.start).format("%H:%M"))
                     } else {
-                        format!("{} · {}–{}", pick("Now", "Ahora"), zone.local(r.start).format("%H:%M"), zone.local(r.end).format("%H:%M"))
+                        format!(
+                            "{} · {}–{}",
+                            pick("Now", "Ahora"),
+                            zone.local(r.start).format("%H:%M"),
+                            zone.local(r.end).format("%H:%M")
+                        )
                     };
                     let detail = if r.location.is_empty() { when } else { format!("{when} · {}", r.location) };
                     ui.label(RichText::new(detail).color(c.text_muted).size(12.0));
                     ui.horizontal(|ui| {
-                        egui::ComboBox::from_id_salt(("snooze", r.key.event, r.key.start))
+                        let combo = egui::ComboBox::from_id_salt(("snooze", r.key.event, r.key.start))
                             .selected_text(pick("Snooze", "Posponer"))
                             .width(110.0)
                             .show_ui(ui, |ui| {
@@ -84,6 +93,7 @@ pub(crate) fn show(app: &mut DeskApp, ctx: &Context) {
                                     }
                                 }
                             });
+                        crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Snooze", "Posponer"));
                         if ui.button(pick("Dismiss", "Descartar")).clicked() {
                             dismiss.push(r.key);
                         }

@@ -88,9 +88,7 @@ fn sidebar(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate) 
     let mut month = shown;
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(format!("{} {}", capitalize(month_name(month.month())), month.year()))
-                .strong()
-                .color(c.text),
+            RichText::new(format!("{} {}", capitalize(month_name(month.month())), month.year())).strong().color(c.text),
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if icons::icon_button(ui, Icon::ChevronRight, pick("Next month", "Mes siguiente"), true).clicked() {
@@ -157,7 +155,7 @@ fn sidebar(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate) 
     ui.add_space(2.0);
     let current = app.session.prefs.secondary_tz.clone();
     let mut chosen = current.clone();
-    egui::ComboBox::from_id_salt("cal-second-tz")
+    let combo = egui::ComboBox::from_id_salt("cal-second-tz")
         .width(ui.available_width() - 8.0)
         .selected_text(current.as_deref().map(tz_label).unwrap_or_else(|| pick("None", "Ninguna").to_string()))
         .show_ui(ui, |ui| {
@@ -166,6 +164,7 @@ fn sidebar(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate) 
                 ui.selectable_value(&mut chosen, Some(z.to_string()), tz_label(z));
             }
         });
+    crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Second time zone", "Segunda zona horaria"));
     if chosen != current {
         app.session.prefs.secondary_tz = chosen;
         app.session.save_prefs();
@@ -194,7 +193,10 @@ fn calendar_list(app: &mut DeskApp, ui: &mut Ui) {
         }
     }
     for acct in accounts {
-        let head = labels.iter().find(|l| l.id == acct).map_or_else(|| pick("Calendars", "Calendarios").to_string(), |l| l.email.clone());
+        let head = labels
+            .iter()
+            .find(|l| l.id == acct)
+            .map_or_else(|| pick("Calendars", "Calendarios").to_string(), |l| l.email.clone());
         section_label(ui, &head);
         ui.add_space(2.0);
         for cal in cals.iter().filter(|x| x.account == acct) {
@@ -282,7 +284,8 @@ fn week_view(app: &mut DeskApp, ui: &mut Ui, mon: NaiveDate, days: i64, today: N
     let from = zone.day_start(mon);
     let to = zone.day_start(mon + Duration::days(days));
     let occ: Vec<Occurrence> = app.session.visible_occurrences(from, to);
-    let second: Option<iuredesk_engine::chrono_tz::Tz> = app.session.prefs.secondary_tz.as_deref().and_then(|t| t.parse().ok());
+    let second: Option<iuredesk_engine::chrono_tz::Tz> =
+        app.session.prefs.secondary_tz.as_deref().and_then(|t| t.parse().ok());
     let gutter = if second.is_some() { 104.0 } else { 62.0 };
     let avail = ui.available_rect_before_wrap();
     let col_w = ((avail.width() - gutter - 8.0) / days as f32).max(40.0);
@@ -310,7 +313,7 @@ fn week_view(app: &mut DeskApp, ui: &mut Ui, mon: NaiveDate, days: i64, today: N
         let day = mon + Duration::days(d);
         let x = head.left() + gutter + col_w * d as f32;
         let is_today = day == today;
-        let label = if days == 1 { capitalize(&day_title(day)) } else { weekday_short(day).to_uppercase() };
+        let label = weekday_short(day).to_uppercase();
         p.text(
             pos2(x + 10.0, head.top() + 12.0),
             Align2::LEFT_CENTER,
@@ -510,7 +513,8 @@ fn week_view(app: &mut DeskApp, ui: &mut Ui, mon: NaiveDate, days: i64, today: N
         for d in 0..days {
             let day = mon + Duration::days(d);
             let x = cols_left + col_w * d as f32;
-            let mut todays: Vec<&Occurrence> = occ.iter().filter(|o| !o.all_day && local(app, o.start).date() == day).collect();
+            let mut todays: Vec<&Occurrence> =
+                occ.iter().filter(|o| !o.all_day && local(app, o.start).date() == day).collect();
             todays.sort_by_key(|o| o.start);
             let spans: Vec<(i64, i64)> = todays
                 .iter()
@@ -605,7 +609,13 @@ fn week_view(app: &mut DeskApp, ui: &mut Ui, mon: NaiveDate, days: i64, today: N
                     e / 60,
                     e % 60
                 );
-                p.with_clip_rect(r).text(r.min + vec2(7.0, 3.0), Align2::LEFT_TOP, t, theme::bold_font(ui.ctx(), 12.0), c.text);
+                p.with_clip_rect(r).text(
+                    r.min + vec2(7.0, 3.0),
+                    Align2::LEFT_TOP,
+                    t,
+                    theme::bold_font(ui.ctx(), 12.0),
+                    c.text,
+                );
             }
         }
         // Soltar: crear, mover o estirar.
@@ -669,7 +679,17 @@ fn event_block(ui: &Ui, p: &egui::Painter, r: Rect, o: &Occurrence, zone: iurede
     let c = theme::colors(ui);
     let col = rgb(o.color);
     let dark = ui.visuals().dark_mode;
-    let fill = mix(c.surface, col, if ghost { 0.08 } else if dark { 0.32 } else { 0.18 });
+    let fill = mix(
+        c.surface,
+        col,
+        if ghost {
+            0.08
+        } else if dark {
+            0.32
+        } else {
+            0.18
+        },
+    );
     p.rect_filled(r, 5.0, fill);
     if o.tentative || !o.busy {
         p.rect_stroke(r, 5.0, Stroke::new(1.0, col), egui::StrokeKind::Inside);
@@ -759,7 +779,13 @@ fn month_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDat
         let num = day.day().to_string();
         if day == today {
             p.circle_filled(pos2(r.left() + 16.0, r.top() + 14.0), 11.0, c.accent);
-            p.text(pos2(r.left() + 16.0, r.top() + 14.0), Align2::CENTER_CENTER, num, theme::bold_font(ui.ctx(), 12.0), c.on_accent);
+            p.text(
+                pos2(r.left() + 16.0, r.top() + 14.0),
+                Align2::CENTER_CENTER,
+                num,
+                theme::bold_font(ui.ctx(), 12.0),
+                c.on_accent,
+            );
         } else {
             p.text(
                 pos2(r.left() + 10.0, r.top() + 14.0),
@@ -791,11 +817,23 @@ fn month_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDat
             }
             if o.all_day {
                 clip.rect_filled(er, 3.0, mix(c.surface, col, 0.25));
-                clip.text(pos2(er.left() + 4.0, er.center().y), Align2::LEFT_CENTER, &o.summary, FontId::proportional(11.5), c.text);
+                clip.text(
+                    pos2(er.left() + 4.0, er.center().y),
+                    Align2::LEFT_CENTER,
+                    &o.summary,
+                    FontId::proportional(11.5),
+                    c.text,
+                );
             } else {
                 clip.circle_filled(pos2(er.left() + 5.0, er.center().y), 3.0, col);
                 let t = format!("{} {}", zone.local(o.start).format("%H:%M"), o.summary);
-                clip.text(pos2(er.left() + 12.0, er.center().y), Align2::LEFT_CENTER, t, FontId::proportional(11.5), c.text);
+                clip.text(
+                    pos2(er.left() + 12.0, er.center().y),
+                    Align2::LEFT_CENTER,
+                    t,
+                    FontId::proportional(11.5),
+                    c.text,
+                );
             }
         }
         if todays.len() > max {
@@ -868,7 +906,13 @@ fn agenda_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDa
                     format!("{} – {}", zone.local(o.start).format("%H:%M"), zone.local(o.end).format("%H:%M"))
                 };
                 let muted = if past { mix(c.text_muted, c.surface, 0.3) } else { c.text_muted };
-                p.text(pos2(r.left() + 24.0, r.center().y), Align2::LEFT_CENTER, time, theme::tabular_font(ui.ctx(), 12.5), muted);
+                p.text(
+                    pos2(r.left() + 24.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    time,
+                    theme::tabular_font(ui.ctx(), 12.5),
+                    muted,
+                );
                 p.circle_filled(pos2(r.left() + 146.0, r.center().y), 4.5, rgb(o.color));
                 let ink = if past { c.text_muted } else { c.text };
                 let g = p.layout_no_wrap(o.summary.clone(), theme::medium_font(ui.ctx(), 13.5), ink);

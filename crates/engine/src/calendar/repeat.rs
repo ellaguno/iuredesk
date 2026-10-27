@@ -66,8 +66,15 @@ pub enum Preset {
 }
 
 impl Preset {
-    pub const ALL: [Preset; 7] =
-        [Preset::None, Preset::Daily, Preset::Weekdays, Preset::Weekly, Preset::Monthly, Preset::Yearly, Preset::Custom];
+    pub const ALL: [Preset; 7] = [
+        Preset::None,
+        Preset::Daily,
+        Preset::Weekdays,
+        Preset::Weekly,
+        Preset::Monthly,
+        Preset::Yearly,
+        Preset::Custom,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -456,10 +463,7 @@ mod tests {
         let start = d(2026, 10, 13);
         let rep = Repeat { freq: Freq::Daily, end: RepeatEnd::Until(d(2026, 10, 20)), ..Repeat::none() };
         let off = chrono::FixedOffset::west_opt(6 * 3600).unwrap();
-        assert_eq!(
-            rep.to_rrule(start, false, Zone::Fixed(off)).as_deref(),
-            Some("FREQ=DAILY;UNTIL=20261021T055959Z")
-        );
+        assert_eq!(rep.to_rrule(start, false, Zone::Fixed(off)).as_deref(), Some("FREQ=DAILY;UNTIL=20261021T055959Z"));
     }
 
     #[test]

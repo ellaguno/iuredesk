@@ -828,11 +828,17 @@ END:VEVENT\r\nEND:VCALENDAR\r\n",
     raw.push_str("Content-Type: multipart/alternative; boundary=\"inv\"\r\n\r\n--inv\r\n");
     raw.push_str("Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n");
     raw.push_str(body);
-    raw.push_str("\r\n--inv\r\nContent-Type: text/calendar; charset=utf-8; method=REQUEST\r\n");
+    raw.push_str(
+        "\r\n--inv\r\nContent-Type: text/calendar; charset=utf-8; method=REQUEST; name=\"invitacion.ics\"\r\n",
+    );
     raw.push_str("Content-Transfer-Encoding: 8bit\r\n\r\n");
     raw.push_str(&ics);
     raw.push_str("--inv--\r\n");
-    store.put_messages(vec![NewMessage { envelope: env, raw: Some(raw.into_bytes()), body_text: Some(body.into()) }])?;
+    store.put_messages(vec![NewMessage {
+        envelope: env,
+        raw: Some(raw.into_bytes()),
+        body_text: Some(body.into()),
+    }])?;
     store.rethread_account(account)?;
     Ok(())
 }

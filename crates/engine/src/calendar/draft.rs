@@ -167,7 +167,8 @@ impl EventDraft {
     /// Formulario de un evento existente. `occurrence` = (inicio, fin) de la aparición pulsada
     /// si el evento se repite (el formulario muestra esas fechas).
     pub fn from_event(ev: &Event, occurrence: Option<(EventTime, EventTime)>, zone: Zone, private: bool) -> Self {
-        let tz = ev.start.tz();
+        // Se edita en la zona del usuario; la del evento (`TZID`) se conserva al guardar.
+        let tz: Option<Tz> = None;
         let (start, end) = occurrence.clone().unwrap_or_else(|| (ev.start.clone(), ev.end.clone()));
         let mut d = match (&start, &end) {
             (EventTime::Date(a), b) => {
@@ -192,10 +193,7 @@ impl EventDraft {
         d.title = ev.summary.clone();
         d.location = ev.location.clone();
         d.description = ev.description.clone();
-        d.tz = match &ev.start {
-            EventTime::DateTime { tzid: Some(t), .. } if parse_tz(t).is_some() => Some(t.clone()),
-            _ => None,
-        };
+        d.tz = None;
         d.repeat = Repeat::from_rrule(ev.rrule.as_deref(), d.start_date);
         d.reminders = ev.reminders.iter().map(|r| r.minutes_before).collect();
         d.attendees = ev.attendees.clone();
@@ -219,6 +217,13 @@ impl EventDraft {
         let tz = self.zone_tz();
         let tzid = match (&self.tz, tz) {
             (Some(name), Some(_)) => Some(name.clone()),
+            // La zona original del evento.
+            _ if self.base.as_ref().is_some_and(|b| matches!(b.start, EventTime::DateTime { tzid: Some(_), .. })) => {
+                match self.base.as_ref().map(|b| &b.start) {
+                    Some(EventTime::DateTime { tzid, .. }) => tzid.clone(),
+                    _ => None,
+                }
+            }
             _ => {
                 // Zona del usuario: con nombre IANA si se conoce (las series siguen al horario
                 // de verano); UTC no lleva `TZID`.
@@ -285,7 +290,10 @@ impl EventDraft {
     /// Agrega un asistente si no está ya (por correo, sin distinguir mayúsculas).
     pub fn add_attendee(&mut self, m: Mailbox, optional: bool) -> bool {
         let addr = m.addr.trim().to_lowercase();
-        if addr.is_empty() || !addr.contains('@') || self.attendees.iter().any(|a| a.mailbox.addr.to_lowercase() == addr) {
+        if addr.is_empty()
+            || !addr.contains('@')
+            || self.attendees.iter().any(|a| a.mailbox.addr.to_lowercase() == addr)
+        {
             return false;
         }
         self.attendees.push(Attendee {
@@ -347,7 +355,10 @@ mod tests {
         let d = EventDraft::new_at(CalendarId(1), t(21, 9, 0), t(21, 10, 30), false);
         assert_eq!((d.start_min, d.end_min, d.length_min()), (540, 630, 90));
         let ev = d.to_event(Zone::utc(), None);
-        assert_eq!(ev.start, EventTime::DateTime { utc: Utc.with_ymd_and_hms(2026, 10, 21, 9, 0, 0).unwrap(), tzid: None });
+        assert_eq!(
+            ev.start,
+            EventTime::DateTime { utc: Utc.with_ymd_and_hms(2026, 10, 21, 9, 0, 0).unwrap(), tzid: None }
+        );
         let a = EventDraft::new_at(CalendarId(1), t(21, 0, 0), t(23, 0, 0), true);
         assert_eq!(a.end_date, NaiveDate::from_ymd_opt(2026, 10, 22).unwrap(), "último día incluido");
         let ev = a.to_event(Zone::utc(), None);
@@ -378,10 +389,15 @@ mod tests {
             ..Default::default()
         };
         let d = EventDraft::from_event(&ev, None, Zone::utc(), false);
-        assert_eq!(d.start_min, 9 * 60, "las 15:00 UTC son las 9:00 en CDMX");
-        assert_eq!(d.tz.as_deref(), Some("America/Mexico_City"));
+        assert_eq!(d.start_min, 15 * 60, "se edita en la zona del usuario (UTC)");
+        assert_eq!(d.tz, None);
         let back = d.to_event(Zone::utc(), None);
-        assert_eq!(back, ev, "sin cambios, el mismo evento");
+        assert_eq!(back, ev, "sin cambios, el mismo evento (conserva el TZID)");
+        let mut mx = d.clone();
+        mx.tz = Some("America/Mexico_City".into());
+        mx.start_min = 9 * 60;
+        mx.end_min = 10 * 60;
+        assert_eq!(mx.to_event(Zone::utc(), None).start, ev.start, "las 9:00 en CDMX son las 15:00 UTC");
         let mut d2 = d.clone();
         d2.set_start_keep_length(d.start_date, 10 * 60);
         assert_eq!(d2.end_min, 11 * 60);

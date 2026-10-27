@@ -429,7 +429,10 @@ impl DeskApp {
             for (idx, e) in i.events.iter().enumerate() {
                 let egui::Event::Key { key, pressed: true, modifiers, .. } = e else { continue };
                 for (cmd, chord) in command::bindings(scheme) {
-                    if cmd == "app.palette" || (typing && !chord.has_modifier()) || (cmd.starts_with("cal.") && !in_calendar) {
+                    if cmd == "app.palette"
+                        || (typing && !chord.has_modifier())
+                        || (cmd.starts_with("cal.") && !in_calendar)
+                    {
                         continue;
                     }
                     if chord_matches(&chord, *key, *modifiers) {

@@ -8,7 +8,7 @@ use chrono::{Datelike, Duration};
 use egui::{Align, Layout, RichText, Sense, Ui, vec2};
 use iuredesk_engine::Notice;
 use iuredesk_engine::calendar::Occurrence;
-use iuredesk_engine::calendar::invite::{Freshness, InviteKind, Invitation, partstat_label};
+use iuredesk_engine::calendar::invite::{Freshness, Invitation, InviteKind, partstat_label};
 use iuredesk_engine::time::{month_name, weekday_short};
 use iuredesk_model::{EventTime, MessageId, PartStat};
 use iurefficient_ui::{BadgeKind, Icon, badge, icons, pick, primary_button, theme};
@@ -71,7 +71,11 @@ pub(crate) fn card(app: &mut DeskApp, ui: &mut Ui, msg: MessageId) {
         let (s, e) = inv.proposed.clone().unwrap_or((inv.event.start.clone(), inv.event.end.clone()));
         line(ui, Icon::Clock, &when(app, &s, &e));
         if inv.kind == InviteKind::Counter {
-            line(ui, Icon::Clock, &format!("{} {}", pick("Was:", "Antes:"), when(app, &inv.event.start, &inv.event.end)));
+            line(
+                ui,
+                Icon::Clock,
+                &format!("{} {}", pick("Was:", "Antes:"), when(app, &inv.event.start, &inv.event.end)),
+            );
         }
         if inv.event.rrule.is_some() {
             let start = match &inv.event.start {
@@ -120,7 +124,9 @@ fn header(ui: &mut Ui, inv: &Invitation) {
         let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
         icons::paint(ui.painter(), r, Icon::Calendar, c.text_muted, c.accent);
         let t = match inv.kind {
-            InviteKind::Request if inv.freshness == Freshness::Update => pick("Updated invitation", "Invitación actualizada"),
+            InviteKind::Request if inv.freshness == Freshness::Update => {
+                pick("Updated invitation", "Invitación actualizada")
+            }
             InviteKind::Request => pick("Invitation", "Invitación"),
             InviteKind::Cancel => pick("Event cancelled", "Evento cancelado"),
             InviteKind::Counter => pick("New time proposed", "Proponen otro horario"),
@@ -173,7 +179,8 @@ fn attendees(ui: &mut Ui, inv: &Invitation) {
         egui::CollapsingHeader::new(RichText::new(head).color(c.text)).id_salt(("inv-att", &inv.uid)).show(ui, |ui| {
             for a in inv.attendees.iter().take(50) {
                 ui.horizontal(|ui| {
-                    let name = a.mailbox.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| a.mailbox.addr.clone());
+                    let name =
+                        a.mailbox.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| a.mailbox.addr.clone());
                     iurefficient_ui::avatar(ui, &name, &a.mailbox.addr, 20.0);
                     ui.label(RichText::new(name).color(c.text));
                     let optional = a.role == iuredesk_model::AttendeeRole::Optional;
@@ -197,16 +204,26 @@ fn conflicts_line(app: &DeskApp, ui: &mut Ui, conflicts: &[Occurrence]) {
         let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
         if conflicts.is_empty() {
             icons::paint(ui.painter(), r, Icon::Check, c.success, c.success);
-            ui.label(RichText::new(pick("No conflicts in your calendar", "Sin choques en tu calendario")).color(c.success));
+            ui.label(
+                RichText::new(pick("No conflicts in your calendar", "Sin choques en tu calendario")).color(c.success),
+            );
         } else {
             icons::paint(ui.painter(), r, Icon::Warning, c.warning, c.warning);
             let list: Vec<String> = conflicts
                 .iter()
-                .map(|o| format!("{} ({}–{})", o.summary, zone.local(o.start).format("%H:%M"), zone.local(o.end).format("%H:%M")))
+                .map(|o| {
+                    format!(
+                        "{} ({}–{})",
+                        o.summary,
+                        zone.local(o.start).format("%H:%M"),
+                        zone.local(o.end).format("%H:%M")
+                    )
+                })
                 .collect();
             ui.add(
                 egui::Label::new(
-                    RichText::new(format!("{} {}", pick("Conflicts with:", "Choca con:"), list.join(", "))).color(c.warning),
+                    RichText::new(format!("{} {}", pick("Conflicts with:", "Choca con:"), list.join(", ")))
+                        .color(c.warning),
                 )
                 .wrap(),
             );
@@ -232,7 +249,8 @@ fn actions(app: &mut DeskApp, ui: &mut Ui, msg: MessageId, inv: &Invitation) -> 
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 let chosen = inv.my_status.clone().unwrap_or_default();
-                let mark = |p: PartStat, label: &str| if chosen == p { format!("✓ {label}") } else { label.to_string() };
+                let mark =
+                    |p: PartStat, label: &str| if chosen == p { format!("✓ {label}") } else { label.to_string() };
                 if primary_button(ui, &mark(PartStat::Accepted, pick("Accept", "Aceptar"))).clicked() {
                     out = Some(Action::Respond(PartStat::Accepted));
                 }
@@ -254,10 +272,13 @@ fn actions(app: &mut DeskApp, ui: &mut Ui, msg: MessageId, inv: &Invitation) -> 
             if let Some(text) = comment.as_mut() {
                 let r = ui.add(
                     egui::TextEdit::singleline(text)
-                        .hint_text(pick("Comment for the organizer (optional)", "Comentario para quien organiza (opcional)"))
+                        .hint_text(pick(
+                            "Comment for the organizer (optional)",
+                            "Comentario para quien organiza (opcional)",
+                        ))
                         .desired_width(f32::INFINITY),
                 );
-                iurefficient_ui::a11y::label(&r, pick("Comment", "Comentario"));
+                crate::widgets::named(&r, egui::Role::TextInput, pick("Comment", "Comentario"));
             }
             ui.ctx().data_mut(|d| d.insert_temp(id, comment));
         }
@@ -276,7 +297,9 @@ fn actions(app: &mut DeskApp, ui: &mut Ui, msg: MessageId, inv: &Invitation) -> 
                     out = Some(Action::Remove);
                 }
             } else {
-                ui.label(RichText::new(pick("It is not in your calendar.", "No está en tu calendario.")).color(c.text_muted));
+                ui.label(
+                    RichText::new(pick("It is not in your calendar.", "No está en tu calendario.")).color(c.text_muted),
+                );
             }
         }
         InviteKind::Counter => {
@@ -285,7 +308,13 @@ fn actions(app: &mut DeskApp, ui: &mut Ui, msg: MessageId, inv: &Invitation) -> 
                     out = Some(Action::AcceptCounter);
                 }
             } else {
-                ui.label(RichText::new(pick("Only the organizer can change the time.", "Solo quien organiza puede cambiar el horario.")).color(c.text_muted));
+                ui.label(
+                    RichText::new(pick(
+                        "Only the organizer can change the time.",
+                        "Solo quien organiza puede cambiar el horario.",
+                    ))
+                    .color(c.text_muted),
+                );
             }
         }
         InviteKind::Reply => {

@@ -68,10 +68,10 @@ use iuredesk_store::PimRef;
 
 pub use account::{DavAuth, GRAPH_BASE, PimAccount, PimSource};
 pub use engine::{BusySlot, FreeBusy, PimSyncEngine, PimSyncHandle, account_id};
-pub use series::SeriesScope;
 pub use error::{PimError, Result};
 pub use occurrences::{MAX_OCCURRENCES, occurrences_between};
 pub use ops::{ImipReply, OP_IMIP_REPLY, PimOp};
+pub use series::SeriesScope;
 
 /// Ajustes de la sincronización PIM.
 #[derive(Clone, Debug)]

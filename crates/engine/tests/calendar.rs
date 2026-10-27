@@ -166,7 +166,10 @@ fn recurring_edit_scopes() {
     let mut d = s.draft_for(&second).unwrap();
     d.title = "Junta movida".into();
     s.save_event_draft(&d, SeriesScope::ThisAndFollowing).unwrap();
-    let later = s.visible_occurrences(Zone::utc().day_start(day(19)), Zone::utc().day_start(day(19)) + chrono::Duration::days(21));
+    let later = s.visible_occurrences(
+        Zone::utc().day_start(day(19)),
+        Zone::utc().day_start(day(19)) + chrono::Duration::days(21),
+    );
     let titles: Vec<_> = later.iter().filter(|o| o.recurring).map(|o| o.summary.clone()).collect();
     assert_eq!(titles.iter().filter(|t| t.starts_with("Junta semanal")).count(), 1, "solo el 19");
     assert_eq!(titles.iter().filter(|t| *t == "Junta movida").count(), 2, "26 y 2 de noviembre");
@@ -229,12 +232,7 @@ fn invitation_accept_imports_and_queues_the_reply() {
     assert_eq!(inv.my_status, Some(PartStat::Accepted));
     let calls = fake.calls.lock().unwrap().clone();
     assert!(calls.iter().any(|c| c == "rsvp:Accepted"));
-    let replies = s
-        .store()
-        .peek_ops(1000)
-        .unwrap()
-        .into_iter()
-        .filter(|o| o.kind == iuredesk_pim_sync::OP_IMIP_REPLY)
-        .count();
+    let replies =
+        s.store().peek_ops(1000).unwrap().into_iter().filter(|o| o.kind == iuredesk_pim_sync::OP_IMIP_REPLY).count();
     assert_eq!(replies, 1, "respuesta iMIP para la bandeja de salida");
 }
