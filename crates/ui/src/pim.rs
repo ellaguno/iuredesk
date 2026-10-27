@@ -50,11 +50,6 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
         ui.add_space(4.0);
         pane_title(ui, pick("Contacts", "Contactos"), &all.len().to_string());
         ui.add_space(6.0);
-        SearchField::new(&mut app.pim.contact_filter)
-            .id_salt("contact-search")
-            .hint(pick("Find a person", "Buscar una persona"))
-            .show(ui);
-        ui.add_space(6.0);
         if app.pim.contact_cols.is_empty() {
             app.pim.contact_cols = vec![Column::new(pick("Name", "Nombre"), 200.0).grow()];
         }

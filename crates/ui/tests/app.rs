@@ -145,15 +145,58 @@ fn density_switch_restyles_and_persists_in_the_session() {
     let mut h = harness(sample_app(dir.path(), false), vec2(1440.0, 900.0));
     settle(&mut h);
     assert_eq!(h.state().session.prefs.density, DensityPref::Compact);
+    // Menú rápido de la barra de título: tema y densidad.
+    h.get_by_label("Apariencia").click();
+    h.run();
     h.get_by_label("Densa").click();
     settle(&mut h);
     assert_eq!(h.state().session.prefs.density, DensityPref::Dense);
     assert_eq!(iuredesk_ui::iurefficient_ui::theme::density(&h.ctx), iuredesk_ui::iurefficient_ui::Density::Dense);
     // En densa hay encabezado de columnas.
     assert!(h.query_by_label_contains("Asunto").is_some());
+    h.get_by_label("Apariencia").click();
+    h.run();
     h.get_by_label("Cómoda").click();
     settle(&mut h);
     assert_eq!(h.state().session.prefs.density, DensityPref::Comfortable);
+}
+
+#[test]
+fn integrated_header_has_named_window_controls_and_a_drag_area() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    spanish();
+    let store = Store::open(dir.path()).unwrap();
+    sample::populate(&store, sample::DEFAULT_SEED, now()).unwrap();
+    let chrome = iuredesk_ui::WindowChrome::named("adwaita");
+    let app = DeskApp::new(
+        session_on(store, true),
+        Options { system_fonts: false, no_theme_watch: true, chrome, ..Default::default() },
+    );
+    // El arnés exige nombre accesible en todos los controles.
+    let mut h = harness(app, vec2(1280.0, 800.0));
+    settle(&mut h);
+    for label in ["Minimizar", "Maximizar", "Cerrar", "Barra de título", "Comandos", "Apariencia", "IureDesk"] {
+        assert!(h.query_by_label(label).is_some(), "falta «{label}» en la barra");
+    }
+    assert!(h.query_all_by_label_contains("Entrada · ").next().is_some(), "título de la carpeta");
+    // La zona de arrastre ocupa la barra de lado a lado, arriba de todo.
+    let drag = h.get_by_label("Barra de título").rect();
+    assert!(drag.top() <= 1.0 && drag.width() >= 1270.0, "{drag:?}");
+    // La búsqueda de la barra filtra el correo.
+    h.get_by_label("Buscar en el correo  (de: tiene:adjunto …)").click();
+    h.run();
+    h.event(egui::Event::Text("Northwind".into()));
+    settle(&mut h);
+    assert_eq!(h.state().session.search_query(), "Northwind");
+
+    // Con la barra del sistema la fila sigue, sin botones de ventana ni arrastre.
+    let dir2 = tempfile::tempdir().unwrap();
+    let mut h2 = harness(sample_app(dir2.path(), true), vec2(1280.0, 800.0));
+    settle(&mut h2);
+    assert!(h2.query_by_label("Comandos").is_some());
+    assert!(h2.query_by_label("Minimizar").is_none());
+    assert!(h2.query_by_label("Barra de título").is_none());
 }
 
 #[test]

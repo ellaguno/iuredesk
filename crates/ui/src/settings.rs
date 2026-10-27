@@ -66,6 +66,20 @@ pub fn show(app: &mut DeskApp, ctx: &Context) {
                 {
                     run = Some(format!("view.density.{}", d.key()));
                 }
+                ui.add_space(8.0);
+                let mut native = app.session.prefs.native_decorations;
+                if ui.checkbox(&mut native, pick("System title bar", "Barra de título del sistema")).changed() {
+                    app.session.prefs.native_decorations = native;
+                    app.session.save_prefs();
+                }
+                ui.label(
+                    RichText::new(pick(
+                        "Use the window frame of your desktop instead of the integrated bar. Takes effect when IureDesk restarts.",
+                        "Usa el marco de ventana de tu escritorio en lugar de la barra integrada. Se aplica al reiniciar IureDesk.",
+                    ))
+                    .color(c.text_muted)
+                    .size(theme::density(ctx).small_size()),
+                );
                 ui.add_space(14.0);
                 section_label(ui, pick("Keyboard shortcuts", "Atajos de teclado"));
                 ui.label(

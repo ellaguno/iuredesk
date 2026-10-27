@@ -3,7 +3,11 @@
 //! `cargo run -p iuredesk-ui --example ui_shot -- /tmp/shot.png [--dark] [--density dense|compact|comfortable]
 //!  [--module mail|calendar|contacts|notes|tasks|assistant|onboarding|provider] [--palette[=texto]]
 //!  [--html] [--month] [--view day|agenda|week|work_week|month] [--editor] [--invite] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]
-//!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]`
+//!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]
+//!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]`
+//!
+//! Por omisión la ventana lleva la barra de título integrada con botones al estilo Adwaita;
+//! `--native-decorations` la muestra como queda con la barra del sistema (sin botones).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,7 +19,7 @@ use egui_kittest::Harness;
 use iuredesk_accounts::MemoryStore;
 use iuredesk_engine::{DensityPref, Module, Session, SessionConfig, ThemePref, Zone};
 use iuredesk_store::{Store, sample};
-use iuredesk_ui::{DeskApp, Options};
+use iuredesk_ui::{DeskApp, Options, WindowChrome};
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -33,6 +37,7 @@ fn main() -> Result<(), String> {
         .ok_or("uso: ui_shot RUTA.png [--dark] [--density …] [--module …] [--palette]")?;
     let module = flag("--module").unwrap_or_else(|| "mail".into());
     let dark = args.iter().any(|a| a == "--dark");
+    let hc = args.iter().any(|a| a == "--hc");
     let density = flag("--density").and_then(|d| DensityPref::from_key(&d)).unwrap_or(DensityPref::Compact);
     if let Some(l) = flag("--lang") {
         iuredesk_ui::iurefficient_ui::lang::set_lang(iuredesk_ui::iurefficient_ui::lang::from_tag(&l));
@@ -66,7 +71,13 @@ fn main() -> Result<(), String> {
         transport: Some(Arc::new(iuredesk_engine::OfflineTransport)),
     })
     .map_err(|e| e.text().en)?;
-    session.prefs.theme = if dark { ThemePref::Dark } else { ThemePref::Light };
+    session.prefs.theme = if hc {
+        ThemePref::HighContrast
+    } else if dark {
+        ThemePref::Dark
+    } else {
+        ThemePref::Light
+    };
     session.prefs.density = density;
     session.module = match module.as_str() {
         "calendar" => Module::Calendar,
@@ -103,7 +114,14 @@ fn main() -> Result<(), String> {
             session.request_focus(id);
         }
     }
-    let mut app = DeskApp::new(session, Options { system_fonts: true, no_theme_watch: true, ..Default::default() });
+    let chrome = if args.iter().any(|a| a == "--native-decorations") {
+        None
+    } else {
+        let name = flag("--chrome").unwrap_or_else(|| "adwaita".into());
+        Some(WindowChrome::named(&name).ok_or(format!("--chrome desconocido: {name}"))?)
+    };
+    let mut app =
+        DeskApp::new(session, Options { system_fonts: true, no_theme_watch: true, chrome, ..Default::default() });
     if args.iter().any(|a| a == "--compose") {
         app.demo_compose();
     }
@@ -187,7 +205,11 @@ fn main() -> Result<(), String> {
         }
     }
     harness.run_steps(2);
-    let image = harness.render()?;
+    let mut image = harness.render()?;
+    if let Some(ch) = flag("--crop-height").and_then(|v| v.parse::<u32>().ok()) {
+        let (iw, ih) = image.dimensions();
+        image = image::imageops::crop_imm(&image, 0, 0, iw, ch.clamp(1, ih)).to_image();
+    }
     image.save(&out).map_err(|e| e.to_string())?;
     println!("{out}");
     Ok(())

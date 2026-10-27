@@ -588,7 +588,7 @@ pub fn bell(app: &mut DeskApp, ctx: &Context) {
         .collapsible(false)
         .resizable(false)
         .default_width(340.0)
-        .anchor(egui::Align2::LEFT_BOTTOM, vec2(64.0, -12.0))
+        .anchor(egui::Align2::RIGHT_TOP, vec2(-12.0, crate::header::height(ctx) + 6.0))
         .show(ctx, |ui| {
             let c = theme::colors(ui);
             if feed.items.is_empty() {

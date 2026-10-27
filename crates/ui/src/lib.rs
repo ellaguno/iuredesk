@@ -17,6 +17,7 @@ mod assistant;
 mod calendar;
 mod compose;
 mod event_editor;
+mod header;
 mod html;
 mod import_ui;
 mod invitation;
@@ -31,6 +32,7 @@ mod suite_ui;
 mod widgets;
 
 pub use app::{DeskApp, Notifier, Options};
+pub use header::{ButtonLayout, ControlStyle, WindowButton, WindowChrome};
 pub use iurefficient_ui;
 
 /// Abre un enlace en el navegador del sistema (solo `http`, `https` y `mailto`). Nunca bloquea.

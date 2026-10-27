@@ -135,6 +135,8 @@ egui_kittest = "0.37"
 # Selector de archivos del portal XDG (sin GTK) y notificaciones por D-Bus con zbus (sin libdbus).
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland"] }
 notify-rust = { version = "4.18", default-features = false, features = ["z"] }
+# D-Bus en Rust puro (la versión que ya traen notify-rust, keyring y el ui-kit).
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

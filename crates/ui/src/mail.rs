@@ -77,7 +77,6 @@ pub fn folder_icon(r: FolderRole) -> Icon {
 /// La vista de correo completa.
 pub fn show(app: &mut DeskApp, ui: &mut Ui) {
     split::left(ui, "folders", PaneKind::Sidebar, 244.0, 190.0..=380.0, |ui| folders(app, ui));
-    split::top_bar(ui, "mail-top", |ui| top_bar(app, ui));
 
     let focused = app.session.focused();
     let card = focused.map(|id| context_card(app, id)).unwrap_or_default();
@@ -373,52 +372,6 @@ fn today_panel(app: &mut DeskApp, ui: &mut Ui) {
         }
     }
     ui.add_space(6.0);
-}
-
-// ---------------------------------------------------------------------------------------------
-// Barra superior
-
-fn top_bar(app: &mut DeskApp, ui: &mut Ui) {
-    let ctx = ui.ctx().clone();
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let search_id = ui.make_persistent_id(egui::Id::unique("mail-search"));
-        if app.mail.focus_search {
-            app.mail.focus_search = false;
-            ui.memory_mut(|m| m.request_focus(search_id));
-        }
-        let resp = SearchField::new(&mut app.mail.search)
-            .id_salt("mail-search")
-            .hint(pick("Search mail  (from: has:attachment …)", "Buscar en el correo  (de: tiene:adjunto …)"))
-            .desired_width((ui.available_width() * 0.55).clamp(220.0, 520.0))
-            .show(ui);
-        if resp.changed() {
-            let q = app.mail.search.clone();
-            app.session.set_search(&q);
-        }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let r = ui.add(egui::Button::new(pick("Commands", "Comandos")).frame(true));
-            iurefficient_ui::keycap(ui, "Ctrl+K");
-            ui.add_space(12.0);
-            let mut d = app.session.prefs.density;
-            let seg = segmented(
-                ui,
-                &mut d,
-                &[
-                    (DensityPref::Comfortable, pick("Comfortable", "Cómoda")),
-                    (DensityPref::Compact, pick("Compact", "Compacta")),
-                    (DensityPref::Dense, pick("Dense", "Densa")),
-                ],
-            );
-            if seg.changed() {
-                let id = format!("view.density.{}", d.key());
-                app.run(&ctx, &id);
-            }
-            if r.on_hover_text(pick("Everything IureDesk can do", "Todo lo que IureDesk puede hacer")).clicked() {
-                app.run(&ctx, "app.palette");
-            }
-        });
-    });
 }
 
 // ---------------------------------------------------------------------------------------------
