@@ -6,11 +6,13 @@
 //! deshacer con su inversa. Deshacer cancela la operación si aún no salió de la máquina o encola
 //! la inversa si ya se replicó.
 
+mod iure;
 mod live;
 mod mailops;
 mod outbox;
 mod pim;
 
+pub use iure::{IURE_CALENDAR_PATH, IURE_TASKS_PATH, IurePanel, IureSetup, LeadSuggestions, LoginState};
 pub use live::{AccountSync, SyncStatus};
 pub use mailops::AccountRow;
 pub use outbox::OfflineTransport;
@@ -205,6 +207,9 @@ pub enum Event {
         /// Cuenta que lo recibió.
         account: String,
     },
+    /// Abrir el redactor con este borrador (p. ej. «Responder vía la dirección de la
+    /// oportunidad», que primero consulta la instancia).
+    Compose(Box<ComposeDraft>),
     /// Resultado de un trabajo encolado por la UI.
     Custom {
         id: JobId,
@@ -330,6 +335,8 @@ pub struct Session {
     pim: pim::Pim,
     /// Último error de calendario/contactos avisado (no se repite en cada pasada).
     pim_last_error: Option<Text>,
+    /// Iurefficient (F3.1).
+    iure: iure::Iure,
 }
 
 impl std::fmt::Debug for Session {
@@ -390,12 +397,16 @@ impl Session {
             notices: Vec::new(),
             pim: pim::Pim::default(),
             pim_last_error: None,
+            iure: iure::Iure::default(),
         };
         s.signatures = SignatureBook::load(&s.store).unwrap_or_default();
         s.reload_accounts()?;
         s.rebuild_rows();
         s.start_outbox();
         s.restart_sync();
+        if s.sample {
+            s.iure_start(IureSetup::Sample);
+        }
         Ok(s)
     }
 
@@ -805,10 +816,7 @@ impl Session {
         let read = self.pending_read.map(|(_, since)| {
             std::time::Duration::from_millis(self.prefs.mark_read_delay_ms.into()).saturating_sub(since.elapsed())
         });
-        match (read, self.sync_deadline()) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        [read, self.sync_deadline(), self.iure_deadline()].into_iter().flatten().min()
     }
 
     /// Cambia banderas por la API local-primero de `sync` y la despierta.
@@ -1386,6 +1394,7 @@ impl Session {
         self.poll_imip_replies();
         self.poll_outbox();
         self.poll_pending_read();
+        self.poll_iure(&mut events);
         events.extend(self.notices.drain(..).map(Event::Notice));
         for d in done {
             match d.output {
@@ -1583,6 +1592,7 @@ impl Session {
         }
         self.store.put_task(&new).map_err(store_err)?;
         self.data_gen = self.data_gen.wrapping_add(1);
+        self.iure_task_toggled(&new);
         let text = if new.is_done() {
             Text::new("Task completed", "Tarea terminada")
         } else {

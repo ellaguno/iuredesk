@@ -55,7 +55,7 @@ iuredesk-html-view = { path = "crates/html-view" }
 iuredesk-ui = { path = "crates/ui" }
 
 # suite Iurefficient (repos hermanos)
-iurefficient-connect = { git = "https://github.com/ellaguno/iurefficient-connect", tag = "v0.7.1", default-features = false }
+iurefficient-connect = { git = "https://github.com/ellaguno/iurefficient-connect", tag = "v0.8.0", default-features = false }
 # ui-kit compartido con IureProject (PLAN.md D11). Para desarrollo local: [patch] en .cargo/config.toml.
 iurefficient-ui = { git = "https://github.com/ellaguno/iurefficient-ui", branch = "main" }
 

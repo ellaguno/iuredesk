@@ -23,6 +23,7 @@
 pub mod blob;
 mod codec;
 pub mod error;
+mod links;
 mod mail;
 mod pim;
 pub mod pim_remote;
@@ -42,6 +43,7 @@ use serde::de::DeserializeOwned;
 
 pub use blob::{BlobStore, MAX_BLOB_SIZE};
 pub use error::{Result, StoreError};
+pub use links::{EmailLink, MAX_LINKS_PER_MESSAGE, link_key};
 pub use mail::{AccountLabel, FolderCount, NewMessage};
 pub use pim::MAX_INDEXED_DAYS;
 pub use pim_remote::{CollectionRef, CollectionSync, PimRef, RawObject, SyncedItem};

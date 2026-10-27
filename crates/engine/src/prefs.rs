@@ -134,6 +134,13 @@ pub struct Prefs {
     /// Avisar con una notificación del escritorio cuando llega correo.
     #[serde(default = "yes")]
     pub notify_new_mail: bool,
+    /// Cada cuántos segundos se consultan los avisos y menciones de Iurefficient (60–3600).
+    #[serde(default = "default_iure_poll")]
+    pub iure_poll_secs: u32,
+}
+
+fn default_iure_poll() -> u32 {
+    120
 }
 
 fn default_read_delay() -> u32 {
@@ -157,6 +164,7 @@ impl Default for Prefs {
             mark_read_delay_ms: default_read_delay(),
             send_undo_secs: default_undo_send(),
             notify_new_mail: true,
+            iure_poll_secs: default_iure_poll(),
         }
     }
 }
