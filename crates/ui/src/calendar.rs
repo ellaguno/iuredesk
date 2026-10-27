@@ -217,11 +217,16 @@ fn calendar_list(app: &mut DeskApp, ui: &mut Ui) {
                         ui.painter().line_segment([a, b], Stroke::new(1.6, Color32::WHITE));
                         ui.painter().line_segment([b, d], Stroke::new(1.6, Color32::WHITE));
                     }
-                    let name = if cal.read_only { format!("{} 🔒", cal.name) } else { cal.name.clone() };
+                    // Sin emoji: las fuentes de la suite no lo traen; el candado es un icono dibujado.
                     let l = ui.add(
-                        egui::Label::new(RichText::new(name).color(if hidden { c.text_muted } else { c.text }))
+                        egui::Label::new(RichText::new(&cal.name).color(if hidden { c.text_muted } else { c.text }))
                             .sense(Sense::click()),
                     );
+                    if cal.read_only {
+                        let (r, lock) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), Sense::hover());
+                        icons::paint(ui.painter(), r, Icon::Lock, c.text_muted, c.text_muted);
+                        lock.on_hover_text(pick("Read-only", "Solo lectura"));
+                    }
                     resp | l
                 })
                 .inner;
