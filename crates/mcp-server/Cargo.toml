@@ -1,0 +1,32 @@
+[package]
+name = "iuredesk-mcp"
+description = "IureDesk como servidor MCP (`iuredesk --mcp`): correo, agenda, contactos, notas y tareas del almacén local, con puente IPC a la app abierta"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+iuredesk-model = { workspace = true }
+iuredesk-store = { workspace = true }
+iuredesk-compose = { workspace = true }
+iuredesk-pim-sync = { workspace = true }
+iurefficient-connect = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+mail-parser = { workspace = true }
+getrandom = { workspace = true }
+dirs = { workspace = true }
+open = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+iuredesk-store = { workspace = true, features = ["sample"] }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
