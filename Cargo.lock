@@ -2933,6 +2933,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "iuredesk-assistant"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "iuredesk-accounts",
+ "iuredesk-model",
+ "iuredesk-oauth",
+ "iurefficient-connect",
+ "mail-parser",
+ "proptest",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "iuredesk-autoconfig"
 version = "0.1.0-alpha.0"
 dependencies = [

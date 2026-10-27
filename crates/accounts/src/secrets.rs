@@ -27,6 +27,8 @@ pub enum SecretPurpose {
     OAuthAccess,
     /// Contraseña de CalDAV/CardDAV, si difiere.
     Dav,
+    /// Clave de API de un servicio externo (p. ej. un proveedor de IA del asistente).
+    ApiKey,
 }
 
 impl SecretPurpose {
@@ -37,6 +39,7 @@ impl SecretPurpose {
             SecretPurpose::OAuthRefresh => "oauth-refresh",
             SecretPurpose::OAuthAccess => "oauth-access",
             SecretPurpose::Dav => "dav",
+            SecretPurpose::ApiKey => "api-key",
         }
     }
 }
@@ -62,6 +65,7 @@ pub trait SecretStore: Send + Sync {
             SecretPurpose::OAuthRefresh,
             SecretPurpose::OAuthAccess,
             SecretPurpose::Dav,
+            SecretPurpose::ApiKey,
         ] {
             self.delete(account_id, p)?;
         }
@@ -144,6 +148,7 @@ mod tests {
     fn entry_names() {
         assert_eq!(keyring_user("acc-1", SecretPurpose::Incoming), "acc-1:incoming");
         assert_eq!(keyring_user("acc-1", SecretPurpose::OAuthRefresh), "acc-1:oauth-refresh");
+        assert_eq!(keyring_user("ai-anthropic", SecretPurpose::ApiKey), "ai-anthropic:api-key");
         assert!(KeyringStore.entry("", SecretPurpose::Incoming).is_err());
         assert!(KeyringStore.entry("a:b", SecretPurpose::Incoming).is_err());
     }
