@@ -36,3 +36,9 @@ Ids `F<fase>.<n>`. Estado: ☐ pendiente · ◐ en curso · ☑ hecho.
 | Id | Tarea | Estado |
 |---|---|---|
 | F3.0 | Inventario de la API de la instancia para el PIM y propuesta de lo que falta (REST + CalDAV/CardDAV, vincular correo) en `docs/iurefficient-api.md`; módulo `pim` en `iurefficient-connect` (rama `iuredesk`, sin publicar) | ◐ |
+
+## F4 · Suite y asistentes
+
+| Id | Tarea | Estado |
+|---|---|---|
+| F4.1 | `integrations` (L4): `Suite::detect` (catálogo de connect + IureVoz/IureProject por `PATH` y carpetas de instalación de Linux/macOS/Windows), `Outcome::NotInstalled` con invitación es/en en vez de error; cliente MCP genérico por stdio (JSON-RPC 2.0, `initialize` 2025-06-18, `tools/list` paginado, `tools/call`, tiempos con `notifications/cancelled`, líneas acotadas, el hijo muere al soltarlo); IureEditor por deep link (`open`, `insert`, `iurefficient/doc`, documento nuevo en caché), IureTranscribe (trabajo con sondeo, lectura por partes), IureOCR (PDF buscable + texto), IureVoz (socket primero, MCP después), IureDav (unidades, «Guardar adjunto en Iurefficient», adjuntos grandes como enlace), IureProject; servidor MCP falso para pruebas. `mcp-server` = `iuredesk-mcp` (L4): `buscar_correo`, `leer_hilo`, `crear_borrador` (nunca envía), `agenda`, `crear_evento`, `buscar_contacto`, `crear_nota`, `mis_tareas`; puente IPC con la app abierta (socket Unix / TCP local en Windows, token en la carpeta de ejecución) porque redb es de un proceso; `register_mcp_agents` (Claude Desktop, VS Code). API en `docs/integraciones.md`. Pendiente: cablear en la UI y en `main` (cambio descrito en el documento), deshacer de lo creado por MCP, recurso «correo de hoy» | ◐ |

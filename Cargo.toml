@@ -13,6 +13,8 @@ members = [
     "crates/dav",
     "crates/pim-sync",
     "crates/compose",
+    "crates/integrations",
+    "crates/mcp-server",
     "crates/engine",
     "crates/html-view",
     "crates/ui",
@@ -42,6 +44,8 @@ iuredesk-sync = { path = "crates/sync" }
 iuredesk-dav = { path = "crates/dav" }
 iuredesk-pim-sync = { path = "crates/pim-sync" }
 iuredesk-compose = { path = "crates/compose" }
+iuredesk-integrations = { path = "crates/integrations" }
+iuredesk-mcp = { path = "crates/mcp-server" }
 iuredesk-engine = { path = "crates/engine" }
 iuredesk-html-view = { path = "crates/html-view" }
 iuredesk-ui = { path = "crates/ui" }

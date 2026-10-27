@@ -1,0 +1,33 @@
+[package]
+name = "iuredesk-integrations"
+description = "Apps hermanas de la suite Iurefficient: detección, deep links, cliente MCP por stdio, voz, OCR, transcripción e IureDav"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+iurefficient-connect = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
+url = { workspace = true }
+open = { workspace = true }
+# El servidor MCP falso de las pruebas usa el `mcp_server` de connect (devuelve `anyhow::Error`).
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+# Servidor MCP falso para las pruebas del cliente: usa el mismo `mcp_server` de connect que las
+# apps hermanas. No se distribuye (`xtask dist` solo empaqueta `iuredesk`).
+[[bin]]
+name = "iuredesk-fake-mcp"
+path = "src/bin/fake_mcp.rs"
+test = false
+doc = false
+
+[lints]
+workspace = true
