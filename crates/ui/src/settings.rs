@@ -134,6 +134,7 @@ pub fn show(app: &mut DeskApp, ctx: &Context) {
                     app.session.save_prefs();
                 }
                 ui.add_space(14.0);
+                crate::iure::settings_section(app, ui);
                 section_label(ui, pick("Accounts", "Cuentas"));
                 for r in &rows {
                     egui::Frame::new()

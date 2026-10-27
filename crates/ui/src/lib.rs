@@ -16,6 +16,7 @@ mod app;
 mod calendar;
 mod compose;
 mod html;
+mod iure;
 mod mail;
 mod onboarding;
 mod pim;

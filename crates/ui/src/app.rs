@@ -82,6 +82,7 @@ pub struct DeskApp {
     next_composer: u64,
     pub settings_open: bool,
     pub(crate) settings_ui: crate::settings::AccountsUi,
+    pub(crate) iure: crate::iure::IureUi,
     applied: Option<(iuredesk_engine::ThemePref, iuredesk_engine::DensityPref)>,
 }
 
@@ -107,6 +108,7 @@ impl DeskApp {
             next_composer: 0,
             settings_open: false,
             settings_ui: Default::default(),
+            iure: Default::default(),
             applied: None,
         };
         if let Some(m) = app.options.mailto.clone()
@@ -167,7 +169,10 @@ impl DeskApp {
             return;
         }
 
-        let modal = self.palette.is_open() || self.session.wizard.is_some() || self.settings_open;
+        let modal = self.palette.is_open()
+            || self.session.wizard.is_some()
+            || self.settings_open
+            || self.iure.dialog.is_some();
         // Escribiendo en el redactor, los atajos de la aplicación no se disparan.
         let composing = !self.composers.is_empty() && ctx.egui_wants_keyboard_input();
         if !modal && !composing {
@@ -190,6 +195,8 @@ impl DeskApp {
 
         crate::compose::show_all(self, &ctx);
         crate::settings::show(self, &ctx);
+        crate::iure::dialogs(self, &ctx);
+        crate::iure::bell(self, &ctx);
         self.sync_window(&ctx);
         if self.session.wizard.is_some() {
             crate::onboarding::modal(self, &ctx);
@@ -339,6 +346,7 @@ impl DeskApp {
                         n(&title, &detail);
                     }
                 }
+                Event::Compose(d) => self.open_composer(*d),
                 Event::Custom { id, value } => {
                     if let Some(f) = value.downcast_ref::<iuredesk_engine::Fetched>() {
                         self.html.on_fetched(f.clone());
@@ -493,6 +501,19 @@ impl DeskApp {
             NavItem::new("settings", iurefficient_ui::Icon::Settings, pick("Settings", "Ajustes")).bottom(),
             NavItem::new("sync", sync_icon, &sync_label).bottom(),
         ];
+        // Campana de Iurefficient solo si hay sesión (o se recuerda una).
+        let bell_label = pick("Iurefficient notifications", "Avisos de Iurefficient");
+        let bell = NavItem::new("iure-bell", iurefficient_ui::Icon::Bell, bell_label)
+            .badge(u32::try_from(self.session.iure_feed().unread).unwrap_or(u32::MAX))
+            .bottom();
+        let show_bell = matches!(
+            self.session.iure_status(),
+            iuredesk_engine::iure::IureStatus::Ready { .. } | iuredesk_engine::iure::IureStatus::Offline { .. }
+        );
+        let mut items = items.to_vec();
+        if show_bell {
+            items.insert(items.len().saturating_sub(2), bell);
+        }
         let w = rail_width(ui.ctx());
         let current = self.session.module.key();
         let mut clicked: Option<String> = None;
@@ -530,6 +551,7 @@ impl DeskApp {
         });
         match clicked.as_deref() {
             Some("settings") => self.settings_open = true,
+            Some("iure-bell") => self.iure.bell_open = !self.iure.bell_open,
             Some("sync") => {
                 if self.session.is_live() {
                     self.sync_open = !self.sync_open;

@@ -4,7 +4,8 @@
 use std::collections::HashSet;
 
 use egui::{Align, Color32, Layout, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
-use iuredesk_engine::context::{ContextCard, LinkKind};
+use iuredesk_engine::IurePanel;
+use iuredesk_engine::context::ContextCard;
 use iuredesk_engine::time::{list_date, long_date};
 use iuredesk_engine::{DensityPref, FolderSel, ListRow};
 use iuredesk_model::{AccountId, FolderRole, MessageEnvelope, MessageId};
@@ -80,14 +81,17 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
 
     let focused = app.session.focused();
     let card = focused.map(|id| context_card(app, id)).unwrap_or_default();
+    let iure = focused.map(|id| (id, app.session.iure_panel(id))).filter(|(_, p)| p.visible());
     // Ancho mínimo de la lista: la densa lleva columnas (De, Asunto, Recibido).
     let dense = app.session.prefs.density == DensityPref::Dense;
     let list_min = if dense { 560.0 } else { 400.0 };
     let avail = ui.available_width();
     // El panel contextual solo aparece si deja sitio a la lista y a la lectura.
     let wide = avail - 264.0 >= list_min + 460.0;
-    if wide && !card.is_empty() {
-        split::right(ui, "context", PaneKind::Detail, 264.0, 220.0..=380.0, |ui| context_panel(app, ui, &card));
+    if wide && (!card.is_empty() || iure.is_some()) {
+        split::right(ui, "context", PaneKind::Detail, 264.0, 220.0..=380.0, |ui| {
+            context_panel(app, ui, &card, iure.as_ref())
+        });
     }
     let avail = ui.available_width();
     let reading_w = avail - list_min;
@@ -102,7 +106,7 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
         .size_range(340.0..=max_reading)
         .show(ui, |ui| {
             ui.set_max_width(ui.available_width());
-            reading_pane(app, ui, if wide { None } else { Some(&card) })
+            reading_pane(app, ui, if wide { None } else { Some((&card, iure.as_ref())) })
         });
     split::center(ui, PaneKind::Content, |ui| message_list(app, ui));
 }
@@ -327,6 +331,7 @@ fn today_panel(app: &mut DeskApp, ui: &mut Ui) {
             app.session.module = iuredesk_engine::Module::Calendar;
         }
     }
+    crate::iure::today_items(app, ui);
     let tasks = app.session.due_tasks();
     if !tasks.is_empty() {
         ui.add_space(4.0);
@@ -803,7 +808,7 @@ fn message_menu(app: &mut DeskApp, resp: &egui::Response) {
 // ---------------------------------------------------------------------------------------------
 // Lectura
 
-fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<&ContextCard>) {
+fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCard, Option<&(MessageId, IurePanel)>)>) {
     let ctx = ui.ctx().clone();
     let c = theme::colors(ui);
     let Some(id) = app.session.focused() else {
@@ -867,10 +872,13 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<&ContextCard
     let last = conv.last().map(|e| e.id);
     egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("reading-scroll").show(ui, |ui| {
         ui.add_space(8.0);
-        if let Some(card) = inline_card
-            && !card.is_empty()
+        if let Some((card, iure)) = inline_card
+            && (!card.is_empty() || iure.is_some())
         {
             context_inline(ui, card);
+            if let Some((id, p)) = iure {
+                crate::iure::panel(app, ui, *id, p);
+            }
             ui.add_space(8.0);
         }
         let n = conv.len();
@@ -1230,9 +1238,12 @@ fn attachment_chip(ui: &mut Ui, name: &str, size: usize) {
 // ---------------------------------------------------------------------------------------------
 // Panel contextual
 
-fn context_panel(_app: &mut DeskApp, ui: &mut Ui, card: &ContextCard) {
+fn context_panel(app: &mut DeskApp, ui: &mut Ui, card: &ContextCard, iure: Option<&(MessageId, IurePanel)>) {
     egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("context-scroll").show(ui, |ui| {
         context_inline(ui, card);
+        if let Some((id, p)) = iure {
+            crate::iure::panel(app, ui, *id, p);
+        }
     });
 }
 
@@ -1269,44 +1280,5 @@ fn context_inline(ui: &mut Ui, card: &ContextCard) {
                 }
             });
         ui.add_space(8.0);
-    }
-    if !card.links.is_empty() {
-        egui::Frame::new()
-            .fill(c.surface)
-            .stroke(Stroke::new(1.0, c.separator))
-            .corner_radius(8)
-            .inner_margin(egui::Margin::same(12))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
-                    ui.painter().circle_filled(r.center(), 6.0, c.accent);
-                    ui.label(RichText::new("Iurefficient").font(theme::bold_font(ui.ctx(), 13.0)).color(c.text));
-                });
-                ui.add_space(4.0);
-                for l in &card.links {
-                    ui.horizontal(|ui| {
-                        let (kind, k) = match l.kind {
-                            LinkKind::Case => (pick("Case", "Caso"), BadgeKind::Accent),
-                            LinkKind::Lead => ("Lead", BadgeKind::Success),
-                        };
-                        badge(ui, kind, k);
-                        ui.label(RichText::new(&l.title).strong().color(c.text));
-                    });
-                    ui.label(
-                        RichText::new(l.detail.get()).color(c.text_muted).size(theme::density(ui.ctx()).small_size()),
-                    );
-                    ui.add_space(4.0);
-                }
-                ui.label(
-                    RichText::new(pick(
-                        "Live links with your instance arrive in F3.",
-                        "Los vínculos en vivo con tu instancia llegan en F3.",
-                    ))
-                    .italics()
-                    .color(c.text_muted)
-                    .size(theme::density(ui.ctx()).small_size()),
-                );
-            });
     }
 }
