@@ -441,3 +441,46 @@ fn sync_events_update_status_and_announce_new_mail() {
     settle(&mut s);
     assert_eq!(s.focused(), Some(id));
 }
+
+#[test]
+fn imip_replies_from_pim_sync_go_to_the_outbox() {
+    use iuredesk_pim_sync::{ImipReply, OP_IMIP_REPLY};
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    let acct = s.account_labels()[0].id;
+    let r = ImipReply {
+        event: iuredesk_model::EventId(1),
+        uid: "inv-1@example.com".into(),
+        from: iuredesk_model::Mailbox::new("Laura", "laura@despacho.example.org"),
+        to: iuredesk_model::Mailbox::new("Ana", "ana@example.com"),
+        subject: "Aceptado: Comité".into(),
+        body: "Ahí estaré.".into(),
+        partstat: iuredesk_model::PartStat::Accepted,
+        ics: "BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nEND:VCALENDAR\r\n".into(),
+    };
+    s.store().enqueue_op(acct, OP_IMIP_REPLY, &r.encode()).unwrap();
+    s.poll();
+    let entries = s.outbox_entries();
+    assert_eq!(entries.len(), 1, "la respuesta queda en la bandeja de salida");
+    assert_eq!(entries[0].subject, "Aceptado: Comité");
+    assert!(!s.store().peek_ops(100).unwrap().iter().any(|o| o.kind == OP_IMIP_REPLY), "y sale de la cola");
+}
+
+#[test]
+fn pim_events_refresh_views_and_explain_conflicts() {
+    use iuredesk_pim_sync::{ConflictResolution, PimEvent};
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    let acct = s.account_labels()[0].id;
+    let before = s.data_generation();
+    assert!(s.feed_pim_event(PimEvent::CollectionsChanged { account: acct }));
+    assert_ne!(s.data_generation(), before);
+    s.feed_pim_event(PimEvent::Conflict {
+        account: acct,
+        item: iuredesk_store::PimRef::Event(iuredesk_model::EventId(1)),
+        summary: "Comité".into(),
+        resolution: ConflictResolution::ServerWon,
+    });
+    let evs = s.poll();
+    assert!(evs.iter().any(|e| matches!(e, Event::Notice(n) if n.text.es.contains("«Comité»"))));
+}

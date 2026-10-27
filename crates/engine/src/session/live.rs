@@ -123,6 +123,7 @@ impl Session {
             .collect();
         self.live.status.retain(|aid, _| self.account_ids.values().any(|a| a == aid));
         if accounts.is_empty() {
+            self.restart_pim();
             return;
         }
         if self.live.tokens.is_none()
@@ -165,6 +166,7 @@ impl Session {
             }
         });
         self.live.handle = Some(handle);
+        self.restart_pim();
     }
 
     /// Pide una pasada de todas las cuentas ya («Reintentar», botón de sincronización).
@@ -176,6 +178,9 @@ impl Session {
                 }
             }
             h.sync_all();
+        }
+        if let Some(p) = &self.pim.handle {
+            p.sync_all();
         }
     }
 
@@ -215,11 +220,18 @@ impl Session {
         if let Some(s) = self.sender.take() {
             s.stop();
         }
-        if let Some(h) = self.live.handle.take() {
+        let mail = self.live.handle.take();
+        let pim = self.pim.handle.take();
+        if mail.is_some() || pim.is_some() {
             let rt = self.bg.handle();
             let _ = std::thread::Builder::new().name("iuredesk-shutdown".into()).spawn(move || {
                 rt.block_on(async move {
-                    let _ = tokio::time::timeout(Duration::from_secs(4), h.shutdown()).await;
+                    if let Some(h) = mail {
+                        let _ = tokio::time::timeout(Duration::from_secs(4), h.shutdown()).await;
+                    }
+                    if let Some(p) = pim {
+                        let _ = tokio::time::timeout(Duration::from_secs(4), p.shutdown()).await;
+                    }
                 });
             });
         }

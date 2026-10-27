@@ -97,6 +97,33 @@ fn occurrence(e: &Event, start: DateTime<Utc>, len: Duration, color: u32) -> Occ
     }
 }
 
+/// Una aparición de `iuredesk-pim-sync` para las vistas (los días completos se fechan en `tz`).
+pub fn from_pim(o: &iuredesk_model::EventOccurrence, color: u32, tz: chrono_tz::Tz) -> Occurrence {
+    use iuredesk_model::EventTime;
+    let at = |t: &EventTime| match t {
+        EventTime::Date(d) => crate::time::tz_day_start(tz, *d),
+        other => other.to_utc(),
+    };
+    let (start, end) = (at(&o.start), at(&o.end));
+    let days = match (&o.start, &o.end) {
+        (EventTime::Date(a), EventTime::Date(b)) => Some((*a, (*b).max(*a + Duration::days(1)))),
+        (EventTime::Date(a), _) => Some((*a, *a + Duration::days(1))),
+        _ => None,
+    };
+    Occurrence {
+        id: o.event,
+        summary: o.summary.clone(),
+        location: o.location.clone(),
+        start,
+        end: end.max(start),
+        all_day: o.is_all_day(),
+        days,
+        color,
+        tentative: o.status == EventStatus::Tentative,
+        recurring: o.recurring,
+    }
+}
+
 /// Apariciones de `events` que se solapan con `[from, to)`, ordenadas por inicio. `color_of`
 /// da el color del calendario de cada evento.
 pub fn occurrences(

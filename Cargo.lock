@@ -2992,6 +2992,7 @@ name = "iuredesk-engine"
 version = "0.1.0-alpha.0"
 dependencies = [
  "chrono",
+ "chrono-tz",
  "dirs",
  "iuredesk-accounts",
  "iuredesk-autoconfig",
@@ -2999,6 +3000,7 @@ dependencies = [
  "iuredesk-imap",
  "iuredesk-model",
  "iuredesk-oauth",
+ "iuredesk-pim-sync",
  "iuredesk-store",
  "iuredesk-sync",
  "mail-parser",

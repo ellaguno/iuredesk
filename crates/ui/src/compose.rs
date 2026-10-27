@@ -58,6 +58,9 @@ pub struct ComposeWindow {
     suggest: Suggest,
     want_suggest: Option<(Field, String)>,
     error: Option<String>,
+    /// El cursor del cuerpo ya se puso al principio.
+    cursor_init: bool,
+    open_frames: u8,
 }
 
 enum Act {
@@ -88,6 +91,8 @@ impl ComposeWindow {
             suggest: Suggest::default(),
             want_suggest: None,
             error: None,
+            cursor_init: false,
+            open_frames: 0,
         }
     }
 
@@ -426,7 +431,7 @@ fn address_row(ui: &mut Ui, w: &mut ComposeWindow, f: Field, label: &str) {
                 w.touch();
             }
             let hint = if w.list(f).is_empty() { pick("Name or address", "Nombre o dirección") } else { "" };
-            let width = ui.available_width().max(140.0);
+            let width = (ui.available_size_before_wrap().x - 2.0).max(120.0);
             let input = w.input(f);
             let r = ui.add(
                 egui::TextEdit::singleline(input).id(id).hint_text(hint).frame(egui::Frame::NONE).desired_width(width),
@@ -691,24 +696,45 @@ fn form(
             }
         }
         ui.add_space(4.0);
-        egui::ScrollArea::vertical().id_salt(("compose-scroll", w.id)).auto_shrink([false, false]).show(ui, |ui| {
-            let size = theme::density(&ctx).body_size() + 0.5;
-            let look =
-                Look { size, bold: theme::bold_font(&ctx, size), text: c.text, muted: c.text_muted, accent: c.accent };
-            let r = crate::rich_edit::editor(
-                ui,
-                egui::Id::unique(("compose-body", w.id)),
-                &mut w.editor,
-                &look,
-                pick("Write your message", "Escribe tu mensaje"),
-                12,
-            );
-            r.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, pick("Message", "Mensaje"))
-            });
-            if std::mem::take(&mut w.editor.changed) {
-                w.touch();
-            }
+        let mut scroll = egui::ScrollArea::vertical().id_salt(("compose-scroll", w.id)).auto_shrink([false, false]);
+        // Los primeros cuadros (mientras la ventana toma su tamaño) se queda arriba.
+        if w.open_frames < 4 {
+            w.open_frames += 1;
+            scroll = scroll.vertical_scroll_offset(0.0);
+        }
+        scroll.show(ui, |ui| {
+            ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                let size = theme::density(&ctx).body_size() + 0.5;
+                let look = Look {
+                    size,
+                    bold: theme::bold_font(&ctx, size),
+                    text: c.text,
+                    muted: c.text_muted,
+                    accent: c.accent,
+                };
+                let body_id = egui::Id::unique(("compose-body", w.id));
+                if !w.cursor_init {
+                    // Al abrir, el cursor va al principio (encima de la cita y la firma).
+                    w.cursor_init = true;
+                    let mut st = egui::text_edit::TextEditState::default();
+                    st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(0))));
+                    st.store(ui.ctx(), body_id);
+                }
+                let r = crate::rich_edit::editor(
+                    ui,
+                    egui::Id::unique(("compose-body", w.id)),
+                    &mut w.editor,
+                    &look,
+                    pick("Write your message", "Escribe tu mensaje"),
+                    12,
+                );
+                r.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, pick("Message", "Mensaje"))
+                });
+                if std::mem::take(&mut w.editor.changed) {
+                    w.touch();
+                }
+            })
         });
     });
 }

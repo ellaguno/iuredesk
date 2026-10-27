@@ -958,3 +958,15 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod markdown_tests {
+    use super::*;
+
+    #[test]
+    fn markdown_body_keeps_its_first_paragraphs() {
+        let body = RichBody::from_markdown("Hola Carmen,\n\nTe envío la **propuesta**.\n\n- uno\n- dos\n\nSaludos,");
+        let d = RichDoc::from_rich(&body);
+        assert!(d.text.starts_with("Hola Carmen,\n\nTe envío la propuesta.\n\n• uno"), "{:?}", d.text);
+    }
+}

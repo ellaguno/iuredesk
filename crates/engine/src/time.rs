@@ -47,6 +47,43 @@ impl Zone {
     }
 }
 
+/// Zona IANA del usuario para expandir recurrencias: la de `TZ` o `/etc/localtime`; con un
+/// desfase fijo, la `Etc/GMT±N` equivalente (UTC si no existe).
+pub fn user_tz(zone: Zone) -> chrono_tz::Tz {
+    match zone {
+        Zone::Fixed(o) => {
+            let secs = o.local_minus_utc();
+            if secs % 3600 == 0 {
+                // Los nombres `Etc/GMT` llevan el signo al revés.
+                let h = -secs / 3600;
+                let name = if h == 0 { "UTC".to_string() } else { format!("Etc/GMT{h:+}") };
+                name.parse().unwrap_or(chrono_tz::UTC)
+            } else {
+                chrono_tz::UTC
+            }
+        }
+        Zone::Local => system_tz().unwrap_or(chrono_tz::UTC),
+    }
+}
+
+fn system_tz() -> Option<chrono_tz::Tz> {
+    if let Ok(t) = std::env::var("TZ")
+        && let Ok(tz) = t.trim_start_matches(':').parse()
+    {
+        return Some(tz);
+    }
+    let link = std::fs::read_link("/etc/localtime").ok()?;
+    let s = link.to_string_lossy();
+    let name = s.split("zoneinfo/").nth(1)?;
+    name.parse().ok()
+}
+
+/// Medianoche del día `d` en la zona `tz`, en UTC.
+pub fn tz_day_start(tz: chrono_tz::Tz, d: NaiveDate) -> DateTime<Utc> {
+    let t = d.and_hms_opt(0, 0, 0).unwrap_or_default();
+    tz.from_local_datetime(&t).earliest().map_or_else(|| t.and_utc(), |x| x.with_timezone(&Utc))
+}
+
 /// Nombre corto del día de la semana.
 pub fn weekday_short(d: NaiveDate) -> &'static str {
     let i = d.weekday().num_days_from_monday() as usize;
@@ -143,6 +180,8 @@ mod tests {
         assert_eq!(list_date(Utc.with_ymd_and_hms(2026, 10, 17, 9, 5, 0).unwrap(), now, z), "sáb 17");
         assert_eq!(list_date(Utc.with_ymd_and_hms(2026, 3, 2, 9, 5, 0).unwrap(), now, z), "2 mar");
         assert_eq!(list_date(Utc.with_ymd_and_hms(2025, 3, 2, 9, 5, 0).unwrap(), now, z), "02/03/25");
+        assert_eq!(user_tz(Zone::utc()), chrono_tz::UTC);
+        assert_eq!(user_tz(Zone::Fixed(FixedOffset::west_opt(6 * 3600).unwrap())).name(), "Etc/GMT+6");
         assert_eq!(
             monday_of(NaiveDate::from_ymd_opt(2026, 10, 21).unwrap()),
             NaiveDate::from_ymd_opt(2026, 10, 19).unwrap()

@@ -9,6 +9,7 @@
 mod live;
 mod mailops;
 mod outbox;
+mod pim;
 
 pub use live::{AccountSync, SyncStatus};
 pub use mailops::AccountRow;
@@ -326,6 +327,9 @@ pub struct Session {
     pending_read: Option<(MessageId, Instant)>,
     /// Avisos para la UI que no salen de un comando.
     notices: Vec<Notice>,
+    pim: pim::Pim,
+    /// Último error de calendario/contactos avisado (no se repite en cada pasada).
+    pim_last_error: Option<Text>,
 }
 
 impl std::fmt::Debug for Session {
@@ -384,6 +388,8 @@ impl Session {
             signatures: SignatureBook::default(),
             pending_read: None,
             notices: Vec::new(),
+            pim: pim::Pim::default(),
+            pim_last_error: None,
         };
         s.signatures = SignatureBook::load(&s.store).unwrap_or_default();
         s.reload_accounts()?;
@@ -1376,6 +1382,8 @@ impl Session {
         let done: Vec<Done> = self.bg.poll();
         let mut events = Vec::new();
         self.poll_sync(&mut events);
+        self.poll_pim();
+        self.poll_imip_replies();
         self.poll_outbox();
         self.poll_pending_read();
         events.extend(self.notices.drain(..).map(Event::Notice));
@@ -1476,11 +1484,7 @@ impl Session {
     pub fn occurrences(&mut self, from: DateTime<Utc>, to: DateTime<Utc>) -> &[Occurrence] {
         let fresh = self.events_cache.as_ref().is_some_and(|(k, _)| *k == (from, to));
         if !fresh {
-            let events: Vec<CalEvent> = self.store.events_between(&[], from, to).unwrap_or_default();
-            let cals = self.calendars.clone();
-            let occ = crate::calendar::occurrences(&events, from, to, |e| {
-                cals.iter().find(|c| c.id == e.calendar).and_then(|c| c.color).unwrap_or(0x3B82F6)
-            });
+            let occ = self.occurrences_uncached(from, to);
             self.events_cache = Some(((from, to), occ));
         }
         self.events_cache.as_ref().map(|(_, v)| v.as_slice()).unwrap_or(&[])
@@ -1494,11 +1498,25 @@ impl Session {
         self.occurrences_uncached(from, to)
     }
 
+    /// Expansión completa de RFC 5545 de `iuredesk-pim-sync` (excepciones, `RECURRENCE-ID`,
+    /// zonas); si fallara, la expansión sencilla de [`crate::calendar::occurrences`].
     fn occurrences_uncached(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<Occurrence> {
-        let events: Vec<CalEvent> = self.store.events_between(&[], from, to).unwrap_or_default();
-        crate::calendar::occurrences(&events, from, to, |e| {
-            self.calendars.iter().find(|c| c.id == e.calendar).and_then(|c| c.color).unwrap_or(0x3B82F6)
-        })
+        let color = |cal: iuredesk_model::CalendarId| {
+            self.calendars.iter().find(|c| c.id == cal).and_then(|c| c.color).unwrap_or(0x3B82F6)
+        };
+        let tz = crate::time::user_tz(self.zone);
+        match iuredesk_pim_sync::occurrences_between(&self.store, &[], from, to, tz) {
+            Ok(list) => {
+                let mut v: Vec<Occurrence> =
+                    list.iter().map(|o| crate::calendar::from_pim(o, color(o.calendar), tz)).collect();
+                v.sort_by_key(|o| o.start);
+                v
+            }
+            Err(_) => {
+                let events: Vec<CalEvent> = self.store.events_between(&[], from, to).unwrap_or_default();
+                crate::calendar::occurrences(&events, from, to, |e| color(e.calendar))
+            }
+        }
     }
 
     /// Contactos de todas las libretas, por nombre.
