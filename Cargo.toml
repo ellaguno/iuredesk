@@ -16,6 +16,7 @@ members = [
     "crates/integrations",
     "crates/mcp-server",
     "crates/engine",
+    "crates/assistant",
     "crates/html-view",
     "crates/ui",
     "apps/iuredesk",
@@ -47,6 +48,7 @@ iuredesk-compose = { path = "crates/compose" }
 iuredesk-integrations = { path = "crates/integrations" }
 iuredesk-mcp = { path = "crates/mcp-server" }
 iuredesk-engine = { path = "crates/engine" }
+iuredesk-assistant = { path = "crates/assistant" }
 iuredesk-html-view = { path = "crates/html-view" }
 iuredesk-ui = { path = "crates/ui" }
 

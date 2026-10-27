@@ -1,0 +1,31 @@
+[package]
+name = "iuredesk-assistant"
+description = "Asistente ✦: proveedores de IA (Iurefficient, Microsoft 365 Copilot, compatibles con OpenAI, Anthropic), tareas con resultados validados y acciones confirmadas"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+iuredesk-model = { workspace = true }
+iuredesk-accounts = { workspace = true }
+iuredesk-oauth = { workspace = true }
+iurefficient-connect = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util", "io-std"] }
+tempfile = { workspace = true }
+proptest = { workspace = true }
+mail-parser = { workspace = true }
+
+[lints]
+workspace = true
