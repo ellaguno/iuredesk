@@ -26,9 +26,24 @@ pub struct PimState {
 // ---------------------------------------------------------------------------------------------
 // Contactos
 
+/// Nombre de la fila: el del contacto o, si no tiene ninguno, «(Sin nombre)» (en cursiva atenuada).
+fn display_name(c: &iuredesk_model::Contact) -> (String, bool) {
+    match iuredesk_engine::session::contact_display_name(c) {
+        Some(n) => (n, true),
+        None => (pick("(No name)", "(Sin nombre)").to_string(), false),
+    }
+}
+
 pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
-    let all = app.session.contacts().to_vec();
+    let everyone = app.session.contacts().to_vec();
+    let show_empty = app.session.prefs.show_empty_contacts;
+    let empty_count = everyone.iter().filter(|c| iuredesk_engine::session::contact_is_empty(c)).count();
+    let all: Vec<iuredesk_model::Contact> = if show_empty {
+        everyone
+    } else {
+        everyone.into_iter().filter(|c| !iuredesk_engine::session::contact_is_empty(c)).collect()
+    };
     let filter = app.pim.contact_filter.trim().to_string();
     let shown: Vec<usize> = if filter.is_empty() {
         (0..all.len()).collect()
@@ -37,9 +52,14 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
             .iter()
             .enumerate()
             .filter_map(|(i, c)| {
-                let extra =
-                    format!("{} {} {}", c.org, c.emails.first().map(|e| e.value.as_str()).unwrap_or(""), c.title);
-                fuzzy::score_with_extra(&filter, &c.full_name, &extra).map(|s| (s, i))
+                let extra = format!(
+                    "{} {} {} {}",
+                    c.org,
+                    c.emails.first().map(|e| e.value.as_str()).unwrap_or(""),
+                    c.title,
+                    c.phones.first().map(|p| p.value.as_str()).unwrap_or("")
+                );
+                fuzzy::score_with_extra(&filter, &display_name(c).0, &extra).map(|s| (s, i))
             })
             .collect();
         v.sort_by_key(|(s, i)| (std::cmp::Reverse(*s), *i));
@@ -47,7 +67,21 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
     };
     split::left(ui, "contacts-list", PaneKind::Sidebar, 320.0, 240.0..=480.0, |ui| {
         ui.add_space(4.0);
-        pane_title(ui, pick("Contacts", "Contactos"), &all.len().to_string());
+        let selected_n = app.pim.contact_list.selection.len();
+        ui.horizontal(|ui| {
+            pane_title(ui, pick("Contacts", "Contactos"), &all.len().to_string());
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                let tip = if selected_n > 1 {
+                    format!("{} ({selected_n})", pick("Delete selected", "Eliminar seleccionados"))
+                } else {
+                    pick("Delete contact", "Eliminar contacto").to_string()
+                };
+                let r = icons::icon_button(ui, Icon::Trash, &tip, selected_n > 0);
+                if r.clicked() {
+                    app.run(&ctx, "contacts.delete");
+                }
+            });
+        });
         ui.add_space(6.0);
         if app.pim.contact_cols.is_empty() {
             app.pim.contact_cols = vec![Column::new(pick("Name", "Nombre"), 200.0).grow()];
@@ -69,12 +103,18 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
         let selected = app.pim.contact;
         let shown_k = shown.clone();
         let all_k = all.clone();
+        // Deja sitio al pie para «Mostrar contactos vacíos (N)».
+        let footer = if empty_count > 0 { 30.0 } else { 0.0 };
+        let list_h = (ui.available_height() - footer).max(60.0);
+        let list_rect = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), list_h));
+        let mut list_ui =
+            ui.new_child(egui::UiBuilder::new().max_rect(list_rect).layout(egui::Layout::top_down(Align::Min)));
         let out = ListView::new("contacts", &mut app.pim.contact_cols, shown.len())
             .header(false)
             .row_height(46.0)
             .label(pick("Contacts", "Contactos"))
             .show(
-                ui,
+                &mut list_ui,
                 &mut app.pim.contact_list,
                 move |i| shown_k.get(i).and_then(|&k| all_k.get(k)).map_or(u64::MAX, |c| c.id.get()),
                 |row| {
@@ -91,10 +131,35 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
                     let x = r.left() + 48.0;
                     let l1 = Rect::from_min_max(pos2(x, r.top() + 4.0), pos2(r.right() - 8.0, r.center().y + 1.0));
                     let l2 = Rect::from_min_max(pos2(x, r.center().y - 1.0), pos2(r.right() - 8.0, r.bottom() - 4.0));
-                    let bold = theme::bold_font(&ctx, theme::density(&ctx).body_size());
-                    row.text_in(l1, Align::Min, &ct.full_name, bold, col.text);
-                    let sub =
-                        if ct.org.is_empty() { ct.primary_email().unwrap_or("").to_string() } else { ct.org.clone() };
+                    let (name, real) = display_name(ct);
+                    if real {
+                        let bold = theme::bold_font(&ctx, theme::density(&ctx).body_size());
+                        row.text_in(l1, Align::Min, &name, bold, col.text);
+                    } else {
+                        let mut job = egui::text::LayoutJob::single_section(
+                            name.clone(),
+                            egui::TextFormat {
+                                font_id: theme::body_font(&ctx),
+                                color: col.text_muted,
+                                italics: true,
+                                ..Default::default()
+                            },
+                        );
+                        job.wrap.max_width = l1.width();
+                        job.wrap.max_rows = 1;
+                        let g = row.painter().layout_job(job);
+                        let y = l1.center().y - g.size().y / 2.0;
+                        row.painter().galley(pos2(l1.left(), y), g, col.text_muted);
+                        row.describe(&name);
+                    }
+                    // Segunda línea: empresa, correo o teléfono que no sea ya el nombre.
+                    let phone = ct.phones.first().map_or("", |p| p.value.as_str());
+                    let sub = [ct.org.as_str(), ct.primary_email().unwrap_or(""), phone]
+                        .into_iter()
+                        .map(str::trim)
+                        .find(|s| !s.is_empty() && *s != name)
+                        .unwrap_or("")
+                        .to_string();
                     row.text_in(l2, Align::Min, &sub, theme::small_font(&ctx), col.text_muted);
                     let _ = selected;
                 },
@@ -104,6 +169,47 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
             && let Some(ct) = shown.get(i).and_then(|&k| all.get(k))
         {
             app.pim.contact = Some(ct.id);
+        }
+        // La selección (múltiple) va al motor: «Eliminar» y Supr actúan sobre ella.
+        let ids: Vec<ContactId> = shown
+            .iter()
+            .filter_map(|&k| all.get(k))
+            .filter(|c| app.pim.contact_list.selection.is_selected(c.id.get()))
+            .map(|c| c.id)
+            .collect();
+        if ids.as_slice() != app.session.contact_selection() {
+            app.session.set_contact_selection(ids);
+        }
+        if out.context.is_some() {
+            contact_menu(app, &out.response);
+        }
+        // Supr (o Retroceso) con la lista enfocada: la lista se queda con el teclado, así que los
+        // atajos de una tecla de la aplicación no llegan; se atiende aquí.
+        if out.response.has_focus()
+            && ui.input_mut(|i| {
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                    || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+            })
+        {
+            app.run(&ctx, "contacts.delete");
+        }
+        ui.advance_cursor_after_rect(list_rect);
+        if empty_count > 0 {
+            let c = theme::colors(ui);
+            let label = if show_empty {
+                format!("{} ({empty_count})", pick("Hide empty contacts", "Ocultar contactos vacíos"))
+            } else {
+                format!("{} ({empty_count})", pick("Show empty contacts", "Mostrar contactos vacíos"))
+            };
+            let r = ui.add(
+                egui::Button::new(RichText::new(label).color(c.text_muted).size(theme::density(&ctx).small_size()))
+                    .frame(false),
+            );
+            if r.clicked() {
+                app.session.prefs.show_empty_contacts = !show_empty;
+                app.session.save_prefs();
+                app.pim.contact_list.selection.clear();
+            }
         }
     });
     let current = app
@@ -125,7 +231,9 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
                 avatar(ui, &ct.full_name, ct.primary_email().unwrap_or(""), 72.0);
                 ui.vertical(|ui| {
                     ui.add_space(6.0);
-                    ui.label(RichText::new(&ct.full_name).font(theme::bold_font(ui.ctx(), 22.0)).color(c.text));
+                    let (name, real) = display_name(ct);
+                    let title = RichText::new(name).font(theme::bold_font(ui.ctx(), 22.0));
+                    ui.label(if real { title.color(c.text) } else { title.italics().color(c.text_muted) });
                     let role = [ct.title.as_str(), ct.org.as_str()]
                         .into_iter()
                         .filter(|s| !s.is_empty())
@@ -154,6 +262,16 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
                     let q = format!("de:{e}");
                     app.mail.search = q.clone();
                     app.session.set_search(&q);
+                }
+                if app.session.contact_deletable(ct.id)
+                    && ui
+                        .button(pick("Delete", "Eliminar"))
+                        .on_hover_text(pick("Delete this contact", "Eliminar este contacto"))
+                        .clicked()
+                {
+                    app.session.set_contact_selection(vec![ct.id]);
+                    let ctx = ui.ctx().clone();
+                    app.run(&ctx, "contacts.delete");
                 }
             });
             ui.add_space(14.0);
@@ -185,6 +303,27 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
             }
         });
     });
+}
+
+/// Menú contextual de la lista de contactos.
+fn contact_menu(app: &mut DeskApp, resp: &egui::Response) {
+    let ctx = resp.ctx.clone();
+    let mut delete = false;
+    let n = app.pim.contact_list.selection.len();
+    egui::Popup::context_menu(resp).show(|ui| {
+        let label = if n > 1 {
+            format!("{} ({n})", pick("Delete", "Eliminar"))
+        } else {
+            pick("Delete", "Eliminar").to_string()
+        };
+        if icons::menu_item(ui, Some(Icon::Trash), &label).clicked() {
+            delete = true;
+            ui.close();
+        }
+    });
+    if delete {
+        app.run(&ctx, "contacts.delete");
+    }
 }
 
 fn label_kind(l: &str) -> String {

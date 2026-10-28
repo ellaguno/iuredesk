@@ -6,8 +6,10 @@
 //! deshacer con su inversa. Deshacer cancela la operación si aún no salió de la máquina o encola
 //! la inversa si ya se replicó.
 
+mod accounts;
 mod assist_glue;
 mod cal;
+mod contacts;
 mod iure;
 mod live;
 mod mailops;
@@ -15,7 +17,9 @@ mod outbox;
 mod pim;
 mod today;
 
+pub use accounts::{ConnectionTest, kind_label, servers_editable, validate_account};
 pub use cal::{CalState, PimBackend, occurrence_start};
+pub use contacts::{contact_display_name, contact_is_empty};
 pub use iure::{IURE_CALENDAR_PATH, IURE_TASKS_PATH, IurePanel, IureSetup, LeadSuggestions, LoginState};
 pub use live::{AccountSync, SyncStatus};
 pub use mailops::AccountRow;
@@ -194,6 +198,13 @@ pub enum Outcome {
     Assist(String),
     /// Abrir el editor de eventos con este formulario.
     EditEvent(Box<crate::calendar::draft::EventDraft>),
+    /// Pedir confirmación: si el usuario dice que sí, ejecutar `command`.
+    Confirm {
+        text: Text,
+        /// Texto del botón que confirma («Eliminar 3»).
+        yes: Text,
+        command: String,
+    },
 }
 
 /// Resultados de trabajos de fondo que interpreta la sesión.
@@ -214,6 +225,8 @@ pub enum EngineJob {
     /// Prueba de conexión (y secreto ya guardado) de la cuenta en curso.
     Probe(std::result::Result<(), Text>),
     OAuth(std::result::Result<(), Text>),
+    /// «Probar conexión» del editor de cuentas.
+    AccountTest(std::result::Result<(), Text>),
     /// Resumen de «Mi día» (F6.1).
     Day(Box<crate::today::DaySummary>),
     Failed(Text),
@@ -267,6 +280,8 @@ enum Inverse {
     Send(OutboxId),
     /// Edición de calendario.
     Calendar(Box<cal::CalUndo>),
+    /// Contactos borrados.
+    Contacts(Vec<contacts::ContactSnap>),
 }
 
 #[derive(Clone, Debug)]
@@ -343,6 +358,10 @@ pub struct Session {
     bg: Background,
     pub wizard: Option<Wizard>,
     contacts_cache: Option<Vec<Contact>>,
+    /// Contactos seleccionados en la lista.
+    contact_selection: Vec<iuredesk_model::ContactId>,
+    /// Última «Probar conexión» del editor de cuentas (id de la cuenta y estado).
+    connection_test: Option<(String, accounts::ConnectionTest)>,
     calendars: Vec<Calendar>,
     events_cache: Option<((DateTime<Utc>, DateTime<Utc>), Vec<Occurrence>)>,
     data_gen: u64,
@@ -413,6 +432,8 @@ impl Session {
             bg,
             wizard: None,
             contacts_cache: None,
+            contact_selection: Vec::new(),
+            connection_test: None,
             calendars: Vec::new(),
             events_cache: None,
             data_gen: 0,
@@ -1023,6 +1044,9 @@ impl Session {
         let base = id.split_once(':').map_or(id, |(b, _)| b);
         match base {
             "mail.reply" | "mail.reply_all" | "mail.forward" => self.focused.is_some(),
+            "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
+                !self.contact_selection.is_empty()
+            }
             "mail.archive" | "mail.delete" | "mail.toggle_read" | "mail.toggle_flag" | "mail.move" => self.has_target(),
             "undo" => !self.undo.is_empty(),
             _ => command::find(base).is_some(),
@@ -1046,6 +1070,10 @@ impl Session {
         if !self.is_enabled(id) {
             return Ok(Outcome::Notice(match base {
                 "undo" => Notice::info("Nothing to undo.", "No hay nada que deshacer."),
+                "contacts.delete" => Notice::info("Select a contact first.", "Primero selecciona un contacto."),
+                "mail.delete" if self.module == Module::Contacts => {
+                    Notice::info("Select a contact first.", "Primero selecciona un contacto.")
+                }
                 _ => Notice::info("Select a message first.", "Primero selecciona un mensaje."),
             }));
         }
@@ -1062,6 +1090,10 @@ impl Session {
                     _ => None,
                 };
                 Ok(Outcome::Compose(Box::new(self.compose_new(account))))
+            }
+            // «Eliminar» (Supr) en Contactos borra los contactos seleccionados.
+            "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
+                self.run_delete_contacts(arg)
             }
             "mail.reply" | "mail.reply_all" | "mail.forward" => self.reply_like(base),
             "mail.archive" => self.archive(),
@@ -1359,6 +1391,7 @@ impl Session {
                     return Ok(self.undo_send(outbox_id));
                 }
                 Inverse::Calendar(u) => self.undo_calendar(*u)?,
+                Inverse::Contacts(s) => self.undo_contacts(s)?,
                 Inverse::Task(t) => {
                     self.store.put_task(&t).map_err(store_err)?;
                     self.data_gen = self.data_gen.wrapping_add(1);
@@ -1495,6 +1528,10 @@ impl Session {
             EngineJob::Discovery(r) => self.wizard_on_discovery(id, r),
             EngineJob::Probe(r) => self.wizard_on_probe(id, r, false),
             EngineJob::OAuth(r) => self.wizard_on_probe(id, r, true),
+            EngineJob::AccountTest(r) => {
+                self.on_account_test(id, r);
+                None
+            }
             EngineJob::Day(s) => {
                 self.on_day(id, *s);
                 None

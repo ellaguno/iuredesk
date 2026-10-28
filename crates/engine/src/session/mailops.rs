@@ -35,6 +35,17 @@ pub struct AccountRow {
     pub status: Option<super::live::AccountSync>,
     /// Firma (texto) para mensajes nuevos y respuestas.
     pub signature: String,
+    /// Tipo de cuenta (Gmail, Microsoft 365, IMAP…).
+    pub kind: iuredesk_model::account::AccountKind,
+    /// La cuenta completa (para el editor; `None` en el buzón de ejemplo).
+    pub account: Option<iuredesk_model::account::Account>,
+}
+
+impl AccountRow {
+    /// ¿Hay que volver a iniciar sesión (contraseña o permiso caducado)?
+    pub fn needs_signin(&self) -> bool {
+        matches!(self.status, Some(super::live::AccountSync::Error { reauth: true, .. }))
+    }
 }
 
 impl Session {
@@ -314,6 +325,8 @@ impl Session {
                 server: a.incoming.host.clone(),
                 status: aid.and_then(|x| self.live.status.get(&x).cloned()),
                 signature: self.signature_text(&a.email),
+                kind: a.kind,
+                account: Some(a.clone()),
             });
         }
         for l in &self.labels {
@@ -326,14 +339,17 @@ impl Session {
                     server: String::new(),
                     status: None,
                     signature: self.signature_text(&l.email),
+                    kind: iuredesk_model::account::AccountKind::Generic,
+                    account: None,
                 });
             }
         }
         out
     }
 
-    /// Quita una cuenta: de la lista, del llavero y del almacén local (sus carpetas y mensajes).
-    /// En el servidor no se toca nada.
+    /// Quita una cuenta: de la lista, del llavero y del almacén local (sus carpetas y mensajes,
+    /// calendarios, libretas de contactos y listas de tareas descargados). En el servidor no se
+    /// toca nada.
     pub fn remove_account(&mut self, id: &str) -> Result<Outcome> {
         let account = self.accounts.iter().find(|a| a.id == id).cloned();
         let aid = self.account_ids.get(id).copied();
@@ -357,6 +373,20 @@ impl Session {
                 self.store.delete_folder(*f).map_err(store_err)?;
             }
             let _ = iuredesk_sync::state::forget_account(&self.store, id, aid, &folders);
+            for c in self.store.calendars().unwrap_or_default().into_iter().filter(|c| c.account == aid) {
+                let _ = self.store.delete_calendar(c.id);
+            }
+            for b in self.store.address_books().unwrap_or_default().into_iter().filter(|b| b.account == aid) {
+                let _ = self.store.delete_address_book(b.id);
+            }
+            for l in self.store.task_lists().unwrap_or_default().into_iter().filter(|l| l.account == Some(aid)) {
+                let _ = self.store.delete_task_list(l.id);
+            }
+            self.contacts_cache = None;
+            self.events_cache = None;
+            if let Ok(c) = self.store.calendars() {
+                self.calendars = c;
+            }
             self.store.delete_account_label(aid).map_err(store_err)?;
             self.live.status.remove(&aid);
         }

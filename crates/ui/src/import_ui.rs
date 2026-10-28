@@ -268,7 +268,10 @@ fn running_step(app: &mut DeskApp, ui: &mut Ui) {
         Some(f) => egui::ProgressBar::new(f).show_percentage(),
         None => egui::ProgressBar::new(0.0).animate(true),
     };
-    ui.add(bar.desired_width(f32::INFINITY));
+    // Ancho finito: con `INFINITY` en una ventana que aún se mide, egui calculaba un rect NaN y
+    // entraba en pánico (la prueba `import_wizard_brings_a_small_mbox` fallaba a veces).
+    let w = ui.available_width();
+    ui.add(bar.desired_width(if w.is_finite() { w.clamp(120.0, 640.0) } else { 480.0 }));
     if !p.current.is_empty() {
         ui.add(egui::Label::new(RichText::new(&p.current).color(c.text_muted)).truncate());
     }

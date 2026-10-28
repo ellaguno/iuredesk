@@ -172,6 +172,38 @@ pub struct Prefs {
     /// Última carpeta del correo (`unified:inbox`, `folder:12`…).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_folder: Option<String>,
+    /// Tipografía de la interfaz: `inter` (incluida), `system` (la del escritorio) o
+    /// `family:<nombre>` (una familia instalada). La interpreta `iurefficient_ui::fonts::FontChoice`.
+    #[serde(default = "default_font")]
+    pub font: String,
+    /// Tamaño del texto en % (90–130).
+    #[serde(default = "default_text_scale")]
+    pub text_scale_pct: u32,
+    /// Texto nítido: letras alineadas a píxeles enteros (más nítido con escalado fraccionario).
+    #[serde(default)]
+    pub crisp_text: bool,
+    /// Mostrar en Contactos los contactos sin ningún dato.
+    #[serde(default)]
+    pub show_empty_contacts: bool,
+}
+
+fn default_font() -> String {
+    "inter".into()
+}
+
+fn default_text_scale() -> u32 {
+    100
+}
+
+/// Tamaños de texto aceptados (%).
+pub const TEXT_SCALE_RANGE: std::ops::RangeInclusive<u32> = 90..=130;
+
+impl Prefs {
+    /// Tamaño del texto acotado a [`TEXT_SCALE_RANGE`], como factor (1.0 = 100 %).
+    pub fn text_scale(&self) -> f32 {
+        let pct = self.text_scale_pct.clamp(*TEXT_SCALE_RANGE.start(), *TEXT_SCALE_RANGE.end());
+        pct as f32 / 100.0
+    }
 }
 
 fn default_iure_poll() -> u32 {
@@ -208,6 +240,10 @@ impl Default for Prefs {
             start: StartPref::Today,
             last_module: None,
             last_folder: None,
+            font: default_font(),
+            text_scale_pct: default_text_scale(),
+            crisp_text: false,
+            show_empty_contacts: false,
         }
     }
 }
@@ -253,6 +289,29 @@ mod tests {
         let p2 = Prefs::load(&p);
         assert_eq!(p2.theme, ThemePref::Dark);
         assert!(p2.conversations);
+    }
+
+    #[test]
+    fn typography_round_trip_and_clamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("prefs.json");
+        let prefs = Prefs {
+            font: "family:IBM Plex Sans".into(),
+            text_scale_pct: 115,
+            crisp_text: true,
+            show_empty_contacts: true,
+            ..Default::default()
+        };
+        prefs.save(&p).unwrap();
+        let back = Prefs::load(&p);
+        assert_eq!(back, prefs);
+        assert!((back.text_scale() - 1.15).abs() < 1e-6);
+        // Lo viejo (sin estos campos) toma Inter al 100 %.
+        std::fs::write(&p, br#"{"theme":"dark"}"#).unwrap();
+        let old = Prefs::load(&p);
+        assert_eq!((old.font.as_str(), old.text_scale_pct, old.crisp_text), ("inter", 100, false));
+        assert_eq!(Prefs { text_scale_pct: 500, ..Default::default() }.text_scale(), 1.3);
+        assert_eq!(Prefs { text_scale_pct: 0, ..Default::default() }.text_scale(), 0.9);
     }
 
     #[test]

@@ -453,6 +453,42 @@ fn address_json(a: Option<&PostalAddress>) -> Value {
     }
 }
 
+/// Campos de contacto que se piden con `$select` al delta. Sin `$select`, el delta de contactos de
+/// las cuentas personales (Outlook.com) puede devolver solo `id` y unas pocas propiedades: los
+/// contactos llegaban vacíos (UX-1).
+pub const CONTACT_SELECT: &str = "displayName,givenName,surname,middleName,nickName,fileAs,emailAddresses,\
+businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,homeAddress,businessAddress,otherAddress,\
+personalNotes,birthday,lastModifiedDateTime";
+
+/// Nombre visible: `displayName`, o nombre y apellidos, `fileAs`, apodo o el nombre del primer
+/// correo (los contactos que Outlook crea solo con una dirección).
+fn contact_name(v: &Value) -> String {
+    let display = s(v, "displayName").trim();
+    if !display.is_empty() {
+        return display.to_string();
+    }
+    let parts: Vec<&str> =
+        ["givenName", "middleName", "surname"].into_iter().map(|k| s(v, k).trim()).filter(|x| !x.is_empty()).collect();
+    if !parts.is_empty() {
+        return parts.join(" ");
+    }
+    for k in ["fileAs", "nickName"] {
+        let x = s(v, k).trim();
+        if !x.is_empty() {
+            return x.to_string();
+        }
+    }
+    v.get("emailAddresses")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(100)
+        .map(|e| s(e, "name").trim())
+        .find(|n| !n.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
 /// Contacto de Graph → [`Contact`].
 pub fn contact_from_graph(v: &Value) -> Contact {
     let mut phones: Vec<Labeled> = Vec::new();
@@ -471,7 +507,7 @@ pub fn contact_from_graph(v: &Value) -> Contact {
         .collect();
     Contact {
         uid: s(v, "id").into(),
-        full_name: s(v, "displayName").into(),
+        full_name: contact_name(v),
         given_name: s(v, "givenName").into(),
         family_name: s(v, "surname").into(),
         nickname: s(v, "nickName").into(),
@@ -642,6 +678,33 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
+
+    #[test]
+    fn graph_contact_name_fallbacks() {
+        // Regresión UX-1: sin `displayName` el contacto no debe quedar sin nombre.
+        let c = contact_from_graph(&json!({"id": "c1", "givenName": "Ana", "surname": "Ruiz"}));
+        assert_eq!(c.full_name, "Ana Ruiz");
+        let c = contact_from_graph(&json!({"id": "c2", "fileAs": "Ruiz, Ana"}));
+        assert_eq!(c.full_name, "Ruiz, Ana");
+        let c = contact_from_graph(
+            &json!({"id": "c3", "displayName": "  ", "emailAddresses": [{"address": "x@y.com", "name": "Xavi"}]}),
+        );
+        assert_eq!(c.full_name, "Xavi");
+        assert_eq!(c.emails.first().map(|e| e.value.as_str()), Some("x@y.com"));
+        let c = contact_from_graph(&json!({
+            "id": "c4", "displayName": "Bea", "companyName": "Contoso", "jobTitle": "CTO",
+            "businessPhones": ["+1 555"], "homePhones": ["+1 556"], "mobilePhone": "+1 557",
+        }));
+        assert_eq!(
+            (c.full_name.as_str(), c.org.as_str(), c.title.as_str(), c.phones.len()),
+            ("Bea", "Contoso", "CTO", 3)
+        );
+        // Un contacto con todo vacío no revienta.
+        assert_eq!(contact_from_graph(&json!({"id": "c5", "emailAddresses": null})).full_name, "");
+        for k in CONTACT_SELECT.split(',') {
+            assert!(!k.is_empty() && !k.contains(' '), "{k}");
+        }
+    }
 
     #[test]
     fn graph_event_round_trip() {

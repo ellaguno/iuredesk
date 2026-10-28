@@ -205,14 +205,40 @@ fn folders(app: &mut DeskApp, ui: &mut Ui) {
                 app.mail.expanded_accounts.insert(first.id);
             }
         }
+        let rows = app.session.accounts_overview();
         for l in labels {
             let open = app.mail.expanded_accounts.contains(&l.id);
-            if account_header(ui, &l.name, &l.email, open).clicked() {
+            let head = account_header(ui, &l.name, &l.email, open);
+            if head.clicked() {
                 if open {
                     app.mail.expanded_accounts.remove(&l.id);
                 } else {
                     app.mail.expanded_accounts.insert(l.id);
                 }
+            }
+            // Clic derecho: configurar o quitar la cuenta (Ajustes → Cuentas).
+            let key = rows.iter().find(|r| r.aid == Some(l.id)).map(|r| r.id.clone()).unwrap_or_default();
+            let mut action: Option<bool> = None;
+            egui::Popup::context_menu(&head).show(|ui| {
+                if icons::menu_item(ui, Some(Icon::Settings), pick("Account settings…", "Configurar cuenta…")).clicked()
+                {
+                    action = Some(false);
+                    ui.close();
+                }
+                if !key.is_empty()
+                    && icons::menu_item(ui, Some(Icon::Trash), pick("Remove account…", "Eliminar cuenta…")).clicked()
+                {
+                    action = Some(true);
+                    ui.close();
+                }
+            });
+            match action {
+                Some(false) => {
+                    let edit = (!key.is_empty()).then(|| key.clone());
+                    app.open_settings(crate::settings::Section::Accounts, edit, None);
+                }
+                Some(true) => app.open_settings(crate::settings::Section::Accounts, None, Some(key.clone())),
+                None => {}
             }
             if open {
                 let folders: Vec<(iuredesk_model::FolderId, FolderRole, String)> =
