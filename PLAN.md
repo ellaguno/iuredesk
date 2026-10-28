@@ -250,7 +250,7 @@ se muestra qué datos salen del equipo; se puede desactivar por cuenta.
 - HTML saneado; **sin JavaScript** (Blitz no lo ejecuta); imágenes remotas bloqueadas por
   defecto (anti-rastreo), permitidas por remitente.
 - Detección de phishing básica: dominio del enlace ≠ texto visible, remitentes parecidos.
-- S/MIME y OpenPGP (`sequoia-openpgp` con backend Rust puro) en fase posterior.
+- S/MIME (RustCrypto `cms`) y OpenPGP (rPGP, `pgp`, MIT/Apache-2.0; no sequoia por su licencia LGPL) desde F5.4.
 - Cifrado opcional del almacén local.
 - Regla "nunca crashear" de IureProject: sin `unwrap`/`expect`/`panic!` fuera de tests; todo dato
   externo es hostil (tamaños acotados, `get()`, aritmética saturada). Fuzzing de parsers MIME/ICS/IMAP.

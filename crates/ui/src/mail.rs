@@ -1110,6 +1110,7 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
         }
         ui.add_space(8.0);
     }
+    crate::security_ui::badge(ui, env.id, body.security.as_ref());
     crate::invitation::card(app, ui, env.id);
     let full = app.mail.show_quoted.contains(&env.id);
     let html_cut = body.html.as_deref().and_then(iuredesk_engine::body::strip_quoted_html);

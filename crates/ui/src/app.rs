@@ -259,6 +259,7 @@ impl DeskApp {
         crate::assistant::frame(self, &ctx);
         crate::suite_ui::frame(self, &ctx);
         crate::import_ui::frame(self, &ctx);
+        crate::security_ui::frame(self, &ctx);
         self.sync_window(&ctx);
         if self.session.wizard.is_some() {
             crate::onboarding::modal(self, &ctx);
@@ -627,6 +628,9 @@ impl DeskApp {
             Outcome::FocusSearch => self.mail.focus_search = true,
             Outcome::Restyle => self.apply_style(ctx, false),
             Outcome::EditEvent(d) => crate::event_editor::open(self, *d),
+            Outcome::Assist(id) if id.starts_with("print.") || id.starts_with("security.") => {
+                crate::security_ui::command(self, ctx, &id)
+            }
             Outcome::Assist(id) => crate::assistant::command(self, ctx, &id),
             Outcome::Confirm { text, yes, command } => self.confirm = Some((text, yes, command)),
             Outcome::Rules(id) => crate::rules_ui::command(self, ctx, &id),

@@ -65,6 +65,8 @@ pub struct ComposeWindow {
     open_frames: u8,
     /// Plantillas (F5.3).
     pub(crate) templates: crate::rules_ui::ComposeTemplates,
+    /// F5.4: «Firmar» / «Cifrar».
+    pub(crate) security: crate::security_ui::ComposeSecurity,
 }
 
 enum Act {
@@ -99,6 +101,7 @@ impl ComposeWindow {
             cursor_init: false,
             open_frames: 0,
             templates: Default::default(),
+            security: Default::default(),
         }
     }
 
@@ -814,6 +817,7 @@ fn bottom_bar(ui: &mut Ui, w: &mut ComposeWindow, presets: &[(Text, DateTime<Utc
             acts.push(Act::SaveDraft);
         }
         crate::rules_ui::template_button(ui, &mut w.templates);
+        crate::security_ui::compose_toggles(ui, &mut w.cd, &mut w.security);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui.button(pick("Discard", "Descartar")).clicked() {
                 acts.push(Act::Discard);
