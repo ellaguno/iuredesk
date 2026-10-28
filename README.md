@@ -42,5 +42,5 @@ Quality gate: `cargo xtask ci`. The plan is in [`PLAN.md`](PLAN.md) and the work
 
 ## License
 
-[FSL-1.1-ALv2](LICENSE.md) (Functional Source License, converting to Apache-2.0 after two years),
+[Apache-2.0](LICENSE.md),
 © Eduardo Llaguno Velasco.

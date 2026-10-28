@@ -1,6 +1,6 @@
 # Publicación de PRUEBA: al subir una etiqueta vX.Y.Z compila los instaladores de los tres SO con
 # `cargo xtask package <so>` (cargo-packager) y crea un *borrador* de Release, marcado como
-# preliminar, en ESTE MISMO repositorio privado (decisión del dueño: nada público por ahora).
+# preliminar, en este mismo repositorio (público desde 2026-10-28, Apache-2.0).
 # Secretos: SUITE_REPOS_TOKEN (obligatorio) y los de firma (opcionales; sin ellos los paquetes
 # salen sin firmar). Ver docs/publicacion.md.
 name: Publicación
@@ -35,14 +35,14 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Acceso a los repos privados de la suite
+      - name: Acceso a repos privados de la suite (opcional)
         shell: bash
         env:
           SUITE_REPOS_TOKEN: ${{ secrets.SUITE_REPOS_TOKEN }}
         run: |
           if [ -z "$SUITE_REPOS_TOKEN" ]; then
-            echo "::error::Falta el secreto SUITE_REPOS_TOKEN (docs/publicacion.md)"
-            exit 1
+            echo "Sin SUITE_REPOS_TOKEN: los repos de la suite son públicos, no hace falta."
+            exit 0
           fi
           git config --global url."https://x-access-token:${SUITE_REPOS_TOKEN}@github.com/".insteadOf "https://github.com/"
       - name: Dependencias de compilación de Linux (winit, wgpu; sin GTK)
@@ -133,7 +133,7 @@ jobs:
             dist/*.dmg
 
   release:
-    name: Borrador de Release (repo privado)
+    name: Borrador de Release
     needs: package
     runs-on: ubuntu-22.04
     timeout-minutes: 15

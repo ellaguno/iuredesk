@@ -1,7 +1,6 @@
 # Puerta de calidad (`cargo xtask ci`) en Linux y compilación + pruebas en Windows y macOS, en cada
-# push a main y en cada pull request. El workspace depende del repo privado
-# ellaguno/iurefficient-ui: requiere el secreto SUITE_REPOS_TOKEN (token fino de solo lectura sobre
-# ese repo). Ver docs/publicacion.md.
+# push a main y en cada pull request. Los repos de la suite (iurefficient-ui, iurefficient-connect)
+# son públicos; SUITE_REPOS_TOKEN es opcional (solo si alguno vuelve a ser privado).
 name: CI
 
 on:
@@ -30,13 +29,13 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - name: Acceso a los repos privados de la suite
+      - name: Acceso a repos privados de la suite (opcional)
         env:
           SUITE_REPOS_TOKEN: ${{ secrets.SUITE_REPOS_TOKEN }}
         run: |
           if [ -z "$SUITE_REPOS_TOKEN" ]; then
-            echo "::error::Falta el secreto SUITE_REPOS_TOKEN (docs/publicacion.md)"
-            exit 1
+            echo "Sin SUITE_REPOS_TOKEN: los repos de la suite son públicos, no hace falta."
+            exit 0
           fi
           git config --global url."https://x-access-token:${SUITE_REPOS_TOKEN}@github.com/".insteadOf "https://github.com/"
       - name: Dependencias de compilación de Linux (winit, wgpu; sin GTK) y python3 (stylo)
@@ -61,14 +60,14 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Acceso a los repos privados de la suite
+      - name: Acceso a repos privados de la suite (opcional)
         shell: bash
         env:
           SUITE_REPOS_TOKEN: ${{ secrets.SUITE_REPOS_TOKEN }}
         run: |
           if [ -z "$SUITE_REPOS_TOKEN" ]; then
-            echo "::error::Falta el secreto SUITE_REPOS_TOKEN (docs/publicacion.md)"
-            exit 1
+            echo "Sin SUITE_REPOS_TOKEN: los repos de la suite son públicos, no hace falta."
+            exit 0
           fi
           git config --global url."https://x-access-token:${SUITE_REPOS_TOKEN}@github.com/".insteadOf "https://github.com/"
       - uses: actions/setup-python@v5

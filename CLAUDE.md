@@ -70,7 +70,7 @@ notices, assets). Mensajes de commit con el id de tarea de `docs/gaps.md` (p. ej
   Para trabajo de UI, mira la captura antes de dar algo por terminado.
 
 ## Licencia
-FSL-1.1-ALv2, titular Eduardo Llaguno Velasco. Activos: nada de Microsoft/Apple/Google; iconos
+Apache-2.0 (decisión del dueño 2026-10-28; antes FSL-1.1-ALv2), titular Eduardo Llaguno Velasco. Repositorio público. Activos: nada de Microsoft/Apple/Google; iconos
 dibujados en código o libres, cada archivo de `assets/` con su fila en `ATTRIBUTION.md`.
 
 ## Idioma

@@ -164,7 +164,7 @@ fn config(os: Os, version: &str, target: &str, stage: &Path, dist: &Path) -> Res
         "homepage": "https://iurefficient.com/",
         "authors": [PUBLISHER],
         "publisher": PUBLISHER,
-        "copyright": "© 2026 Eduardo Llaguno Velasco. FSL-1.1-ALv2.",
+        "copyright": "© 2026 Eduardo Llaguno Velasco. Apache-2.0.",
         "licenseFile": p(root().join("LICENSE.md")),
         "category": "Productivity",
         "outDir": p(dist.to_path_buf()),

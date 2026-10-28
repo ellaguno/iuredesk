@@ -1,8 +1,8 @@
 # Publicación e instaladores
 
-El código es privado. Por decisión del dueño, la CI y las versiones de **prueba** viven por ahora en
-el mismo repositorio privado `ellaguno/iuredesk` (borradores de Release marcados como preliminares);
-nada se publica. Licencia: FSL-1.1-ALv2.
+Código abierto (Apache-2.0) y público desde 2026-10-28. La CI y los releases viven en el mismo
+repositorio `ellaguno/iuredesk`; no hay repositorio aparte de descargas. Las versiones alfa salen
+como borradores de Release marcados como preliminares y el dueño las publica a mano.
 
 ## Paquetes
 
@@ -61,10 +61,11 @@ existe). Sin etiqueta (*Run workflow*) solo deja los paquetes como artefactos de
 
 ## Lo que tiene que hacer el dueño
 
-### Obligatorio: acceso a los repos de la suite
-El workspace depende de `ellaguno/iurefficient-ui` (privado) e `ellaguno/iurefficient-connect`
-(público) por git. Los flujos reescriben `https://github.com/` con un token y usan el git del sistema
-(`CARGO_NET_GIT_FETCH_WITH_CLI=true`).
+### Opcional: acceso a repos privados de la suite
+El workspace depende de `ellaguno/iurefficient-ui` e `ellaguno/iurefficient-connect`, ambos
+**públicos**: no hace falta ningún token. Solo si alguno volviera a ser privado, los flujos
+reescriben `https://github.com/` con `SUITE_REPOS_TOKEN` (git del sistema,
+`CARGO_NET_GIT_FETCH_WITH_CLI=true`):
 1. GitHub → *Settings → Developer settings → Fine-grained personal access tokens → Generate new
    token*. Propietario `ellaguno`; *Only select repositories*: `iurefficient-ui` (y
    `iurefficient-connect`, por si deja de ser público); permisos de repositorio: **Contents: Read-only**

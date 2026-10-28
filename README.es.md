@@ -42,5 +42,5 @@ Puerta de calidad: `cargo xtask ci`. El plan está en [`PLAN.md`](PLAN.md) y la 
 
 ## Licencia
 
-[FSL-1.1-ALv2](LICENSE.md) (Functional Source License, que pasa a Apache-2.0 a los dos años),
+[Apache-2.0](LICENSE.md),
 © Eduardo Llaguno Velasco.

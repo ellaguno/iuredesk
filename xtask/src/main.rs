@@ -4,7 +4,7 @@
 //! - `layers`: ninguna capa depende de una superior; nada bajo la UI depende de egui/eframe/winit/rfd.
 //! - `purity`: política "solo Rust" (PLAN.md D1): ningún crate enlaza bibliotecas en C/C++ salvo
 //!   las excepciones de `docs/excepciones.md`.
-//! - `licenses`: solo licencias permisivas (el proyecto es FSL-1.1-ALv2 y pasa a Apache-2.0).
+//! - `licenses`: solo licencias permisivas (el proyecto es Apache-2.0).
 //! - `notices`: genera `target/THIRD-PARTY-NOTICES.txt` con la licencia de cada crate de terceros
 //!   que va dentro de los binarios distribuidos; falla si alguno no tiene texto de licencia.
 //! - `assets`: todo archivo de `assets/` tiene su fila en `ATTRIBUTION.md`.
@@ -284,7 +284,7 @@ fn licenses(m: &Value) -> Res {
         if p.get("source").is_some_and(Value::is_null) {
             continue; // crates propios
         }
-        // Crates de la suite Iurefficient (repos hermanos del mismo titular, misma licencia FSL).
+        // Crates de la suite Iurefficient (repos hermanos del mismo titular, FSL o Apache).
         let suite = s(p, "source").contains("github.com/ellaguno/");
         if suite && lic == "FSL-1.1-ALv2" {
             continue;

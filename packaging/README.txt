@@ -21,10 +21,8 @@ Verificar la descarga / Verify the download:
 
 Licencia / License
 ------------------
-FSL-1.1-ALv2 (LICENSE.md): uso gratuito para cualquier fin salvo un producto o servicio
-comercial que compita; cada versión pasa a Apache-2.0 dos años después de publicarse.
-Free to use for any purpose except a competing commercial product or service; each version
-becomes Apache-2.0 two years after its release.
+Apache-2.0 (LICENSE.md): software libre; puedes usarlo, modificarlo y redistribuirlo según
+los términos de la licencia. / Free software under the Apache License, Version 2.0.
 
 Componentes de terceros / Third-party components: THIRD-PARTY-NOTICES.txt.
 

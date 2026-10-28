@@ -41,7 +41,7 @@ Tres promesas que guían cada decisión:
 | D6 | Asincronía | **tokio** en un *runtime* de fondo; la UI nunca bloquea; comunicación por canales | La UI de egui sólo lee *snapshots* del modelo. |
 | D7 | Conexión Iurefficient | **iurefficient-connect** (crate compartido) | Login, TOTP, llavero compartido, REST, MCP, WebDAV y CRM ya existen. Lo que falte (agenda, contactos, tickets) se agrega **ahí**, no en IureDesk. |
 | D8 | Offline-first | Todo se lee del almacén local; la red sólo sincroniza | Velocidad, trabajo en avión, resiliencia ante servidores lentos. |
-| D10 | Licencia | **FSL-1.1-ALv2** | Igual que IureProject. |
+| D10 | Licencia | **Apache-2.0** (2026-10-28; antes FSL-1.1-ALv2) | Repositorio y releases públicos en el mismo repo; IureProject sigue en FSL. |
 | D11 | ui-kit compartido | **`iurefficient-ui`** (repo hermano) extraído de IureProject; IureProject migra a él | Una sola apariencia y un solo lugar para mejorar widgets. |
 | D12 | Versión de egui | **0.37 unificada** en toda la suite | |
 | D9 | Integración con apps hermanas | **A través de frontera de proceso** (deep links, MCP, socket de IureVoz) | Misma decisión que PLAN D3 de IureProject: cada app evoluciona sola; IureDesk no las enlaza como librería salvo `connect`. |
@@ -297,7 +297,7 @@ se muestra qué datos salen del equipo; se puede desactivar por cuenta.
 
 ## 13. Decisiones tomadas (2026-10-26)
 
-1. **Licencia**: FSL-1.1-ALv2.
+1. **Licencia**: FSL-1.1-ALv2 → **Apache-2.0** desde 2026-10-28, repositorio público.
 2. **Correo**: Iurefficient no provee buzones. IureDesk usa cuentas propias del usuario y vincula
    correos a casos/leads/tickets.
 3. **Endpoints faltantes** (agenda, contactos, tickets, notas): la instancia los expondrá por REST y

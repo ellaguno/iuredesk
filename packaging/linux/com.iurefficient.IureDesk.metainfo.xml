@@ -4,7 +4,7 @@
 <component type="desktop-application">
   <id>com.iurefficient.IureDesk</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>FSL-1.1-ALv2</project_license>
+  <project_license>Apache-2.0</project_license>
   <name>IureDesk</name>
   <summary>Mail, calendar, contacts, notes and tasks</summary>
   <summary xml:lang="es">Correo, calendario, contactos, notas y tareas</summary>
