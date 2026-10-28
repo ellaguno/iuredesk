@@ -190,8 +190,14 @@ impl Session {
     }
 
     /// Estado de una cuenta.
+    /// Un error del correo manda; si no, el de calendario/contactos (BUG-GCAL); si no, el del
+    /// correo.
     pub fn account_sync(&self, aid: AccountId) -> Option<&AccountSync> {
-        self.live.status.get(&aid)
+        let mail = self.live.status.get(&aid);
+        if matches!(mail, Some(AccountSync::Error { .. })) {
+            return mail;
+        }
+        self.pim_error(aid).or(mail)
     }
 
     /// Estado global para el botón del riel.
@@ -199,7 +205,7 @@ impl Session {
         if self.live.handle.is_none() {
             return SyncStatus::Off;
         }
-        let all: Vec<&AccountSync> = self.live.status.values().collect();
+        let all: Vec<&AccountSync> = self.live.status.values().chain(self.pim.errors.values()).collect();
         if let Some(AccountSync::Error { text, reauth }) =
             all.iter().find(|s| matches!(s, AccountSync::Error { .. })).copied()
         {

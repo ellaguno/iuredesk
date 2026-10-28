@@ -44,12 +44,27 @@ pub fn occurrences_between(
     user_tz: Tz,
 ) -> Result<Vec<EventOccurrence>> {
     let mut out = Vec::new();
-    for e in store.events_between(cals, from, to)? {
+    // El almacén indexa los días completos a medianoche UTC; en la zona del usuario el día
+    // empieza antes o después (BUG-GCAL: en Ciudad de México el cumpleaños de mañana caía hoy a
+    // las 18:00). Se consulta con un día de margen y se filtra con el día local de verdad.
+    let day = chrono::Duration::days(1);
+    let (q_from, q_to) = (from.checked_sub_signed(day).unwrap_or(from), to.checked_add_signed(day).unwrap_or(to));
+    // En el tope de la ventana el margen no cabe: se consulta tal cual.
+    let events = match store.events_between(cals, q_from, q_to) {
+        Ok(v) => v,
+        Err(_) => store.events_between(cals, from, to)?,
+    };
+    for e in events {
         if out.len() >= MAX_OCCURRENCES {
             break;
         }
         if !e.is_recurring() {
-            out.push(single(&e));
+            let s = local_instant(&e.start, user_tz);
+            let en = local_instant(&e.end, user_tz).max(s);
+            let overlaps = if s == en { s >= from && s < to } else { s < to && en > from };
+            if overlaps {
+                out.push(single(&e));
+            }
             continue;
         }
         let cal = series_calendar(store, &e, user_tz);
@@ -119,6 +134,15 @@ pub fn occurrences_between(
     }
     out.sort_by(|a, b| a.start.to_utc().cmp(&b.start.to_utc()).then(a.event.cmp(&b.event)));
     Ok(out)
+}
+
+/// Instante de un [`EventTime`] en la zona del usuario: los días completos empiezan a la
+/// medianoche local, no a la de UTC.
+fn local_instant(t: &EventTime, user_tz: Tz) -> DateTime<Utc> {
+    match t {
+        EventTime::Date(d) => iuredesk_dav::tz::local_to_utc(d.and_time(chrono::NaiveTime::MIN), user_tz),
+        other => other.to_utc(),
+    }
 }
 
 fn single(e: &Event) -> EventOccurrence {
@@ -201,5 +225,40 @@ mod tests {
         assert_eq!(b.len(), 1);
         assert_eq!(b[0].start, EventTime::Date(NaiveDate::from_ymd_opt(2026, 3, 5).unwrap()));
         assert!(b[0].is_all_day());
+    }
+
+    /// BUG-GCAL: días completos de Google (`DTSTART;VALUE=DATE`) en America/Mexico_City. El de
+    /// mañana no puede aparecer hoy (a las 18:00, la medianoche UTC) y el de hoy sí, de día
+    /// completo; igual con la serie anual de cumpleaños sin `DTEND`.
+    #[test]
+    fn all_day_events_follow_the_local_day() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path()).unwrap();
+        let cal = s.put_calendar(&Calendar { account: AccountId(1), ..Default::default() }).unwrap();
+        let tz: Tz = "America/Mexico_City".parse().unwrap();
+        let d = |m, day| NaiveDate::from_ymd_opt(2026, m, day).unwrap();
+        let ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Google Inc//Google Calendar 70.9054//EN\r\n\
+BEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20261028\r\nDTEND;VALUE=DATE:20261029\r\nUID:manana@google.com\r\n\
+SUMMARY:Mañana\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20261027\r\nDTEND;VALUE=DATE:20261028\r\n\
+UID:hoy@google.com\r\nSUMMARY:Hoy\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20001027\r\n\
+RRULE:FREQ=YEARLY\r\nUID:cumple@google.com\r\nSUMMARY:Cumpleaños\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let parsed = ICalendar::parse(ics).unwrap();
+        for mut e in events_from_ics(&parsed, tz) {
+            assert!(e.start.is_all_day(), "{} debe ser de día completo", e.summary);
+            e.calendar = cal;
+            s.put_event(&e).unwrap();
+        }
+        // «Mi día» del martes 27 de octubre en Ciudad de México (UTC-6).
+        let from = iuredesk_dav::tz::local_to_utc(d(10, 27).and_time(chrono::NaiveTime::MIN), tz);
+        let to = iuredesk_dav::tz::local_to_utc(d(10, 28).and_time(chrono::NaiveTime::MIN), tz);
+        let occ = occurrences_between(&s, &[], from, to, tz).unwrap();
+        let names: Vec<&str> = occ.iter().map(|o| o.summary.as_str()).collect();
+        assert!(!names.contains(&"Mañana"), "el de mañana no cae hoy: {names:?}");
+        let hoy = occ.iter().find(|o| o.summary == "Hoy").expect("el de hoy");
+        assert_eq!((hoy.start.clone(), hoy.end.clone()), (EventTime::Date(d(10, 27)), EventTime::Date(d(10, 28))));
+        let cumple = occ.iter().find(|o| o.summary == "Cumpleaños").expect("el cumpleaños");
+        assert_eq!(cumple.start, EventTime::Date(d(10, 27)));
+        assert!(cumple.is_all_day());
+        assert_eq!(occ.len(), 2, "{names:?}");
     }
 }

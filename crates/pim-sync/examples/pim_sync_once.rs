@@ -134,7 +134,11 @@ async fn main() -> anyhow_like::Result {
     let occ = occurrences_between(&store, &[], now, now + Days::days(14), tz).map_err(|e| e.to_string())?;
     println!("próximos 14 días: {} apariciones", occ.len());
     for o in occ.iter().take(15) {
-        println!("  {}  {}", o.start.to_utc().with_timezone(&tz).format("%a %d %b %H:%M"), o.summary);
+        let when = match &o.start {
+            iuredesk_model::EventTime::Date(d) => format!("{}  día completo", d.format("%a %d %b")),
+            t => t.to_utc().with_timezone(&tz).format("%a %d %b %H:%M").to_string(),
+        };
+        println!("  {when}  {}", o.summary);
     }
     handle.shutdown().await;
     Ok(())

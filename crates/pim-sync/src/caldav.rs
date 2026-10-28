@@ -94,29 +94,45 @@ impl CalDav {
         Ok(self.client.free_busy(&url, organizer, attendees, start, end, &uid).await?)
     }
 
-    async fn discovery(&self, ctx: &Ctx) -> Result<DiscoveryState> {
+    /// Hogares de calendarios y libretas. Si un servicio falla (Google CardDAV sin el permiso
+    /// `carddav`, una URL de contactos que da 404) el otro sigue: se devuelven los fallos para
+    /// avisar sin dejar a la cuenta sin calendario (BUG-GCAL). Solo se guarda en caché un
+    /// descubrimiento completo, así el que falló se reintenta en la próxima pasada.
+    async fn discovery(&self, ctx: &Ctx) -> Result<(DiscoveryState, Vec<PimError>)> {
         let key = discovery_key(ctx);
         if let Some(st) = ctx.store.sync_state(&key)?.and_then(|b| serde_json::from_slice::<DiscoveryState>(&b).ok())
             && (!st.cal_homes.is_empty() || !st.card_homes.is_empty())
         {
-            return Ok(st);
+            return Ok((st, Vec::new()));
         }
         let mut st = DiscoveryState::default();
+        let mut failed = Vec::new();
         if let Some(start) = &self.caldav {
-            let d = self.client.discover(start, Service::CalDav).await?;
-            st.cal_homes = d.calendar_homes.iter().map(Url::to_string).collect();
-            st.outbox = d.schedule_outbox.map(|u| u.to_string());
+            match self.client.discover(start, Service::CalDav).await {
+                Ok(d) => {
+                    st.cal_homes = d.calendar_homes.iter().map(Url::to_string).collect();
+                    st.outbox = d.schedule_outbox.map(|u| u.to_string());
+                }
+                Err(e) => failed.push(partial(e, false)?),
+            }
         }
         if let Some(start) = &self.carddav {
-            let d = self.client.discover(start, Service::CardDav).await?;
-            st.card_homes = d.addressbook_homes.iter().map(Url::to_string).collect();
+            match self.client.discover(start, Service::CardDav).await {
+                Ok(d) => st.card_homes = d.addressbook_homes.iter().map(Url::to_string).collect(),
+                Err(e) => failed.push(partial(e, true)?),
+            }
         }
         if st.cal_homes.is_empty() && st.card_homes.is_empty() {
-            return Err(PimError::Invalid("el servidor no tiene calendarios ni libretas".into()));
+            return Err(failed
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| PimError::Invalid("el servidor no tiene calendarios ni libretas".into())));
         }
-        let bytes = serde_json::to_vec(&st).map_err(|e| PimError::Invalid(e.to_string()))?;
-        ctx.store.put_sync_state(&key, &bytes)?;
-        Ok(st)
+        if failed.is_empty() {
+            let bytes = serde_json::to_vec(&st).map_err(|e| PimError::Invalid(e.to_string()))?;
+            ctx.store.put_sync_state(&key, &bytes)?;
+        }
+        Ok((st, failed))
     }
 
     /// Alta, cambios y baja de colecciones locales. Devuelve las colecciones a sincronizar.
@@ -449,13 +465,22 @@ impl CalDav {
 impl Provider for CalDav {
     fn sync<'a>(&'a self, ctx: &'a Ctx) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let disc = self.discovery(ctx).await?;
+            let (disc, failed) = self.discovery(ctx).await?;
+            for e in &failed {
+                ctx.emit_error(e);
+            }
             let colls = self.refresh_collections(ctx, &disc).await?;
             let mut first_err = None;
             for c in &colls {
                 if let Err(e) = self.pull(ctx, c).await {
-                    // Una colección rota no detiene las demás.
-                    if e.needs_reauth() {
+                    let e = match e {
+                        PimError::Dav(iuredesk_dav::Error::InsufficientScope(_)) => {
+                            PimError::MissingAccess { contacts: c.book.is_some() }
+                        }
+                        e => e,
+                    };
+                    // Una colección rota no detiene las demás; una credencial rechazada, sí.
+                    if e.needs_reauth() && !matches!(e, PimError::MissingAccess { .. }) {
                         return Err(e);
                     }
                     ctx.emit_error(&e);
@@ -514,6 +539,16 @@ impl Coll {
         }
         v
     }
+}
+
+/// Fallo de un solo servicio en el descubrimiento: la red y una credencial rechazada cortan la
+/// pasada (`Err`); lo demás se devuelve para avisar y seguir con el otro servicio.
+fn partial(e: iuredesk_dav::Error, contacts: bool) -> Result<PimError> {
+    let e = match e {
+        iuredesk_dav::Error::InsufficientScope(_) => return Ok(PimError::MissingAccess { contacts }),
+        e => PimError::Dav(e),
+    };
+    if e.is_transient() || e.needs_reauth() { Err(e) } else { Ok(e) }
 }
 
 fn last_segment(u: &Url) -> String {

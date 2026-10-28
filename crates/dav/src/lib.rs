@@ -108,6 +108,11 @@ pub enum Error {
     /// No se pudo obtener la credencial (proveedor de tokens).
     #[error("no se pudo obtener la credencial: {0}")]
     Auth(String),
+    /// El servidor aceptó la credencial pero le faltan permisos (HTTP 403 con
+    /// `insufficient_scope`, p. ej. Google CardDAV sin el alcance `carddav`): hay que volver a
+    /// iniciar sesión para concederlos.
+    #[error("faltan permisos en el inicio de sesión: {0}")]
+    InsufficientScope(String),
 }
 
 /// Resultado del crate.
