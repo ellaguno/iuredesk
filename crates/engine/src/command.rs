@@ -181,6 +181,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::Mail,
         "star follow up destacar bandera",
     ),
+    c(
+        "contacts.delete",
+        "Delete contacts",
+        "Eliminar contactos",
+        "trash",
+        Group::App,
+        "contacts people remove borrar eliminar personas",
+    ),
     c("mail.move", "Move to folder…", "Mover a carpeta…", "folder", Group::Mail, "move file mover carpeta"),
     c("mail.search", "Search mail", "Buscar en el correo", "search", Group::Mail, "find buscar encontrar"),
     c(

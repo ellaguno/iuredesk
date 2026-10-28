@@ -437,7 +437,7 @@ fn quick_menu(app: &mut DeskApp, ui: &mut Ui) {
         app.run(&ctx, &id);
     }
     if settings {
-        app.settings_open = true;
+        app.open_settings(crate::settings::Section::Accounts, None, None);
     }
 }
 
@@ -460,7 +460,7 @@ fn iure_account(app: &mut DeskApp, ui: &mut Ui) {
     }
     a11y::button(&resp, &who);
     if resp.on_hover_text(&who).clicked() {
-        app.settings_open = true;
+        app.open_settings(crate::settings::Section::Integrations, None, None);
     }
     let unread = app.session.iure_feed().unread;
     let label = pick("Iurefficient notifications", "Avisos de Iurefficient");

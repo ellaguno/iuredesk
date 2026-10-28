@@ -20,6 +20,11 @@ use crate::{ConflictResolution, PimEvent};
 /// Ruta local de la libreta única de contactos de Graph.
 const CONTACTS_PATH: &str = "contacts";
 
+/// Versión del pedido de contactos, guardada en `CollectionSync::ctag` (Graph no usa `ctag`). Un
+/// `deltaLink` de otra versión (p. ej. el de antes de pedir `$select`, que dejaba los contactos
+/// vacíos) se descarta y se vuelve a bajar todo.
+const CONTACTS_SCHEMA: &str = "graph-contacts-v2";
+
 /// Proveedor Graph sobre el cliente compartido de `iuredesk-graph` (tokens, 401, 429 con
 /// `Retry-After`, tamaños acotados).
 pub(crate) struct Graph {
@@ -220,6 +225,13 @@ impl Graph {
     async fn pull(&self, ctx: &Ctx, cref: CollectionRef, start: &str, apply: Apply) -> Result<()> {
         let store = &ctx.store;
         let mut st = store.collection_sync(cref)?;
+        let schema = matches!(apply, Apply::Contact(_)).then_some(CONTACTS_SCHEMA);
+        if let Some(v) = schema
+            && st.ctag.as_deref() != Some(v)
+        {
+            st.delta_link = None;
+            st.ctag = Some(v.to_string());
+        }
         let (items, delta, full) = self.delta(ctx, st.delta_link.as_deref(), start).await?;
         let pending = ops::pending(store, ctx.acct)?;
         let mut changed = false;
@@ -567,7 +579,8 @@ impl Provider for Graph {
                     format!("/me/calendars/{}/calendarView/delta?startDateTime={from}&endDateTime={to}", enc(&remote));
                 self.pull(ctx, CollectionRef::Calendar(id), &start, Apply::Event(id)).await?;
             }
-            self.pull(ctx, CollectionRef::AddressBook(book), "/me/contacts/delta", Apply::Contact(book)).await?;
+            let contacts = format!("/me/contacts/delta?$select={}", gmap::CONTACT_SELECT);
+            self.pull(ctx, CollectionRef::AddressBook(book), &contacts, Apply::Contact(book)).await?;
             for (id, remote) in lists {
                 let start = format!("/me/todo/lists/{}/tasks/delta", enc(&remote));
                 self.pull(ctx, CollectionRef::TaskList(id), &start, Apply::Task(id)).await?;

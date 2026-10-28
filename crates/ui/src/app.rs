@@ -98,6 +98,10 @@ pub struct DeskApp {
     /// Último lugar recordado (módulo y carpeta) para «Donde lo dejé».
     place: Option<(Module, iuredesk_engine::FolderSel)>,
     applied: Option<(iuredesk_engine::ThemePref, iuredesk_engine::DensityPref)>,
+    /// Tipografía aplicada (clave, tamaño %, nítido).
+    applied_fonts: Option<(String, u32, bool)>,
+    /// Confirmación pendiente (`Outcome::Confirm`): texto, botón y comando a ejecutar.
+    pub(crate) confirm: Option<(iuredesk_engine::lang::Text, iuredesk_engine::lang::Text, String)>,
 }
 
 impl DeskApp {
@@ -134,6 +138,8 @@ impl DeskApp {
             today: Default::default(),
             place: None,
             applied: None,
+            applied_fonts: None,
+            confirm: None,
         };
         if let Some(m) = app.options.mailto.clone()
             && let Some(d) = app.session.compose_mailto(&m)
@@ -210,6 +216,7 @@ impl DeskApp {
 
         let modal = self.palette.is_open()
             || self.session.wizard.is_some()
+            || self.confirm.is_some()
             || self.settings_open
             || self.iure.dialog.is_some()
             || self.ai.modal()
@@ -241,6 +248,7 @@ impl DeskApp {
         crate::reminders::show(self, &ctx);
         crate::compose::show_all(self, &ctx);
         crate::settings::show(self, &ctx);
+        self.confirm_dialog(&ctx);
         crate::iure::dialogs(self, &ctx);
         crate::iure::bell(self, &ctx);
         crate::assistant::frame(self, &ctx);
@@ -394,6 +402,19 @@ impl DeskApp {
         }
     }
 
+    /// Ajustes abiertos en una sección (`accounts`, `appearance`…) y, con `edit`, el editor de
+    /// esa cuenta (capturas).
+    pub fn demo_settings(&mut self, section: &str, edit: Option<&str>) {
+        let s = match section {
+            "general" => crate::settings::Section::General,
+            "appearance" => crate::settings::Section::Appearance,
+            "mail" => crate::settings::Section::Mail,
+            "integrations" => crate::settings::Section::Integrations,
+            _ => crate::settings::Section::Accounts,
+        };
+        self.open_settings(s, edit.map(str::to_string), None);
+    }
+
     /// Fila del cursor de la lista de correo (pruebas).
     pub fn mail_cursor(&self) -> Option<usize> {
         self.mail.list.selection.cursor()
@@ -412,7 +433,6 @@ impl DeskApp {
         if !self.options.no_theme_watch {
             system::watch_system_theme(ctx);
         }
-        system::install_fonts(ctx, self.options.system_fonts);
         // El idioma: el de las preferencias o el del sistema; el motor y el ui-kit, sincronizados.
         let l = match self.session.prefs.lang.as_deref() {
             Some(tag) => lang::from_tag(tag),
@@ -429,6 +449,80 @@ impl DeskApp {
         self.apply_style(ctx, true);
     }
 
+    /// Aplica la tipografía (familia, tamaño del texto y nitidez) si cambió en las preferencias.
+    /// En vivo: no hace falta reiniciar.
+    pub(crate) fn apply_fonts(&mut self, ctx: &Context, force: bool) {
+        let p = &self.session.prefs;
+        let want = (p.font.clone(), p.text_scale_pct, p.crisp_text);
+        if !force && self.applied_fonts.as_ref() == Some(&want) {
+            return;
+        }
+        let font_changed = self.applied_fonts.as_ref().is_none_or(|a| a.0 != want.0 || a.2 != want.2);
+        iurefficient_ui::fonts::set_crisp_text(ctx, want.2);
+        if force || font_changed {
+            match iurefficient_ui::fonts::FontChoice::from_key(&want.0) {
+                iurefficient_ui::fonts::FontChoice::Bundled => {
+                    system::install_fonts(ctx, self.options.system_fonts);
+                }
+                choice => {
+                    iurefficient_ui::fonts::install_choice(ctx, &choice);
+                }
+            }
+        }
+        system::set_text_scale(ctx, self.session.prefs.text_scale());
+        self.applied_fonts = Some(want);
+    }
+
+    /// Diálogo de confirmación de `Outcome::Confirm` («¿Eliminar 3 contactos?»).
+    fn confirm_dialog(&mut self, ctx: &Context) {
+        let Some((text, yes, command)) = self.confirm.clone() else { return };
+        let mut answer: Option<bool> = None;
+        let modal = egui::Modal::new(egui::Id::unique("confirm")).show(ctx, |ui| {
+            ui.set_max_width(380.0);
+            let c = theme::colors(ui);
+            ui.add(egui::Label::new(egui::RichText::new(text.get()).color(c.text)).wrap());
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let y = ui.add(egui::Button::new(egui::RichText::new(yes.get()).color(c.on_accent)).fill(c.danger));
+                if y.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    answer = Some(true);
+                }
+                if ui.button(pick("Cancel", "Cancelar")).clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+        if modal.should_close() && answer.is_none() {
+            answer = Some(false);
+        }
+        match answer {
+            Some(true) => {
+                self.confirm = None;
+                self.run(ctx, &command);
+            }
+            Some(false) => self.confirm = None,
+            None => {}
+        }
+    }
+
+    /// Abre los ajustes en una sección (y, si se da, el editor de esa cuenta o la confirmación de
+    /// quitarla).
+    pub(crate) fn open_settings(
+        &mut self,
+        section: crate::settings::Section,
+        edit: Option<String>,
+        remove: Option<String>,
+    ) {
+        self.settings_open = true;
+        self.settings_ui.section = section;
+        if let Some(id) = edit {
+            crate::settings::open_editor(self, &id);
+        }
+        if remove.is_some() {
+            self.settings_ui.confirm_remove = remove;
+        }
+    }
+
     /// Aplica tema y densidad si cambiaron en las preferencias.
     pub(crate) fn apply_style(&mut self, ctx: &Context, force: bool) {
         let want = (self.session.prefs.theme, self.session.prefs.density);
@@ -436,6 +530,7 @@ impl DeskApp {
             theme::apply(ctx, kit_theme(want.0), kit_density(want.1));
             self.applied = Some(want);
         }
+        self.apply_fonts(ctx, force);
     }
 
     fn poll(&mut self, ctx: &Context) {
@@ -526,6 +621,7 @@ impl DeskApp {
             Outcome::Restyle => self.apply_style(ctx, false),
             Outcome::EditEvent(d) => crate::event_editor::open(self, *d),
             Outcome::Assist(id) => crate::assistant::command(self, ctx, &id),
+            Outcome::Confirm { text, yes, command } => self.confirm = Some((text, yes, command)),
         }
     }
 
@@ -652,7 +748,7 @@ impl DeskApp {
             }
         });
         match clicked.as_deref() {
-            Some("settings") => self.settings_open = true,
+            Some("settings") => self.open_settings(crate::settings::Section::Accounts, None, None),
             Some("sync") => self.sync_clicked(&ui.ctx().clone()),
             Some(k) => {
                 if let Some(m) = Module::from_key(k) {
@@ -671,6 +767,7 @@ impl DeskApp {
         let mut open = true;
         let mut retry = false;
         let mut reauth: Option<String> = None;
+        let mut configure: Option<String> = None;
         let rows = self.session.accounts_overview();
         egui::Window::new(pick("Sync", "Sincronización"))
             .id(egui::Id::unique("sync-window"))
@@ -701,11 +798,16 @@ impl DeskApp {
                             }
                         });
                     });
-                    if matches!(r.status, Some(iuredesk_engine::AccountSync::Error { reauth: true, .. }))
-                        && ui.button(pick("Sign in again…", "Volver a iniciar sesión…")).clicked()
-                    {
-                        reauth = Some(r.id.clone());
-                    }
+                    ui.horizontal(|ui| {
+                        ui.add_space(14.0);
+                        if r.needs_signin() && ui.button(pick("Sign in again…", "Volver a iniciar sesión…")).clicked()
+                        {
+                            reauth = Some(r.id.clone());
+                        }
+                        if !r.id.is_empty() && ui.link(pick("Account settings…", "Configurar cuenta…")).clicked() {
+                            configure = Some(r.id.clone());
+                        }
+                    });
                     ui.add_space(6.0);
                 }
                 if iurefficient_ui::primary_button(ui, pick("Retry now", "Reintentar ahora")).clicked() {
@@ -718,6 +820,10 @@ impl DeskApp {
         if let Some(id) = reauth {
             self.sync_open = false;
             self.session.reauth_account(&id);
+        }
+        if let Some(id) = configure {
+            self.sync_open = false;
+            self.open_settings(crate::settings::Section::Accounts, Some(id), None);
         }
         if !open {
             self.sync_open = false;

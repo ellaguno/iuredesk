@@ -120,14 +120,31 @@ fn handle(st: &Mutex<G>, req: Req) -> Resp {
                 }),
             )
         }
-        ("GET", "/me/contacts/delta") => json_resp(
-            200,
-            json!({
-                "value": [{"id": "c1", "@odata.etag": "W/\"c1\"", "displayName": "Luis Gómez", "givenName": "Luis", "surname": "Gómez",
-                           "emailAddresses": [{"address": "luis@contoso.com", "name": "Luis"}], "mobilePhone": "+34 600"}],
-                "@odata.deltaLink": format!("{base}/v1.0/me/contacts/delta?$deltatoken=c"),
-            }),
-        ),
+        ("GET", "/me/contacts/delta") => {
+            if query.contains("deltatoken=c") {
+                return json_resp(
+                    200,
+                    json!({"value": [], "@odata.deltaLink": format!("{base}/v1.0/me/contacts/delta?$deltatoken=c")}),
+                );
+            }
+            // Como Outlook.com: sin `$select`, el delta de contactos trae solo el id (UX-1).
+            let select = query.contains("select=") && query.contains("emailAddresses") && query.contains("displayName");
+            let value = if select {
+                json!([
+                    {"id": "c1", "@odata.etag": "W/\"c1\"", "displayName": "Luis Gómez", "givenName": "Luis", "surname": "Gómez",
+                     "emailAddresses": [{"address": "luis@contoso.com", "name": "Luis"}], "mobilePhone": "+34 600",
+                     "companyName": "Contoso", "jobTitle": "Ventas", "businessPhones": ["+34 911"]},
+                    {"id": "c2", "@odata.etag": "W/\"c2\"", "displayName": "", "givenName": "Marta", "surname": "Ruiz",
+                     "emailAddresses": [{"address": "marta@contoso.com", "name": "Marta"}]}
+                ])
+            } else {
+                json!([{"id": "c1", "@odata.etag": "W/\"c1\""}, {"id": "c2", "@odata.etag": "W/\"c2\""}])
+            };
+            json_resp(
+                200,
+                json!({"value": value, "@odata.deltaLink": format!("{base}/v1.0/me/contacts/delta?$deltatoken=c")}),
+            )
+        }
         ("GET", "/me/todo/lists/l1/tasks/delta") => json_resp(
             200,
             json!({
@@ -264,7 +281,24 @@ async fn graph_delta_edits_conflicts_rsvp() {
         }
     );
     let book = store.address_books().unwrap().remove(0);
-    assert_eq!(store.contacts(book.id).unwrap()[0].full_name, "Luis Gómez");
+    // Regresión UX-1: los contactos llegan con sus datos (se piden con `$select`).
+    let mut cs = store.contacts(book.id).unwrap();
+    cs.sort_by(|a, b| a.full_name.cmp(&b.full_name));
+    assert_eq!(cs.iter().map(|c| c.full_name.as_str()).collect::<Vec<_>>(), vec!["Luis Gómez", "Marta Ruiz"]);
+    assert_eq!((cs[0].org.as_str(), cs[0].title.as_str(), cs[0].phones.len()), ("Contoso", "Ventas", 2));
+    assert_eq!(cs[0].primary_email(), Some("luis@contoso.com"));
+    assert_eq!(cs[1].primary_email(), Some("marta@contoso.com"));
+    // Un estado de una versión anterior (deltaLink de antes de `$select`) se descarta.
+    {
+        let cref = iuredesk_store::CollectionRef::AddressBook(book.id);
+        let mut st = store.collection_sync(cref).unwrap();
+        assert_eq!(st.ctag.as_deref(), Some("graph-contacts-v2"));
+        st.ctag = None;
+        store.put_collection_sync(cref, &st).unwrap();
+        let mut stale = cs[0].clone();
+        stale.org.clear();
+        store.put_contact(&stale).unwrap();
+    }
     let list = store.task_lists().unwrap().remove(0);
     let task = store.tasks(list.id).unwrap().remove(0);
     assert_eq!(
@@ -274,6 +308,7 @@ async fn graph_delta_edits_conflicts_rsvp() {
 
     // --- segunda pasada con deltaLink: cambio y borrado
     handle.sync_now_wait("ana-m365").await.unwrap();
+    assert!(store.contacts(book.id).unwrap().iter().any(|c| c.org == "Contoso"), "re-descarga completa");
     let evs = store.events_in_calendar(cal.id).unwrap();
     assert_eq!(evs.len(), 2);
     assert!(evs.iter().any(|e| e.summary == "Comida (cambiada)"));

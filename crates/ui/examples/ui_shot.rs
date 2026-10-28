@@ -21,6 +21,56 @@ use iuredesk_engine::{DensityPref, Module, Session, SessionConfig, ThemePref, Zo
 use iuredesk_store::{Store, sample};
 use iuredesk_ui::{DeskApp, Options, WindowChrome};
 
+/// Cuentas de ejemplo para `--settings`.
+fn demo_accounts() -> Vec<iuredesk_model::account::Account> {
+    use iuredesk_model::account::{Account, AccountKind, AuthMethod, OAuthProvider, Protocol, Security, ServerConfig};
+    let server = |protocol, host: &str, port, auth: AuthMethod, user: &str| ServerConfig {
+        protocol,
+        host: host.into(),
+        port,
+        security: Security::Tls,
+        auth,
+        username: user.into(),
+    };
+    let google = AuthMethod::OAuth2 { provider: OAuthProvider::Google };
+    let ms = AuthMethod::OAuth2 { provider: OAuthProvider::Microsoft };
+    vec![
+        Account {
+            id: "gmail-laura".into(),
+            display_name: "Laura Méndez".into(),
+            email: "laura.mendez@gmail.com".into(),
+            kind: AccountKind::Gmail,
+            incoming: server(Protocol::Imap, "imap.gmail.com", 993, google, "laura.mendez@gmail.com"),
+            outgoing: server(Protocol::Smtp, "smtp.gmail.com", 465, google, "laura.mendez@gmail.com"),
+            caldav_url: None,
+            carddav_url: None,
+            identities: Vec::new(),
+        },
+        Account {
+            id: "m365-laura".into(),
+            display_name: "Laura Méndez".into(),
+            email: "laura@outlook.com".into(),
+            kind: AccountKind::Microsoft365,
+            incoming: server(Protocol::Imap, "outlook.office365.com", 993, ms, "laura@outlook.com"),
+            outgoing: server(Protocol::Smtp, "smtp.office365.com", 587, ms, "laura@outlook.com"),
+            caldav_url: None,
+            carddav_url: None,
+            identities: Vec::new(),
+        },
+        Account {
+            id: "imap-despacho".into(),
+            display_name: "Despacho Méndez".into(),
+            email: "laura@despacho.example.org".into(),
+            kind: AccountKind::Generic,
+            incoming: server(Protocol::Imap, "mail.despacho.example.org", 993, AuthMethod::Password, "laura"),
+            outgoing: server(Protocol::Smtp, "mail.despacho.example.org", 465, AuthMethod::Password, "laura"),
+            caldav_url: Some("https://dav.despacho.example.org/cal/".into()),
+            carddav_url: None,
+            identities: Vec::new(),
+        },
+    ]
+}
+
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |name: &str| -> Option<String> {
@@ -59,9 +109,22 @@ fn main() -> Result<(), String> {
     if !onboarding {
         sample::populate(&store, sample::DEFAULT_SEED, now).map_err(|e| e.to_string())?;
     }
+    // `--settings[=sección]`: tres cuentas de ejemplo (Gmail, Microsoft 365 y una IMAP con error).
+    let settings =
+        args.iter().find_map(|a| a.strip_prefix("--settings")).map(|s| s.trim_start_matches('=').to_string());
+    let accounts = match &settings {
+        Some(_) => {
+            let st = iuredesk_accounts::AccountStore::at(dir.path().join("accounts.json"));
+            for a in demo_accounts() {
+                st.upsert(a).map_err(|e| e.to_string())?;
+            }
+            Some(st)
+        }
+        None => None,
+    };
     let mut session = Session::new(SessionConfig {
         store: Arc::new(store),
-        accounts: None,
+        accounts,
         secrets: Arc::new(MemoryStore::default()),
         prefs_path: None,
         now: Some(now),
@@ -79,6 +142,37 @@ fn main() -> Result<(), String> {
         ThemePref::Light
     };
     session.prefs.density = density;
+    if let Some(f) = flag("--font") {
+        session.prefs.font = f;
+    }
+    if let Some(p) = flag("--text-scale").and_then(|p| p.parse::<u32>().ok()) {
+        session.prefs.text_scale_pct = p;
+    }
+    session.prefs.crisp_text = args.iter().any(|a| a == "--crisp");
+    if settings.is_some() {
+        use iuredesk_engine::AccountSync;
+        session.demo_account_status("gmail-laura", AccountSync::Ready { at: now, backfill: false });
+        session.demo_account_status(
+            "m365-laura",
+            AccountSync::Error {
+                text: iuredesk_engine::lang::Text::new(
+                    "Microsoft asks you to sign in again.",
+                    "Microsoft pide volver a iniciar sesión.",
+                ),
+                reauth: true,
+            },
+        );
+        session.demo_account_status(
+            "imap-despacho",
+            AccountSync::Error {
+                text: iuredesk_engine::lang::Text::new(
+                    "The server rejected the password.",
+                    "El servidor rechazó la contraseña.",
+                ),
+                reauth: false,
+            },
+        );
+    }
     session.module = match module.as_str() {
         "calendar" => Module::Calendar,
         "contacts" => Module::Contacts,
@@ -170,6 +264,10 @@ fn main() -> Result<(), String> {
             ],
             vec![home.join(".thunderbird/x1y2z3.default-release"), mbox],
         );
+    }
+    if let Some(s) = &settings {
+        let edit = args.iter().any(|a| a == "--edit-account").then_some("imap-despacho");
+        app.demo_settings(s, edit);
     }
     if let Some(q) = args.iter().find_map(|a| a.strip_prefix("--palette")) {
         app.palette.open_with(q.strip_prefix('=').unwrap_or(""));
