@@ -161,9 +161,10 @@ impl FromStr for BlobHash {
             return Err(BlobHashParseError);
         }
         let mut out = [0u8; 32];
-        for (i, pair) in bytes.chunks_exact(2).enumerate() {
-            let hi = hex_val(pair.first().copied())?;
-            let lo = hex_val(pair.get(1).copied())?;
+        let (pairs, _) = bytes.as_chunks::<2>();
+        for (i, &[h, l]) in pairs.iter().enumerate() {
+            let hi = hex_val(Some(h))?;
+            let lo = hex_val(Some(l))?;
             if let Some(slot) = out.get_mut(i) {
                 *slot = (hi << 4) | lo;
             }

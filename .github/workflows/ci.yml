@@ -44,8 +44,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends pkg-config libxkbcommon-dev libwayland-dev libx11-dev mesa-vulkan-drivers python3
       - name: Rust estable
         run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
+          rustup show active-toolchain || rustup toolchain install  # versión fijada en rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
       - name: Puerta de calidad
         run: cargo xtask ci
@@ -76,8 +75,7 @@ jobs:
       - name: Rust estable
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup show active-toolchain || rustup toolchain install  # versión fijada en rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
       - name: Compilar la app (release)
         run: cargo build --release --locked -p iuredesk

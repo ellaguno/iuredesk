@@ -56,8 +56,8 @@ jobs:
       - name: Rust estable
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
-          rustup default stable
+          rustup toolchain install  # versión fijada en rust-toolchain.toml
+          rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}

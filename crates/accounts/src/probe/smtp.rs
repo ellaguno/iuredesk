@@ -26,7 +26,9 @@ pub(crate) fn map_error(e: &lettre::transport::smtp::Error, host: &str) -> Probe
     if lower.contains("no compatible authentication mechanism") {
         return ProbeError::AuthUnsupported;
     }
-    if lower.contains("connection refused") {
+    // Windows: «No connection could be made because the target machine actively refused it.
+    // (os error 10061)».
+    if lower.contains("connection refused") || lower.contains("actively refused") || lower.contains("os error 10061") {
         return ProbeError::ConnectionRefused { host: host.to_string() };
     }
     if lower.contains("failed to lookup")

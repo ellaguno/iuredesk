@@ -1,0 +1,6 @@
+# Misma versión de Rust en desarrollo y en la CI (GitHub usaría la estable más nueva y sus lints
+# nuevos romperían `clippy -D warnings` sin aviso). Súbela a propósito, con `cargo xtask ci`.
+[toolchain]
+channel = "1.97.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
