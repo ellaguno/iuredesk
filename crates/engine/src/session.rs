@@ -15,6 +15,7 @@ mod live;
 mod mailops;
 mod outbox;
 mod pim;
+mod rules_glue;
 mod today;
 
 pub use accounts::{ConnectionTest, kind_label, servers_editable, validate_account};
@@ -24,6 +25,7 @@ pub use iure::{IURE_CALENDAR_PATH, IURE_TASKS_PATH, IurePanel, IureSetup, LeadSu
 pub use live::{AccountSync, SyncStatus};
 pub use mailops::AccountRow;
 pub use outbox::OfflineTransport;
+pub use rules_glue::{IureBadge, IureKind, RulePlace, SieveRow};
 pub use today::{folder_from_key, folder_key};
 
 use std::collections::{HashMap, HashSet};
@@ -205,6 +207,10 @@ pub enum Outcome {
         yes: Text,
         command: String,
     },
+    /// Reglas, posponer, seguimiento, baja de listas (F5.3): lo atiende la UI con sus menús y
+    /// ventanas (`rules`, `vacation`, `snooze`, `followup`, `rule_from_message`, `unsubscribe`,
+    /// `open_url:<url>`).
+    Rules(String),
 }
 
 /// Resultados de trabajos de fondo que interpreta la sesión.
@@ -282,6 +288,8 @@ enum Inverse {
     Calendar(Box<cal::CalUndo>),
     /// Contactos borrados.
     Contacts(Vec<contacts::ContactSnap>),
+    /// Reglas, posponer, seguimientos (F5.3).
+    Rules(Box<rules_glue::RulesUndo>),
 }
 
 #[derive(Clone, Debug)]
@@ -385,6 +393,8 @@ pub struct Session {
     pub cal: cal::CalState,
     /// «Mi día» (F6.1).
     day: today::DayState,
+    /// Reglas, posponer, seguimientos, Enfocados/Otros (F5.3).
+    rules: rules_glue::RulesState,
 }
 
 impl std::fmt::Debug for Session {
@@ -450,6 +460,7 @@ impl Session {
             iure: iure::Iure::default(),
             cal: cal::CalState::default(),
             day: today::DayState::default(),
+            rules: rules_glue::RulesState::default(),
         };
         s.signatures = SignatureBook::load(&s.store).unwrap_or_default();
         s.reload_accounts()?;
@@ -680,6 +691,7 @@ impl Session {
             return;
         }
         let order = self.merged_order();
+        let order = self.rules_filter_order(order);
         self.rows = Arc::new(order.iter().map(|&id| ListRow { id, count: 1 }).collect());
         if self.prefs.conversations && !order.is_empty() {
             let store = Arc::clone(&self.store);
@@ -875,7 +887,7 @@ impl Session {
         let read = self.pending_read.map(|(_, since)| {
             std::time::Duration::from_millis(self.prefs.mark_read_delay_ms.into()).saturating_sub(since.elapsed())
         });
-        [read, self.sync_deadline(), self.iure_deadline()].into_iter().flatten().min()
+        [read, self.sync_deadline(), self.iure_deadline(), self.rules_deadline()].into_iter().flatten().min()
     }
 
     /// Cambia banderas por la API local-primero de `sync` y la despierta.
@@ -1049,6 +1061,7 @@ impl Session {
             }
             "mail.archive" | "mail.delete" | "mail.toggle_read" | "mail.toggle_flag" | "mail.move" => self.has_target(),
             "undo" => !self.undo.is_empty(),
+            b if rules_glue::needs_target(b) => self.has_target(),
             _ => command::find(base).is_some(),
         }
     }
@@ -1084,6 +1097,7 @@ impl Session {
             }
             b if b.starts_with("cal.") => self.run_calendar(b),
             b if b.starts_with("ai.") || b.starts_with("suite.") || b == "app.import" => self.run_assist(b),
+            b if rules_glue::handles(b) => self.run_rules(b, arg),
             "mail.new" => {
                 let account = match self.folder {
                     FolderSel::Folder(f) => self.folder(f).map(|f| f.account),
@@ -1392,6 +1406,7 @@ impl Session {
                 }
                 Inverse::Calendar(u) => self.undo_calendar(*u)?,
                 Inverse::Contacts(s) => self.undo_contacts(s)?,
+                Inverse::Rules(u) => self.undo_rules(*u)?,
                 Inverse::Task(t) => {
                     self.store.put_task(&t).map_err(store_err)?;
                     self.data_gen = self.data_gen.wrapping_add(1);
@@ -1474,6 +1489,7 @@ impl Session {
         self.poll_outbox();
         self.poll_pending_read();
         self.poll_iure(&mut events);
+        self.poll_rules(&mut events);
         events.extend(self.notices.drain(..).map(Event::Notice));
         for d in done {
             match d.output {

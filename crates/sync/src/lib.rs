@@ -37,6 +37,7 @@
 )]
 
 mod backend;
+pub mod category_hint;
 mod engine;
 mod error;
 mod gmail;
@@ -220,6 +221,17 @@ pub enum SyncEvent {
         count: usize,
         /// Hasta 3 para mostrar.
         sample: Vec<NewMailSample>,
+    },
+    /// Mensajes recién llegados a la bandeja de entrada, ya guardados (con el cuerpo precargado
+    /// si se pudo). Enganche para reglas, Enfocados/Otros y respuestas automáticas (F5.3); no se
+    /// emite en la primera sincronización.
+    Arrived {
+        /// Cuenta.
+        account: AccountId,
+        /// Carpeta (la bandeja de entrada).
+        folder: FolderId,
+        /// Mensajes nuevos.
+        messages: Vec<MessageId>,
     },
     /// Avance.
     Progress {

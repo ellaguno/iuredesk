@@ -269,6 +269,19 @@ fn main() -> Result<(), String> {
         let edit = args.iter().any(|a| a == "--edit-account").then_some("imap-despacho");
         app.demo_settings(s, edit);
     }
+    // F5.3: reglas, posponer, etiquetas y «Solo Iurefficient».
+    if args.iter().any(|a| a == "--labels") {
+        app.demo_labels();
+    }
+    if let Some(r) = flag("--rules") {
+        app.demo_rules(&r);
+    }
+    if args.iter().any(|a| a == "--snooze") {
+        app.demo_snooze();
+    }
+    if args.iter().any(|a| a == "--iure-only") {
+        app.session.set_iure_only(true);
+    }
     if let Some(q) = args.iter().find_map(|a| a.strip_prefix("--palette")) {
         app.palette.open_with(q.strip_prefix('=').unwrap_or(""));
     }

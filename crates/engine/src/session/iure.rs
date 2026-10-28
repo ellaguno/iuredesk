@@ -480,6 +480,31 @@ impl Session {
         v
     }
 
+    /// F5.3: contexto ya conocido de un correo (sin red), para la insignia de la lista.
+    pub(crate) fn iure_known_context(&mut self, env: &MessageEnvelope) -> Option<IureContext> {
+        if !matches!(self.iure.backend, Backend::Sample) && self.iure.contexts.is_empty() {
+            return None;
+        }
+        let q = self.iure_query(env);
+        match &self.iure.backend {
+            Backend::Sample => Some(iure::sample::context(&q)).filter(|c| !c.is_empty()),
+            _ => match self.iure.contexts.get(&q.key()) {
+                Some(CtxEntry::Ready(c, _) | CtxEntry::Failed(Some(c), _, _)) if !c.is_empty() => Some(c.clone()),
+                _ => None,
+            },
+        }
+    }
+
+    /// F5.3: cambia cuando hay vínculos o contextos nuevos (para rehacer las insignias).
+    pub(crate) fn iure_badge_gen(&self) -> (u64, usize) {
+        (self.iure.links_gen, self.iure.contexts.len())
+    }
+
+    /// F5.3: hay sesión de Iurefficient (o el ejemplo).
+    pub(crate) fn iure_visible(&self) -> bool {
+        IurePanel { status: self.iure.status.clone(), ..Default::default() }.visible()
+    }
+
     /// Lo que el panel contextual muestra del mensaje (barato: se puede llamar en cada cuadro).
     /// Si hace falta, pide la consulta en segundo plano tras una breve espera.
     pub fn iure_panel(&mut self, id: MessageId) -> IurePanel {

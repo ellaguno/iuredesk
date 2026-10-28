@@ -307,6 +307,13 @@ impl Session {
                 self.live.status.insert(account, AccountSync::Ready { at: Utc::now(), backfill: backfill_pending });
                 self.live.dirty = true;
             }
+            SyncEvent::NewMail { account, count, sample }
+                if self.rules_hold_newmail(account, count, sample.clone()) =>
+            {
+                // Se avisa al llegar `Arrived`, sin lo que las reglas apartaron (F5.3).
+                self.live.dirty = true;
+            }
+            SyncEvent::Arrived { account, messages, .. } => self.on_arrived(account, messages, out),
             SyncEvent::NewMail { account, count, sample } => {
                 self.live.dirty = true;
                 let who = self.labels.iter().find(|l| l.id == account).map(|l| l.email.clone()).unwrap_or_default();

@@ -99,6 +99,7 @@ impl Pop3Account {
         let mut done = 0u64;
         let mut samples = Vec::new();
         let mut inserted = 0usize;
+        let mut arrived = Vec::new();
         for chunk in plan.download.chunks(BATCH) {
             let mut batch = Vec::new();
             let mut got = Vec::new();
@@ -126,6 +127,7 @@ impl Pop3Account {
             for (id, (n, uid, from, subject)) in ids.into_iter().zip(got) {
                 known.insert(uid, now);
                 inserted = inserted.saturating_add(1);
+                arrived.push(id);
                 if !initial && samples.len() < 3 {
                     samples.push(NewMailSample { message: id, from, subject });
                 }
@@ -156,6 +158,7 @@ impl Pop3Account {
             ctx.emit(SyncEvent::FolderUpdated { account: ctx.acct, folder: inbox.id });
             if !initial {
                 ctx.emit(SyncEvent::NewMail { account: ctx.acct, count: inserted, sample: samples });
+                ctx.emit(SyncEvent::Arrived { account: ctx.acct, folder: inbox.id, messages: arrived });
             }
         }
         let backfill_pending = fresh_total > plan.download.len();

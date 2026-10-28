@@ -275,6 +275,7 @@ impl ImapAccount {
         uids.sort_unstable_by(|a, b| b.cmp(a));
         uids.truncate(o.initial_max);
         let inserted = self.fetch_headers(conn, f, &uids, Phase::Headers, false).await?;
+        self.gmail_categories(conn, f, &inserted).await;
         let max_uid = uids.first().copied().unwrap_or(0);
         let uid_next = sel.mailbox.uid_next.unwrap_or(0).max(max_uid.saturating_add(1)).max(1);
         let below = uids.last().copied().unwrap_or(uid_next);
@@ -448,6 +449,7 @@ impl ImapAccount {
         }
 
         let inserted = self.fetch_headers(conn, f, &new_uids, Phase::Headers, f.role == FolderRole::Inbox).await?;
+        self.gmail_categories(conn, f, &inserted).await;
         if gm {
             changed |= self.reconcile_unknown(conn, f, pending).await?;
         }
@@ -458,6 +460,11 @@ impl ImapAccount {
         state::save(&ctx.store, &folder_key(ctx.acct, f.id), &st)?;
         if f.role == FolderRole::Inbox && !inserted.is_empty() {
             self.prefetch(conn, f, &inserted).await?;
+            ctx.emit(SyncEvent::Arrived {
+                account: ctx.acct,
+                folder: f.id,
+                messages: inserted.iter().map(|(_, id, _)| *id).collect(),
+            });
         }
         self.previews(conn, &inserted).await?;
         if changed || !inserted.is_empty() {
@@ -506,6 +513,26 @@ impl ImapAccount {
 
     /// Baja cabeceras de `uids` (de más nuevo a más viejo) por lotes. Devuelve `(uid, id, tamaño)`
     /// de lo insertado.
+    /// Gmail: pregunta a Gmail la categoría (Promociones, Social…) de lo recién bajado a la
+    /// bandeja de entrada (`X-GM-RAW`, F5.3). Un fallo no detiene la sincronización.
+    async fn gmail_categories(&self, conn: &mut Conn, f: &Folder, inserted: &[(u32, MessageId, u64)]) {
+        let ctx = &self.ctx;
+        if f.role != FolderRole::Inbox || inserted.is_empty() || !state::is_gmail_labels(&ctx.store, ctx.acct) {
+            return;
+        }
+        let lo = inserted.iter().map(|(u, _, _)| *u).filter(|u| *u > 0).min().unwrap_or(1);
+        let hi = inserted.iter().map(|(u, _, _)| *u).max().unwrap_or(lo);
+        let by_uid: HashMap<u32, MessageId> = inserted.iter().map(|(u, id, _)| (*u, *id)).collect();
+        let mut hints: Vec<(MessageId, &str)> = Vec::new();
+        for cat in crate::category_hint::GMAIL_CATEGORIES {
+            let Ok(uids) = conn.c.uid_search(&format!("UID {lo}:{hi} X-GM-RAW \"category:{cat}\"")).await else {
+                continue;
+            };
+            hints.extend(uids.into_iter().filter_map(|u| by_uid.get(&u).map(|id| (*id, cat))));
+        }
+        let _ = crate::category_hint::record(&ctx.store, ctx.acct, &hints);
+    }
+
     async fn fetch_headers(
         &self,
         conn: &mut Conn,
