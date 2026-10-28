@@ -63,6 +63,8 @@ pub struct ComposeWindow {
     /// El cursor del cuerpo ya se puso al principio.
     cursor_init: bool,
     open_frames: u8,
+    /// Plantillas (F5.3).
+    pub(crate) templates: crate::rules_ui::ComposeTemplates,
 }
 
 enum Act {
@@ -96,6 +98,7 @@ impl ComposeWindow {
             error: None,
             cursor_init: false,
             open_frames: 0,
+            templates: Default::default(),
         }
     }
 
@@ -127,7 +130,7 @@ impl ComposeWindow {
         }
     }
 
-    fn touch(&mut self) {
+    pub(crate) fn touch(&mut self) {
         self.dirty_since = Some(Instant::now());
         self.error = None;
     }
@@ -150,7 +153,7 @@ impl ComposeWindow {
     }
 
     /// Lleva lo que hay en pantalla al borrador (destinatarios a medio escribir y el cuerpo).
-    fn commit(&mut self) {
+    pub(crate) fn commit(&mut self) {
         for f in [Field::To, Field::Cc, Field::Bcc] {
             self.commit_field(f);
         }
@@ -216,6 +219,7 @@ pub fn show_all(app: &mut DeskApp, ctx: &Context) {
         run_act(app, ctx, i, act);
     }
     crate::assistant::compose_pump(app);
+    crate::rules_ui::template_pump(app);
     // Guardado automático (solo local) tras unos segundos sin escribir.
     let mut autosave = Vec::new();
     for (i, w) in app.composers.iter().enumerate() {
@@ -809,6 +813,7 @@ fn bottom_bar(ui: &mut Ui, w: &mut ComposeWindow, presets: &[(Text, DateTime<Utc
         if ui.button(pick("Save draft", "Guardar borrador")).clicked() {
             acts.push(Act::SaveDraft);
         }
+        crate::rules_ui::template_button(ui, &mut w.templates);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui.button(pick("Discard", "Descartar")).clicked() {
                 acts.push(Act::Discard);

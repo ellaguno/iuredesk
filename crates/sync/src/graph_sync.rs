@@ -41,7 +41,7 @@ const BACKFILL_PAGE: usize = 100;
 /// Propiedades que se piden de cada mensaje.
 const SELECT: &str = "subject,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,\
 sentDateTime,isRead,isDraft,flag,categories,hasAttachments,internetMessageId,conversationId,bodyPreview,\
-parentFolderId";
+parentFolderId,inferenceClassification";
 /// Carpetas con nombre conocido de Graph y su función.
 const WELL_KNOWN: &[(&str, FolderRole)] = &[
     ("inbox", FolderRole::Inbox),
@@ -393,6 +393,7 @@ impl GraphAccount {
         let ctx = &self.ctx;
         let mut batch = Vec::new();
         let mut metas = Vec::new();
+        let mut classes: Vec<Option<String>> = Vec::new();
         // Copias locales que esperan su id (la de «Enviados» que deja la bandeja de salida).
         let mut adopt = state::adopt_list(&ctx.store, f.id);
         let adopt_before = adopt.len();
@@ -426,6 +427,7 @@ impl GraphAccount {
                 env.thread = ctx.store.thread_by_hint(ctx.acct, h)?;
             }
             metas.push(ProviderMeta { provider_id: Some(id), thread_hint: hint });
+            classes.push(s(v, "inferenceClassification").map(|c| c.to_ascii_lowercase()));
             batch.push(NewMessage { envelope: env, raw: None, body_text: None });
         }
         let samples: Vec<(String, String, DateTime<Utc>)> = batch
@@ -438,6 +440,10 @@ impl GraphAccount {
         let ids = if batch.is_empty() { Vec::new() } else { ctx.store.put_messages(batch)? };
         let pm: Vec<(MessageId, ProviderMeta)> = ids.iter().copied().zip(metas).collect();
         ctx.store.set_provider_meta(&pm)?;
+        // F5.3: Enfocados/Otros de Microsoft 365 como pista para las categorías.
+        let hints: Vec<(MessageId, &str)> =
+            ids.iter().zip(&classes).filter_map(|(id, c)| c.as_deref().map(|c| (*id, c))).collect();
+        let _ = crate::category_hint::record(&ctx.store, ctx.acct, &hints);
         let mut out = Vec::new();
         let mut sample = Vec::new();
         for (id, (from, subject, d)) in ids.into_iter().zip(samples) {
@@ -455,6 +461,11 @@ impl GraphAccount {
         });
         if notify && !out.is_empty() {
             ctx.emit(SyncEvent::NewMail { account: ctx.acct, count: out.len(), sample });
+            ctx.emit(SyncEvent::Arrived {
+                account: ctx.acct,
+                folder: f.id,
+                messages: out.iter().map(|(id, _)| *id).collect(),
+            });
         }
         Ok(out)
     }

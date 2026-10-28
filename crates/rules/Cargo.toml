@@ -1,0 +1,37 @@
+[package]
+name = "iuredesk-rules"
+description = "Reglas locales y Sieve/ManageSieve, posponer, seguimiento, Enfocados/Otros y baja de listas"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+iuredesk-model = { workspace = true }
+iuredesk-store = { workspace = true }
+# Acciones locales primero (mover, banderas, borrar) por la cola de `sync`.
+iuredesk-sync = { workspace = true }
+# Reenvío y respuesta automática como borradores para la bandeja de salida.
+iuredesk-compose = { workspace = true }
+# ManageSieve (RFC 5804): TCP + STARTTLS con rustls.
+iuredesk-net = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+mail-parser = { workspace = true }
+base64 = { workspace = true }
+regex = { workspace = true }
+url = { workspace = true }
+# Baja en un clic (RFC 8058): POST por HTTPS con rustls.
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util", "time", "macros", "rt"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "net", "io-util"] }
+
+[lints]
+workspace = true

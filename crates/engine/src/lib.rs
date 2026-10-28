@@ -40,6 +40,8 @@ pub use iuredesk_import;
 pub use iuredesk_integrations;
 pub use iuredesk_mcp;
 pub use iuredesk_pim_sync::SeriesScope;
+/// F5.3: reglas, Sieve, posponer, seguimiento, Enfocados/Otros.
+pub use iuredesk_rules;
 pub use iuredesk_sync;
 pub use lang::{Text, pick};
 pub use prefs::{DensityPref, Prefs, ShortcutScheme, StartPref, ThemePref};
@@ -48,6 +50,7 @@ pub use session::{
     LoginState, Module, Notice, NoticeKind, OfflineTransport, Outcome, PimBackend, Session, SessionConfig, SyncStatus,
     occurrence_start,
 };
+pub use session::{IureBadge, IureKind, RulePlace, SieveRow};
 pub use time::Zone;
 
 /// Error del motor.

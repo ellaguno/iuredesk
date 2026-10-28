@@ -97,6 +97,8 @@ pub struct DeskApp {
     pub(crate) today: crate::today::TodayState,
     /// Último lugar recordado (módulo y carpeta) para «Donde lo dejé».
     place: Option<(Module, iuredesk_engine::FolderSel)>,
+    /// F5.3: reglas, posponer, seguimiento, baja de listas.
+    pub(crate) rules: crate::rules_ui::RulesUi,
     applied: Option<(iuredesk_engine::ThemePref, iuredesk_engine::DensityPref)>,
     /// Tipografía aplicada (clave, tamaño %, nítido).
     applied_fonts: Option<(String, u32, bool)>,
@@ -137,6 +139,7 @@ impl DeskApp {
             import,
             today: Default::default(),
             place: None,
+            rules: Default::default(),
             applied: None,
             applied_fonts: None,
             confirm: None,
@@ -221,7 +224,8 @@ impl DeskApp {
             || self.iure.dialog.is_some()
             || self.ai.modal()
             || self.suite.modal()
-            || self.import.modal();
+            || self.import.modal()
+            || self.rules.modal();
         // Escribiendo en el redactor, los atajos de la aplicación no se disparan.
         let composing = !self.composers.is_empty() && ctx.egui_wants_keyboard_input();
         if !modal && !composing {
@@ -249,6 +253,7 @@ impl DeskApp {
         crate::compose::show_all(self, &ctx);
         crate::settings::show(self, &ctx);
         self.confirm_dialog(&ctx);
+        crate::rules_ui::show(self, &ctx);
         crate::iure::dialogs(self, &ctx);
         crate::iure::bell(self, &ctx);
         crate::assistant::frame(self, &ctx);
@@ -410,6 +415,8 @@ impl DeskApp {
             "appearance" => crate::settings::Section::Appearance,
             "mail" => crate::settings::Section::Mail,
             "integrations" => crate::settings::Section::Integrations,
+            "rules" => crate::settings::Section::Rules,
+            "labels" => crate::settings::Section::Labels,
             _ => crate::settings::Section::Accounts,
         };
         self.open_settings(s, edit.map(str::to_string), None);
@@ -622,6 +629,7 @@ impl DeskApp {
             Outcome::EditEvent(d) => crate::event_editor::open(self, *d),
             Outcome::Assist(id) => crate::assistant::command(self, ctx, &id),
             Outcome::Confirm { text, yes, command } => self.confirm = Some((text, yes, command)),
+            Outcome::Rules(id) => crate::rules_ui::command(self, ctx, &id),
         }
     }
 

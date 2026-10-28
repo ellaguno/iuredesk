@@ -27,6 +27,7 @@ mod onboarding;
 mod pim;
 mod reminders;
 mod rich_edit;
+mod rules_ui;
 mod settings;
 mod suite_ui;
 mod today;

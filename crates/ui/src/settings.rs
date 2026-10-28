@@ -20,12 +20,23 @@ pub enum Section {
     General,
     Appearance,
     Mail,
+    /// Reglas, categorías y respuesta automática (F5.3).
+    Rules,
+    /// Etiquetas y sus colores (F5.3).
+    Labels,
     Integrations,
 }
 
 impl Section {
-    const ALL: [Section; 5] =
-        [Section::Accounts, Section::General, Section::Appearance, Section::Mail, Section::Integrations];
+    const ALL: [Section; 7] = [
+        Section::Accounts,
+        Section::General,
+        Section::Appearance,
+        Section::Mail,
+        Section::Rules,
+        Section::Labels,
+        Section::Integrations,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -33,6 +44,8 @@ impl Section {
             Section::General => pick("General", "General"),
             Section::Appearance => pick("Appearance", "Apariencia"),
             Section::Mail => pick("Mail", "Correo"),
+            Section::Rules => pick("Rules", "Reglas"),
+            Section::Labels => pick("Labels", "Etiquetas"),
             Section::Integrations => pick("Integrations", "Integraciones"),
         }
     }
@@ -43,6 +56,8 @@ impl Section {
             Section::General => Icon::Settings,
             Section::Appearance => Icon::Sun,
             Section::Mail => Icon::Mail,
+            Section::Rules => Icon::Filter,
+            Section::Labels => Icon::Tag,
             Section::Integrations => Icon::Sparkle,
         }
     }
@@ -118,6 +133,8 @@ pub fn show(app: &mut DeskApp, ctx: &Context) {
                         Section::General => general(app, ui, &mut run),
                         Section::Appearance => appearance(app, ui, &mut run),
                         Section::Mail => mail(app, ui),
+                        Section::Rules => crate::rules_ui::settings_section(app, ui),
+                        Section::Labels => crate::rules_ui::labels_section(app, ui),
                         Section::Integrations => {
                             crate::iure::settings_section(app, ui);
                             crate::assistant::settings_section(app, ui);

@@ -411,6 +411,10 @@ fn sync_events_update_status_and_announce_new_mail() {
             subject: "Hola".into(),
         }],
     });
+    // F5.3: con categorías, el aviso espera a que lleguen los mensajes (y se aplican reglas).
+    assert!(ev.is_empty());
+    let ev =
+        s.feed_sync_event(SyncEvent::Arrived { account: acct, folder: iuredesk_model::FolderId(1), messages: vec![] });
     assert!(matches!(&ev[..], [Event::NewMail { detail, .. }] if detail.contains("Ana — Hola")));
     let ev = s.feed_sync_event(SyncEvent::Error(FriendlyError {
         account: Some(acct),

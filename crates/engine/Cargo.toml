@@ -30,6 +30,8 @@ iuredesk-mcp = { workspace = true }
 anyhow = { workspace = true }
 # F2.4: invitaciones iTIP en el correo.
 iuredesk-dav = { workspace = true }
+# F5.3: reglas, Sieve/ManageSieve, posponer, seguimiento, Enfocados/Otros, baja de listas.
+iuredesk-rules = { workspace = true }
 chrono-tz = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

@@ -357,6 +357,7 @@ fn today_panel(app: &mut DeskApp, ui: &mut Ui) {
         }
     }
     crate::iure::today_items(app, ui);
+    crate::rules_ui::today_followups(app, ui);
     let tasks = app.session.due_tasks();
     if !tasks.is_empty() {
         ui.add_space(4.0);
@@ -541,6 +542,7 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
+                crate::rules_ui::iure_filter_button(app, ui);
                 let conv_on = app.session.prefs.conversations;
                 let r = icons::icon_button(
                     ui,
@@ -566,6 +568,7 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             });
         });
     });
+    crate::rules_ui::category_tabs(app, ui);
     hairline(ui);
 
     if rows.is_empty() {
@@ -615,6 +618,8 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         })
         .collect();
     let list_label = format!("{} {}", pick("Messages in", "Mensajes de"), app.session.folder_title());
+    let hover = ctx.pointer_hover_pos();
+    let mut badge_tip: Option<String> = None;
     let DeskApp { session, mail, .. } = app;
     let rows_for_key = std::sync::Arc::clone(&rows);
     let key_of = move |i: usize| rows_for_key.get(i).map_or(u64::MAX - i as u64, |r| r.id.get());
@@ -627,6 +632,11 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         let Some(&ListRow { id, count }) = rows.get(row.index) else { return };
         let Some(env) = session.envelope(id).cloned() else { return };
         let unread = !env.flags.seen;
+        let labels = session.message_labels(&env);
+        let badge = session.iure_badge(id);
+        if let Some(b) = &badge {
+            row.describe(b.tip.get());
+        }
         row.style(RowStyle { unread, flagged: env.flags.flagged, muted: false });
         let col = *row.colors();
         let who = if sent_like.contains(&env.folder) {
@@ -658,7 +668,23 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             }
             let who_text = if count > 1 { format!("{who}  ({count})") } else { who };
             row.text(1, &who_text);
-            row.text(2, &subject);
+            // F5.3: insignia Iurefficient y etiquetas como puntos de color antes del asunto.
+            let cell = row.cell(2);
+            let mut x = cell.left();
+            if let Some(b) = &badge {
+                let br = Rect::from_min_size(pos2(x, cell.center().y - 7.0), vec2(16.0, 14.0));
+                crate::rules_ui::paint_iure_badge(row.painter(), br, b.kind, col.brand);
+                if hover.is_some_and(|h| br.contains(h)) {
+                    badge_tip = Some(b.tip.get().to_string());
+                }
+                x += 20.0;
+            }
+            x += crate::rules_ui::paint_label_chips(row.painter(), &ctx, pos2(x, cell.center().y), 40.0, &labels, true);
+            if x > cell.left() {
+                x += 2.0;
+            }
+            let subj_font = if unread { bold_font.clone() } else { body_font.clone() };
+            row.text_in(Rect::from_min_max(pos2(x, cell.top()), cell.max), Align::Min, &subject, subj_font, col.text);
             if env.has_attachments {
                 row.icon_colored(3, Icon::Attachment, col.text_muted, col.text_muted);
             }
@@ -697,6 +723,17 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         let who_font = if unread { bold_font.clone() } else { body_font.clone() };
         let count_w = if count > 1 { 30.0 } else { 0.0 };
         let who_rect = Rect::from_min_max(line1.min, pos2(line1.right() - date_w - 8.0 - count_w, line1.bottom()));
+        // F5.3: insignia Iurefficient a la izquierda de la fecha.
+        let who_rect = if let Some(b) = &badge {
+            let br = Rect::from_min_size(pos2(who_rect.right() - 18.0, line1.center().y - 8.0), vec2(20.0, 16.0));
+            crate::rules_ui::paint_iure_badge(row.painter(), br, b.kind, col.brand);
+            if hover.is_some_and(|h| br.contains(h)) {
+                badge_tip = Some(b.tip.get().to_string());
+            }
+            Rect::from_min_max(who_rect.min, pos2(who_rect.right() - 24.0, who_rect.bottom()))
+        } else {
+            who_rect
+        };
         row.text_in(who_rect, Align::Min, &who, who_font.clone(), col.text);
         if count > 1 {
             let g = row.painter().layout_no_wrap(who.clone(), who_font, col.text);
@@ -719,7 +756,21 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
                 icons_w += icon_side + 6.0;
             }
         }
-        let text_rect = Rect::from_min_max(line2.min, pos2(line2.right() - icons_w, line2.bottom()));
+        let mut text_rect = Rect::from_min_max(line2.min, pos2(line2.right() - icons_w, line2.bottom()));
+        // F5.3: chips de etiquetas y categoría antes del asunto.
+        if !labels.is_empty() {
+            let used = crate::rules_ui::paint_label_chips(
+                row.painter(),
+                &ctx,
+                pos2(text_rect.left(), text_rect.center().y),
+                text_rect.width() * 0.45,
+                &labels,
+                false,
+            );
+            if used > 0.0 {
+                text_rect.min.x += used + 2.0;
+            }
+        }
         let subj_font = if unread { bold_font.clone() } else { body_font.clone() };
         let g = row.painter().layout_no_wrap(subject.clone(), subj_font.clone(), col.text);
         let subj_w = g.size().x.min(text_rect.width() * 0.7);
@@ -736,6 +787,9 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             row.text_in(prev_rect, Align::Min, &p, body_font.clone(), col.text_muted);
         }
     });
+    if let Some(tip) = badge_tip {
+        out.response.clone().on_hover_text_at_pointer(tip);
+    }
     if out.selection_changed {
         let ids: Vec<MessageId> = mail.list.selection.keys().map(MessageId).collect();
         let cursor = mail.list.selection.cursor().and_then(|i| rows.get(i)).map(|r| r.id);
@@ -762,6 +816,9 @@ fn painter_safe_preview(p: &str) -> String {
 fn message_menu(app: &mut DeskApp, resp: &egui::Response) {
     let ctx = resp.ctx.clone();
     let mut chosen: Option<&'static str> = None;
+    let snooze = app.session.snooze_menu();
+    let snoozed = app.session.focused().is_some_and(|m| app.session.is_snoozed(m));
+    let mut extra: Option<String> = None;
     egui::Popup::context_menu(resp).show(|ui| {
         for (id, ic, en, es) in [
             ("mail.reply", Icon::Reply, "Reply", "Responder"),
@@ -778,9 +835,13 @@ fn message_menu(app: &mut DeskApp, resp: &egui::Response) {
                 ui.close();
             }
         }
+        crate::rules_ui::context_items(ui, &snooze, snoozed, &mut extra);
     });
     if let Some(id) = chosen {
         app.run(&ctx, id);
+    }
+    if let Some(id) = extra {
+        app.run(&ctx, &id);
     }
 }
 
@@ -845,6 +906,9 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCar
     }
     ui.add_space(6.0);
     action_bar(app, ui);
+    if let Some(env) = conv.iter().find(|e| e.id == id).or(conv.last()).cloned() {
+        crate::rules_ui::reading_chips(app, ui, &env);
+    }
     crate::assistant::reading_bar(app, ui, id);
     ui.add_space(4.0);
     hairline(ui);
@@ -886,6 +950,9 @@ fn action_bar(app: &mut DeskApp, ui: &mut Ui) {
         None => label.to_string(),
     };
     let mut fire: Option<&'static str> = None;
+    let snooze = app.session.snooze_menu();
+    let snoozed = app.session.focused().is_some_and(|m| app.session.is_snoozed(m));
+    let mut extra: Option<String> = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         let narrow = ui.available_width() < 520.0;
@@ -914,6 +981,7 @@ fn action_bar(app: &mut DeskApp, ui: &mut Ui) {
                 fire = Some(id);
             }
         }
+        crate::rules_ui::snooze_button(ui, &snooze, &mut extra);
         let more = icons::icon_button(ui, Icon::MoreHorizontal, pick("More actions", "Más acciones"), true);
         egui::Popup::menu(&more).show(|ui| {
             for (id, ic, en, es) in [
@@ -927,10 +995,14 @@ fn action_bar(app: &mut DeskApp, ui: &mut Ui) {
                     ui.close();
                 }
             }
+            crate::rules_ui::more_items(ui, snoozed, &mut extra);
         });
     });
     if let Some(id) = fire {
         app.run(&ctx, id);
+    }
+    if let Some(id) = extra {
+        app.run(&ctx, &id);
     }
 }
 
