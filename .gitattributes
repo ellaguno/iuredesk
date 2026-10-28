@@ -1,0 +1,13 @@
+# Finales de línea LF en todas las plataformas: los prompts, plantillas y fixtures se incrustan con
+# include_str! y las pruebas comparan bytes (Windows convertía a CRLF al clonar).
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.icns binary
+*.ttf binary
+*.otf binary
+*.pdf binary
+*.eml -text
+*.mbox -text
+*.ics -text
+*.vcf -text

@@ -486,7 +486,9 @@ mod tests {
         let macos = app.join("Contents").join("MacOS");
         std::fs::create_dir_all(&macos).unwrap_or_else(|e| panic!("{e}"));
         std::fs::write(macos.join("iureocr"), b"").unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(bundle_executable(&app, "IureOCR"), macos.join("iureocr"));
+        // En macOS el disco no distingue mayúsculas: puede devolver `IureOCR` o `iureocr`.
+        let found = bundle_executable(&app, "IureOCR");
+        assert!(found.to_string_lossy().eq_ignore_ascii_case(&macos.join("iureocr").to_string_lossy()), "{found:?}");
         assert_eq!(bundle_executable(Path::new("/usr/bin/iureocr"), "IureOCR"), PathBuf::from("/usr/bin/iureocr"));
     }
 
