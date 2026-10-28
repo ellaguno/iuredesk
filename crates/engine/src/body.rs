@@ -32,6 +32,8 @@ pub struct MessageBody {
     pub attachments: Vec<AttachmentInfo>,
     /// Aviso sobre el cuerpo (p. ej. no se pudo descargar y solo hay extracto).
     pub note: Option<crate::lang::Text>,
+    /// F5.4: firmado / cifrado (insignia de seguridad del panel de lectura).
+    pub security: Option<Box<crate::security::SecurityReport>>,
 }
 
 fn clip_chars(s: &str, max: usize) -> String {
@@ -43,6 +45,14 @@ fn clip_chars(s: &str, max: usize) -> String {
 
 /// Interpreta un mensaje RFC 822. Si no se puede, el texto crudo (acotado) hace de cuerpo.
 pub fn parse(raw: &[u8]) -> MessageBody {
+    // F5.4: descifrar / verificar antes de leer el contenido.
+    let opened = crate::security::open(raw);
+    let mut body = parse_plain(&opened.display);
+    body.security = opened.report.map(Box::new);
+    body
+}
+
+fn parse_plain(raw: &[u8]) -> MessageBody {
     let Some(msg) = MessageParser::default().parse(raw) else {
         return MessageBody { text: clip_chars(&String::from_utf8_lossy(raw), MAX_TEXT_CHARS), ..Default::default() };
     };
@@ -73,7 +83,7 @@ pub fn parse(raw: &[u8]) -> MessageBody {
             .unwrap_or_else(|| "application/octet-stream".into());
         attachments.push(AttachmentInfo { name: part.attachment_name().unwrap_or("adjunto").to_string(), size, mime });
     }
-    MessageBody { text, html, inline, attachments, note: None }
+    MessageBody { text, html, inline, attachments, note: None, security: None }
 }
 
 /// ¿Es una línea de atribución de una respuesta («El lun…, Ana escribió:», «On …, Ana wrote:»)?

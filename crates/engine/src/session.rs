@@ -411,6 +411,9 @@ impl Session {
     /// Abre la sesión. Si hay un archivo de preferencias, se cargan.
     pub fn new(cfg: SessionConfig) -> Result<Session> {
         let prefs = cfg.prefs_path.as_deref().map(Prefs::load).unwrap_or_default();
+        // F5.4: claves OpenPGP / S/MIME junto a las preferencias.
+        let crypto_dir = cfg.prefs_path.as_deref().and_then(|p| p.parent()).map(|d| d.join("crypto"));
+        crate::security::init(crypto_dir.as_deref(), Arc::clone(&cfg.secrets));
         let bg = Background::new()?;
         let mut s = Session {
             store: cfg.store,
@@ -1096,6 +1099,11 @@ impl Session {
                 self.run_calendar("cal.new_event")
             }
             b if b.starts_with("cal.") => self.run_calendar(b),
+            // F5.4: la UI renderiza el PDF y abre las ventanas de claves.
+            "print.message" | "print.message_pdf" if self.focused.is_none() => {
+                Ok(Outcome::Notice(Notice::info("Select a message first.", "Primero selecciona un mensaje.")))
+            }
+            b if b.starts_with("print.") || b.starts_with("security.") => Ok(Outcome::Assist(b.to_string())),
             b if b.starts_with("ai.") || b.starts_with("suite.") || b == "app.import" => self.run_assist(b),
             b if rules_glue::handles(b) => self.run_rules(b, arg),
             "mail.new" => {

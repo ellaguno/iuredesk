@@ -50,6 +50,9 @@ pub enum ComposeError {
     /// Fallo al construir el MIME.
     #[error("no se pudo construir el mensaje: {0}")]
     Build(String),
+    /// No se pudo firmar o cifrar (F5.4); mensaje humano en los dos idiomas.
+    #[error("correo seguro: {es}")]
+    Security { es: String, en: String },
 }
 
 impl From<iuredesk_store::StoreError> for ComposeError {
@@ -109,6 +112,10 @@ impl ComposeError {
                     "Ya no se puede deshacer: el mensaje ya va en camino.",
                 )
                 .to_string(),
+            ComposeError::Security { es, en } => match lang {
+                Lang::Es => es.clone(),
+                Lang::En => en.clone(),
+            },
             ComposeError::Store(_) => lang
                 .pick("Couldn't save to the local mail store.", "No se pudo guardar en el almacén local.")
                 .to_string(),

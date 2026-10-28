@@ -25,6 +25,9 @@ glifo = { workspace = true }
 image = { workspace = true }
 html5ever = { workspace = true }
 thiserror = { workspace = true }
+# F5.4: imprimir / guardar como PDF (Rust puro; Flate con miniz_oxide)
+pdf-writer = { workspace = true }
+flate2 = { workspace = true }
 
 [dev-dependencies]
 png = { workspace = true }

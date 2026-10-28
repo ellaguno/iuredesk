@@ -16,6 +16,8 @@ iuredesk-oauth = { workspace = true }
 # F1.3: sincronización real y envío (bandeja de salida con SMTP).
 iuredesk-sync = { workspace = true }
 iuredesk-compose = { workspace = true }
+# F5.4: OpenPGP y S/MIME.
+iuredesk-crypto = { workspace = true }
 # F2.5: envío por Microsoft Graph (`sendMail`) en cuentas Microsoft 365 con OAuth.
 iuredesk-graph = { workspace = true }
 # F2.3: expansión de recurrencias RFC 5545 para las vistas de calendario.

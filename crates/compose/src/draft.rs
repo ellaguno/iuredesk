@@ -300,6 +300,9 @@ pub struct Draft {
     /// Invitación de calendario.
     #[serde(default)]
     pub calendar: Option<CalendarPart>,
+    /// Firmar / cifrar al enviar (F5.4).
+    #[serde(default)]
+    pub security: crate::secure::SecurityRequest,
 }
 
 impl Draft {
@@ -322,6 +325,7 @@ impl Draft {
             request_read_receipt: false,
             send_at: None,
             calendar: None,
+            security: Default::default(),
         }
     }
 

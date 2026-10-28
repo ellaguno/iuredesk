@@ -205,6 +205,18 @@ fn main() -> Result<(), String> {
             })
             .or(rows.get(2))
             .map(|r| r.id);
+        // `--secure`: el mensaje elegido llega firmado y cifrado (PGP/MIME) con claves de prueba.
+        if args.iter().any(|a| a == "--secure")
+            && let (Some(id), Some(c)) = (pick, iuredesk_engine::security::get())
+            && let (Ok(raw), Some(env)) = (session.store().get_raw(id), session.envelope(id).cloned())
+            && let Some(from) = env.from.first().cloned()
+        {
+            let _ = c.keys.generate_pgp(from.display(), &from.addr);
+            let req = iuredesk_engine::iuredesk_crypto::SealRequest { sign: true, encrypt: true, prefer_smime: false };
+            if let Ok(sealed) = c.seal(&raw, std::slice::from_ref(&from.addr), req) {
+                let _ = session.store().put_message(env, &sealed);
+            }
+        }
         if let Some(id) = pick {
             session.request_focus(id);
         }
@@ -218,6 +230,26 @@ fn main() -> Result<(), String> {
     let mut app =
         DeskApp::new(session, Options { system_fonts: true, no_theme_watch: true, chrome, ..Default::default() });
     if args.iter().any(|a| a == "--compose") {
+        // `--secure`: clave propia y de los destinatarios (Autocrypt mutuo) → «Cifrar» se enciende.
+        if args.iter().any(|a| a == "--secure")
+            && let Some(c) = iuredesk_engine::security::get()
+        {
+            use iuredesk_engine::iuredesk_crypto::{autocrypt::PreferEncrypt, keystore::KeySource, openpgp};
+            if let Some((_, me)) = app.session.identities().first() {
+                let _ = c.keys.generate_pgp(&me.name, &me.email);
+            }
+            for a in ["carmen.brown@example.net", "pablo@despacho.example.org"] {
+                if let Ok(k) = openpgp::generate("", a, "x") {
+                    let _ = c.keys.learn(
+                        a,
+                        &k.to_public_key(),
+                        KeySource::Autocrypt,
+                        PreferEncrypt::Mutual,
+                        chrono::Utc::now(),
+                    );
+                }
+            }
+        }
         app.demo_compose();
     }
     if module == "provider" {
