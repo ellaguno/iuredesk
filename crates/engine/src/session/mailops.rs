@@ -312,7 +312,7 @@ impl Session {
                 name: a.display_name.clone(),
                 email: a.email.clone(),
                 server: a.incoming.host.clone(),
-                status: aid.and_then(|x| self.live.status.get(&x).cloned()),
+                status: aid.and_then(|x| self.account_sync(x).cloned()),
                 signature: self.signature_text(&a.email),
             });
         }

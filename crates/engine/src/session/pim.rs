@@ -3,11 +3,13 @@
 //! conflictos, errores) en refrescos y avisos, y pasa a la bandeja de salida las respuestas iMIP
 //! (`mail.imip_reply`) que deja al responder a una invitación.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use iuredesk_compose::{CalendarMethod, CalendarPart, Draft, RichBody};
+use iuredesk_model::AccountId;
 use iuredesk_model::account::Identity;
 use iuredesk_pim_sync::{
     ConflictResolution, ImipReply, OP_IMIP_REPLY, PimAccount, PimEvent, PimSyncEngine, PimSyncHandle, PimSyncOptions,
@@ -22,12 +24,18 @@ pub(crate) struct Pim {
     generation: u64,
     tx: Sender<(u64, PimEvent)>,
     rx: Receiver<(u64, PimEvent)>,
+    /// Último error de calendario/contactos de cada cuenta (BUG-GCAL: antes un fallo de
+    /// CardDAV dejaba la cuenta sin calendario y solo se veía un aviso pasajero). Se muestra en
+    /// el estado de la cuenta aunque el correo esté al día.
+    pub errors: HashMap<AccountId, super::AccountSync>,
+    /// Cuentas con error en la pasada en curso (un `Synced` sin error limpia el anterior).
+    failed_pass: HashSet<AccountId>,
 }
 
 impl Default for Pim {
     fn default() -> Self {
         let (tx, rx) = channel();
-        Pim { handle: None, generation: 0, tx, rx }
+        Pim { handle: None, generation: 0, tx, rx, errors: HashMap::new(), failed_pass: HashSet::new() }
     }
 }
 
@@ -40,6 +48,8 @@ impl Session {
             });
         }
         self.pim.generation = self.pim.generation.wrapping_add(1);
+        self.pim.errors.clear();
+        self.pim.failed_pass.clear();
         if self.sync_options.is_none() {
             return;
         }
@@ -129,21 +139,51 @@ impl Session {
                 self.notices.push(Notice::info(en, es));
                 true
             }
-            PimEvent::Synced { .. } => false,
+            PimEvent::Synced { account, .. } => {
+                if !self.pim.failed_pass.remove(&account) {
+                    self.pim.errors.remove(&account);
+                }
+                false
+            }
             PimEvent::Error(f) => {
+                // Registro técnico (sin secretos: el detalle es el error y, a lo sumo, una URL).
+                let who = f.account.map(|a| a.to_string()).unwrap_or_else(|| "-".into());
+                eprintln!("IureDesk: calendario/contactos (cuenta {who}): {} — {}", f.es, f.detail);
                 let text =
                     Text::new(format!("Calendar and contacts: {}", f.en), format!("Calendario y contactos: {}", f.es));
-                if f.needs_reauth
-                    && let Some(a) = f.account
+                if let Some(a) = f.account
+                    && (f.needs_reauth || !f.transient)
                 {
-                    self.live.status.insert(a, super::AccountSync::Error { text, reauth: true });
-                } else if !f.transient && self.pim_last_error.as_ref() != Some(&text) {
+                    self.pim.failed_pass.insert(a);
+                    // El primero de la pasada manda (un permiso que falta antes que un detalle).
+                    let keep = matches!(self.pim.errors.get(&a), Some(super::AccountSync::Error { reauth: true, .. }))
+                        && !f.needs_reauth;
+                    if !keep {
+                        self.pim
+                            .errors
+                            .insert(a, super::AccountSync::Error { text: text.clone(), reauth: f.needs_reauth });
+                    }
+                }
+                if !f.needs_reauth && !f.transient && self.pim_last_error.as_ref() != Some(&text) {
                     self.pim_last_error = Some(text.clone());
                     self.notices.push(Notice::error(text));
                 }
                 false
             }
         }
+    }
+
+    /// Estado de calendario/contactos de una cuenta, si hay un problema que mostrar.
+    pub(crate) fn pim_error(&self, aid: AccountId) -> Option<&super::AccountSync> {
+        self.pim.errors.get(&aid)
+    }
+
+    /// Usa este proveedor de tokens OAuth y rearranca la sincronización (pruebas con servidores
+    /// falsos; la aplicación usa el `TokenManager` de los ajustes).
+    #[doc(hidden)]
+    pub fn set_token_provider(&mut self, tokens: Arc<dyn iuredesk_oauth::TokenProvider>) {
+        self.live.tokens = Some(tokens);
+        self.restart_sync();
     }
 
     fn refresh_pim_views(&mut self) {

@@ -53,6 +53,13 @@ pub enum PimError {
     /// La sincronización se está apagando.
     #[error("apagando")]
     Shutdown,
+    /// El inicio de sesión no incluye el permiso para contactos (`contacts`) o calendario: hay
+    /// que volver a iniciar sesión (Google CardDAV pide el alcance `carddav`).
+    #[error("faltan permisos de {}", if *contacts { "contactos" } else { "calendario" })]
+    MissingAccess {
+        /// ¿Contactos (CardDAV)? Si no, calendario.
+        contacts: bool,
+    },
     /// No se pudo arrancar el runtime de fondo.
     #[error("runtime: {0}")]
     Runtime(String),
@@ -78,8 +85,8 @@ impl PimError {
     /// ¿Hay que pedir de nuevo la contraseña o el inicio de sesión?
     pub fn needs_reauth(&self) -> bool {
         match self {
-            Self::Unauthorized | Self::NoPassword => true,
-            Self::Dav(iuredesk_dav::Error::Unauthorized) => true,
+            Self::Unauthorized | Self::NoPassword | Self::MissingAccess { .. } => true,
+            Self::Dav(iuredesk_dav::Error::Unauthorized | iuredesk_dav::Error::InsufficientScope(_)) => true,
             Self::Graph { status: 401, .. } => true,
             Self::OAuth(e) => e.needs_reconsent(),
             _ => false,
@@ -90,8 +97,21 @@ impl PimError {
     pub fn message(&self, spanish: bool) -> String {
         let pick = |en: &str, es: &str| if spanish { es.to_string() } else { en.to_string() };
         if self.needs_reauth() {
-            if let Self::OAuth(e) = self {
-                return e.message(spanish);
+            match self {
+                Self::OAuth(e) => return e.message(spanish),
+                Self::MissingAccess { contacts: true } => {
+                    return pick(
+                        "Sign in again to give access to your contacts.",
+                        "Vuelve a iniciar sesión para dar acceso a tus contactos.",
+                    );
+                }
+                Self::MissingAccess { contacts: false } | Self::Dav(iuredesk_dav::Error::InsufficientScope(_)) => {
+                    return pick(
+                        "Sign in again to give access to your calendar.",
+                        "Vuelve a iniciar sesión para dar acceso a tu calendario.",
+                    );
+                }
+                _ => {}
             }
             return pick(
                 "The calendar/contacts server rejected your password. Check it (iCloud needs an app-specific password).",
@@ -169,5 +189,9 @@ mod tests {
         assert!(!PimError::Conflict.is_transient());
         assert!(PimError::Conflict.message(true).contains("versión del servidor"));
         assert!(PimError::Unauthorized.message(false).contains("app-specific"));
+        let scope = PimError::MissingAccess { contacts: true };
+        assert!(scope.needs_reauth() && !scope.is_transient());
+        assert_eq!(scope.message(true), "Vuelve a iniciar sesión para dar acceso a tus contactos.");
+        assert!(PimError::Dav(iuredesk_dav::Error::InsufficientScope("x".into())).needs_reauth());
     }
 }

@@ -52,6 +52,7 @@ impl DavClient {
             let (final_url, ms) = match self.propfind(&candidate, Depth::Zero, PRINCIPAL_PROPS).await {
                 Ok(r) => r,
                 Err(Error::Unauthorized) => return Err(Error::Unauthorized),
+                Err(e @ Error::InsufficientScope(_)) => return Err(e),
                 Err(e) => {
                     last_err = e;
                     continue;
@@ -81,6 +82,7 @@ impl DavClient {
                         }
                     }
                     Err(Error::Unauthorized) => return Err(Error::Unauthorized),
+                    Err(e @ Error::InsufficientScope(_)) => return Err(e),
                     Err(e) => last_err = e,
                 }
             }

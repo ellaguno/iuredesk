@@ -195,6 +195,9 @@ pub const GOOGLE_SCOPES: &[&str] = &[
     "https://mail.google.com/",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/contacts",
+    // CardDAV de Google (`carddav.googleapis.com`) no acepta `auth/contacts`: sin este alcance
+    // responde 403 `ACCESS_TOKEN_SCOPE_INSUFFICIENT` (BUG-GCAL).
+    "https://www.googleapis.com/auth/carddav",
     "https://www.googleapis.com/auth/tasks",
 ];
 
@@ -360,6 +363,8 @@ mod tests {
     fn google_defaults() {
         let p = ProviderConfig::google(ClientCredentials::new("id", Some("s".into())));
         assert!(p.consent_scopes.iter().any(|s| s == "https://mail.google.com/"));
+        assert!(p.consent_scopes.iter().any(|s| s == "https://www.googleapis.com/auth/carddav"));
+        assert!(p.consent_scopes.iter().any(|s| s == "https://www.googleapis.com/auth/calendar"));
         assert!(p.token_scopes(TokenAudience::Mail).is_empty());
         assert!(p.extra_authorize_params.contains(&("access_type".into(), "offline".into())));
         assert!(p.validate().is_ok());

@@ -226,10 +226,20 @@ fn net_error(e: reqwest::Error) -> Error {
 pub(crate) fn status_error(resp: &RawResponse, what: &str) -> Error {
     match resp.status {
         401 => Error::Unauthorized,
+        403 if insufficient_scope(&resp.body) => Error::InsufficientScope(format!("{what} {}", resp.url)),
         404 | 410 => Error::NotFound,
         412 => Error::PreconditionFailed,
         s => Error::Http { status: s, detail: format!("{what} {}", resp.url) },
     }
+}
+
+/// ¿Es un 403 por falta de alcance OAuth? Google responde
+/// `{"error":{"status":"PERMISSION_DENIED","details":[{"reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"…`;
+/// RFC 6750 usa `insufficient_scope`.
+pub(crate) fn insufficient_scope(body: &[u8]) -> bool {
+    let head = body.get(..body.len().min(16 * 1024)).unwrap_or_default();
+    let text = String::from_utf8_lossy(head).to_ascii_lowercase();
+    text.contains("access_token_scope_insufficient") || text.contains("insufficient_scope")
 }
 
 fn expect_multistatus(resp: &RawResponse, what: &str) -> Result<Multistatus> {
@@ -238,5 +248,30 @@ fn expect_multistatus(resp: &RawResponse, what: &str) -> Result<Multistatus> {
         xml::parse_multistatus(&resp.body)
     } else {
         Err(status_error(resp, what))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn resp(status: u16, body: &str) -> RawResponse {
+        RawResponse {
+            status,
+            url: Url::parse("https://www.googleapis.com/carddav/v1/principals/a@b.c/lists/default/").unwrap(),
+            etag: None,
+            location: None,
+            content_type: None,
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    /// BUG-GCAL: Google CardDAV sin el alcance `carddav` responde 403 con este cuerpo.
+    #[test]
+    fn google_scope_403_is_insufficient_scope() {
+        let google = r#"{"error":{"code":403,"message":"Request had insufficient authentication scopes.","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT","domain":"googleapis.com","metadata":{"service":"carddav.googleapis.com"}}]}}"#;
+        assert!(matches!(status_error(&resp(403, google), "PROPFIND"), Error::InsufficientScope(_)));
+        assert!(matches!(status_error(&resp(403, "forbidden"), "PROPFIND"), Error::Http { status: 403, .. }));
+        assert!(matches!(status_error(&resp(404, ""), "PROPFIND"), Error::NotFound));
     }
 }

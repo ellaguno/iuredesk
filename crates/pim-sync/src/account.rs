@@ -75,9 +75,13 @@ impl PimAccount {
                         .clone()
                         .unwrap_or_else(|| iuredesk_dav::dav::quirks::google_caldav_principal(&a.email)),
                 ),
+                // La raíz genérica que guarda el autodescubrimiento
+                // (`…/carddav/v1/principals/`) responde 404: Google solo sirve la libreta
+                // por usuario. Una URL propia (servidor de pruebas, alias) se respeta.
                 carddav: Some(
                     a.carddav_url
                         .clone()
+                        .filter(|u| !is_generic_google_carddav(u))
                         .unwrap_or_else(|| iuredesk_dav::dav::quirks::google_carddav_principal(&a.email)),
                 ),
                 auth: DavAuth::OAuth,
@@ -107,6 +111,14 @@ impl PimAccount {
         }
         v
     }
+}
+
+/// ¿Es la raíz CardDAV de Google sin el usuario (`https://www.googleapis.com/carddav/v1/principals/`)?
+fn is_generic_google_carddav(url: &str) -> bool {
+    let Ok(u) = reqwest::Url::parse(url.trim()) else { return true };
+    let google = u.host_str().is_some_and(|h| h.eq_ignore_ascii_case("www.googleapis.com"));
+    let path = u.path().trim_end_matches('/');
+    google && (path.is_empty() || path == "/carddav" || path == "/carddav/v1" || path == "/carddav/v1/principals")
 }
 
 /// Llavero y tokens.
@@ -196,6 +208,22 @@ mod tests {
             PimAccount::from_account(&acct(AccountKind::Gmail, AuthMethod::OAuth2 { provider: OAuthProvider::Google }))
                 .unwrap();
         assert!(matches!(g.source, PimSource::Dav { auth: DavAuth::OAuth, .. }));
+        // BUG-GCAL: la raíz genérica que guarda el autodescubrimiento da 404; se usa la libreta
+        // del usuario. La raíz CalDAV genérica sí descubre y se respeta.
+        let mut gs = acct(AccountKind::Gmail, AuthMethod::OAuth2 { provider: OAuthProvider::Google });
+        gs.caldav_url = Some("https://apidata.googleusercontent.com/caldav/v2/".into());
+        gs.carddav_url = Some("https://www.googleapis.com/carddav/v1/principals/".into());
+        let PimSource::Dav { caldav, carddav, .. } = PimAccount::from_account(&gs).unwrap().source else {
+            panic!("dav")
+        };
+        assert_eq!(caldav.as_deref(), Some("https://apidata.googleusercontent.com/caldav/v2/"));
+        assert_eq!(
+            carddav.as_deref(),
+            Some("https://www.googleapis.com/carddav/v1/principals/Ana@Example.com/lists/default/")
+        );
+        gs.carddav_url = Some("http://127.0.0.1:9/carddav/".into());
+        let PimSource::Dav { carddav, .. } = PimAccount::from_account(&gs).unwrap().source else { panic!("dav") };
+        assert_eq!(carddav.as_deref(), Some("http://127.0.0.1:9/carddav/"));
         let m = PimAccount::from_account(&acct(
             AccountKind::Microsoft365,
             AuthMethod::OAuth2 { provider: OAuthProvider::Microsoft },
