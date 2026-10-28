@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use crate::draft::{AttachmentSource, Draft, OriginalKind};
 use crate::error::{ComposeError, Result};
 use crate::mime::{
-    BuildOptions, ContentResolver, MAX_MESSAGE_BYTES, StoreResolver, build_message, generate_message_id,
+    BuildOptions, ContentResolver, MAX_MESSAGE_BYTES, StoreResolver, generate_message_id,
 };
 use crate::ops::{OP_SEND, OP_SYNC, SyncOp};
 use crate::transport::{OutgoingMessage, SendError, SendErrorKind, Transport};
@@ -202,6 +202,8 @@ pub struct Outbox {
     clock: Arc<dyn Clock>,
     config: OutboxConfig,
     in_flight: Mutex<HashSet<OutboxId>>,
+    /// Firma / cifrado al enviar (F5.4).
+    sealer: Option<Arc<dyn crate::secure::MessageSealer>>,
 }
 
 impl std::fmt::Debug for Outbox {
@@ -217,7 +219,7 @@ fn state_key(id: OutboxId) -> String {
 impl Outbox {
     /// Abre la bandeja. Las entradas que quedaron «enviándose» (cierre a mitad) vuelven a espera.
     pub fn new(store: Arc<Store>, clock: Arc<dyn Clock>, config: OutboxConfig) -> Result<Self> {
-        let outbox = Self { store, clock, config, in_flight: Mutex::new(HashSet::new()) };
+        let outbox = Self { store, clock, config, in_flight: Mutex::new(HashSet::new()), sealer: None };
         for mut e in outbox.entries()? {
             if e.state == OutboxState::Sending {
                 e.state = OutboxState::Waiting;
@@ -225,6 +227,11 @@ impl Outbox {
             }
         }
         Ok(outbox)
+    }
+
+    /// Instala quien firma / cifra los mensajes (F5.4).
+    pub fn set_sealer(&mut self, sealer: Arc<dyn crate::secure::MessageSealer>) {
+        self.sealer = Some(sealer);
     }
 
     pub fn config(&self) -> &OutboxConfig {
@@ -275,7 +282,7 @@ impl Outbox {
             message_id: Some(message_id.clone()),
             max_size: MAX_MESSAGE_BYTES,
         };
-        build_message(&d, &StoreResolver { store: &self.store }, &opts)?;
+        crate::secure::build_sealed(&d, &StoreResolver { store: &self.store }, &opts, self.sealer.as_ref())?;
 
         let to = d.to.iter().map(|m| m.display().to_string()).collect::<Vec<_>>().join(", ");
         let subject = d.subject.clone();
@@ -450,7 +457,7 @@ impl Outbox {
             message_id: Some(entry.message_id.clone()),
             max_size: MAX_MESSAGE_BYTES,
         };
-        let built = match build_message(&queued.draft, &StoreResolver { store: &self.store }, &opts) {
+        let built = match crate::secure::build_sealed(&queued.draft, &StoreResolver { store: &self.store }, &opts, self.sealer.as_ref()) {
             Ok(b) => b,
             Err(e) => return self.fail(entry, SendError::new(SendErrorKind::Config, e.to_string()), now),
         };

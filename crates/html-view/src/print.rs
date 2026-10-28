@@ -7,7 +7,7 @@
 
 use std::io::Write as _;
 
-use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref, Str};
+use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref, TextStr};
 
 use crate::{Error, RenderOptions, render};
 
@@ -143,9 +143,9 @@ pub fn html_to_pdf(html: &str, opts: &PrintOptions) -> Result<Vec<u8>, Error> {
     pdf.pages(tree).kids(pages.iter().map(|p| p.0)).count(pages.len() as i32);
     let mut di = pdf.document_info(info);
     if !opts.title.is_empty() {
-        di.title(Str(opts.title.as_bytes()));
+        di.title(TextStr(&opts.title));
     }
-    di.producer(Str(b"IureDesk"));
+    di.producer(TextStr("IureDesk"));
     di.finish();
 
     for (&(y0, y1), &(page_id, content_id, image_id)) in breaks.iter().zip(pages.iter()) {
@@ -246,7 +246,7 @@ mod tests {
         let w = 10;
         let mut rgba = vec![255u8; w * 100 * 4];
         for y in 40..45 {
-            for x in 0..w {
+            for x in 0..w / 2 {
                 let i = (y * w + x) * 4;
                 rgba[i] = 0;
             }

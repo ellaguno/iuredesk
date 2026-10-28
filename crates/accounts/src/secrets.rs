@@ -29,6 +29,8 @@ pub enum SecretPurpose {
     Dav,
     /// Clave de API de un servicio externo (p. ej. un proveedor de IA del asistente).
     ApiKey,
+    /// Contraseña de una clave OpenPGP o de un `.p12` S/MIME propios (F5.4).
+    CryptoKey,
 }
 
 impl SecretPurpose {
@@ -40,6 +42,7 @@ impl SecretPurpose {
             SecretPurpose::OAuthAccess => "oauth-access",
             SecretPurpose::Dav => "dav",
             SecretPurpose::ApiKey => "api-key",
+            SecretPurpose::CryptoKey => "crypto-key",
         }
     }
 }
@@ -66,6 +69,7 @@ pub trait SecretStore: Send + Sync {
             SecretPurpose::OAuthAccess,
             SecretPurpose::Dav,
             SecretPurpose::ApiKey,
+            SecretPurpose::CryptoKey,
         ] {
             self.delete(account_id, p)?;
         }

@@ -3601,7 +3601,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-crypto"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -3660,6 +3660,7 @@ dependencies = [
  "iuredesk-assistant",
  "iuredesk-autoconfig",
  "iuredesk-compose",
+ "iuredesk-crypto",
  "iuredesk-dav",
  "iuredesk-graph",
  "iuredesk-imap",

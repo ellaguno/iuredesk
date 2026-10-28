@@ -250,3 +250,30 @@ fn missing_attachment_is_a_friendly_error() {
     let err = build_message(&d, &FsResolver, &opts()).unwrap_err();
     assert!(err.message(iuredesk_compose::Lang::Es).contains("informe.pdf"));
 }
+
+/// F5.4: el sellador recibe los destinatarios del sobre y la petición; sin sellador, pedir
+/// firma/cifrado es un error claro (nunca se envía en claro sin avisar).
+#[test]
+fn sealer_hook() {
+    use iuredesk_compose::secure::{MessageSealer, SecurityRequest, build_sealed};
+    use std::sync::Arc;
+    struct Tag;
+    impl MessageSealer for Tag {
+        fn seal(&self, raw: &[u8], rcpt: &[String], req: SecurityRequest) -> Result<Vec<u8>, (String, String)> {
+            if req.encrypt {
+                return Err(("falta clave".into(), "missing key".into()));
+            }
+            let mut v = format!("X-Sealed: {}\r\n", rcpt.join(",")).into_bytes();
+            v.extend_from_slice(raw);
+            Ok(v)
+        }
+    }
+    let mut d = simple_draft();
+    let s: Arc<dyn MessageSealer> = Arc::new(Tag);
+    let b = build_sealed(&d, &FsResolver, &opts(), Some(&s)).unwrap();
+    assert!(b.raw.starts_with(b"X-Sealed: "));
+    d.security = SecurityRequest { sign: true, encrypt: true };
+    let e = build_sealed(&d, &FsResolver, &opts(), Some(&s)).unwrap_err();
+    assert_eq!(e.message(iuredesk_compose::Lang::Es), "falta clave");
+    assert!(build_sealed(&d, &FsResolver, &opts(), None).is_err());
+}

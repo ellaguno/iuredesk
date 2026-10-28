@@ -189,6 +189,26 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::App,
         "contacts people remove borrar eliminar personas",
     ),
+    // F5.4: imprimir / PDF y correo seguro (los atiende la UI).
+    c("print.message", "Print…", "Imprimir…", "print", Group::Mail, "print imprimir impresora"),
+    c("print.message_pdf", "Save as PDF…", "Guardar como PDF…", "export", Group::Mail, "pdf export exportar guardar"),
+    c("print.agenda", "Print calendar…", "Imprimir calendario…", "print", Group::App, "print agenda week semana imprimir"),
+    c(
+        "print.agenda_pdf",
+        "Save calendar as PDF…",
+        "Guardar calendario como PDF…",
+        "export",
+        Group::App,
+        "pdf agenda week semana exportar",
+    ),
+    c(
+        "security.keys",
+        "Encryption keys…",
+        "Claves de cifrado…",
+        "lock",
+        Group::App,
+        "pgp openpgp smime s/mime key clave firma cifrado certificado autocrypt",
+    ),
     c("mail.move", "Move to folder…", "Mover a carpeta…", "folder", Group::Mail, "move file mover carpeta"),
     c("mail.search", "Search mail", "Buscar en el correo", "search", Group::Mail, "find buscar encontrar"),
     // F5.3

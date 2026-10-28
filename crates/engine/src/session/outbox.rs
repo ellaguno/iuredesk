@@ -109,7 +109,10 @@ impl Session {
         }
         let config = OutboxConfig { undo_window: self.undo_window(), ..Default::default() };
         let outbox = match Outbox::new(Arc::clone(&self.store), Arc::new(SystemClock), config) {
-            Ok(o) => Arc::new(o),
+            Ok(mut o) => {
+                o.set_sealer(Arc::new(crate::security::Sealer));
+                Arc::new(o)
+            }
             Err(e) => {
                 self.notices.push(Notice::error(Text::new(
                     format!("The outbox could not be opened: {e}"),

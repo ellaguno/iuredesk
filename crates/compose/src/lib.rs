@@ -39,6 +39,7 @@ pub mod ops;
 pub mod outbox;
 pub mod reply;
 pub mod rich;
+pub mod secure;
 pub mod signature;
 pub mod template;
 pub mod transport;
