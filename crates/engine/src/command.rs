@@ -192,7 +192,14 @@ pub const COMMANDS: &[CommandSpec] = &[
     // F5.4: imprimir / PDF y correo seguro (los atiende la UI).
     c("print.message", "Print…", "Imprimir…", "print", Group::Mail, "print imprimir impresora"),
     c("print.message_pdf", "Save as PDF…", "Guardar como PDF…", "export", Group::Mail, "pdf export exportar guardar"),
-    c("print.agenda", "Print calendar…", "Imprimir calendario…", "print", Group::App, "print agenda week semana imprimir"),
+    c(
+        "print.agenda",
+        "Print calendar…",
+        "Imprimir calendario…",
+        "print",
+        Group::App,
+        "print agenda week semana imprimir",
+    ),
     c(
         "print.agenda_pdf",
         "Save calendar as PDF…",

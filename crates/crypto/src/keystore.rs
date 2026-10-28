@@ -196,9 +196,7 @@ impl KeyStore {
     }
 
     fn passphrase(&self, name: &str) -> Result<String> {
-        self.vault
-            .get(name)?
-            .ok_or_else(|| CryptoError::Vault("falta la contraseña de la clave en el llavero".into()))
+        self.vault.get(name)?.ok_or_else(|| CryptoError::Vault("falta la contraseña de la clave en el llavero".into()))
     }
 
     // --- OpenPGP propio ------------------------------------------------------------------------
@@ -226,7 +224,12 @@ impl KeyStore {
         self.vault.set(&pgp_secret_name(&fpr), pw)?;
         let mut st = self.lock();
         st.own_pgp.retain(|k| k.fingerprint != fpr);
-        st.own_pgp.push(OwnPgp { fingerprint: fpr.clone(), addrs, secret: openpgp::armor_secret(key)?, created: Utc::now() });
+        st.own_pgp.push(OwnPgp {
+            fingerprint: fpr.clone(),
+            addrs,
+            secret: openpgp::armor_secret(key)?,
+            created: Utc::now(),
+        });
         self.save(&st)?;
         Ok(fpr)
     }
@@ -334,7 +337,8 @@ impl KeyStore {
                 Learned::Same
             }
             Some(p) => {
-                let replace = source != KeySource::Autocrypt || (p.source == KeySource::Autocrypt && when >= p.last_seen);
+                let replace =
+                    source != KeySource::Autocrypt || (p.source == KeySource::Autocrypt && when >= p.last_seen);
                 if replace {
                     *p = Peer {
                         addr: a.clone(),
@@ -394,7 +398,8 @@ impl KeyStore {
             let st = self.lock();
             (st.peers.values().map(|p| p.key.clone()).collect(), st.own_pgp.iter().map(|k| k.secret.clone()).collect())
         };
-        let mut out: Vec<SignedPublicKey> = peers.iter().filter_map(|k| openpgp::parse_public(k.as_bytes()).ok()).collect();
+        let mut out: Vec<SignedPublicKey> =
+            peers.iter().filter_map(|k| openpgp::parse_public(k.as_bytes()).ok()).collect();
         out.extend(own.iter().filter_map(|k| openpgp::parse_secret(k.as_bytes()).ok()).map(|k| k.to_public_key()));
         out
     }
@@ -440,15 +445,21 @@ impl KeyStore {
     /// Identidad S/MIME propia de `addr`.
     pub fn own_smime(&self, addr: &str) -> Option<smime::Identity> {
         let a = norm(addr);
-        let (fpr, p12) =
-            self.lock().own_smime.iter().rev().find(|k| k.addrs.contains(&a)).map(|k| (k.fingerprint.clone(), k.p12.clone()))?;
+        let (fpr, p12) = self
+            .lock()
+            .own_smime
+            .iter()
+            .rev()
+            .find(|k| k.addrs.contains(&a))
+            .map(|k| (k.fingerprint.clone(), k.p12.clone()))?;
         let pw = self.passphrase(&smime_secret_name(&fpr)).ok()?;
         smime::Identity::from_p12(&STANDARD.decode(p12).ok()?, &pw).ok()
     }
 
     /// Todas las identidades S/MIME propias (para descifrar).
     pub fn all_own_smime(&self) -> Vec<smime::Identity> {
-        let items: Vec<(String, String)> = self.lock().own_smime.iter().map(|k| (k.fingerprint.clone(), k.p12.clone())).collect();
+        let items: Vec<(String, String)> =
+            self.lock().own_smime.iter().map(|k| (k.fingerprint.clone(), k.p12.clone())).collect();
         items
             .into_iter()
             .filter_map(|(fpr, p12)| {
@@ -500,8 +511,14 @@ mod tests {
         let bob2 = openpgp::generate("Bob", "bob@x.org", "b").unwrap().to_public_key();
         let t0 = Utc::now();
         assert_eq!(ks.learn("bob@x.org", &bob, KeySource::Autocrypt, PreferEncrypt::Mutual, t0).unwrap(), Learned::New);
-        assert_eq!(ks.learn("BOB@x.org", &bob, KeySource::Autocrypt, PreferEncrypt::Mutual, t0).unwrap(), Learned::Same);
-        assert_eq!(ks.learn("bob@x.org", &bob2, KeySource::Autocrypt, PreferEncrypt::Mutual, t0).unwrap(), Learned::Changed);
+        assert_eq!(
+            ks.learn("BOB@x.org", &bob, KeySource::Autocrypt, PreferEncrypt::Mutual, t0).unwrap(),
+            Learned::Same
+        );
+        assert_eq!(
+            ks.learn("bob@x.org", &bob2, KeySource::Autocrypt, PreferEncrypt::Mutual, t0).unwrap(),
+            Learned::Changed
+        );
         assert_eq!(ks.peer("bob@x.org").unwrap().fingerprint, openpgp::fingerprint(&bob2));
 
         // Reabrir: todo sigue ahí.

@@ -86,7 +86,8 @@ mod tests {
 
     #[test]
     fn round_trip_and_rules() {
-        let h = AutocryptHeader { addr: "ana@x.com".into(), prefer_encrypt: PreferEncrypt::Mutual, keydata: vec![7; 300] };
+        let h =
+            AutocryptHeader { addr: "ana@x.com".into(), prefer_encrypt: PreferEncrypt::Mutual, keydata: vec![7; 300] };
         let v = h.to_value();
         assert!(v.lines().all(|l| l.len() <= 78));
         // Desplegado como lo entrega el lector de cabeceras.

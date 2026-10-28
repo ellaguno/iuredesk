@@ -30,9 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::draft::{AttachmentSource, Draft, OriginalKind};
 use crate::error::{ComposeError, Result};
-use crate::mime::{
-    BuildOptions, ContentResolver, MAX_MESSAGE_BYTES, StoreResolver, generate_message_id,
-};
+use crate::mime::{BuildOptions, ContentResolver, MAX_MESSAGE_BYTES, StoreResolver, generate_message_id};
 use crate::ops::{OP_SEND, OP_SYNC, SyncOp};
 use crate::transport::{OutgoingMessage, SendError, SendErrorKind, Transport};
 
@@ -457,7 +455,12 @@ impl Outbox {
             message_id: Some(entry.message_id.clone()),
             max_size: MAX_MESSAGE_BYTES,
         };
-        let built = match crate::secure::build_sealed(&queued.draft, &StoreResolver { store: &self.store }, &opts, self.sealer.as_ref()) {
+        let built = match crate::secure::build_sealed(
+            &queued.draft,
+            &StoreResolver { store: &self.store },
+            &opts,
+            self.sealer.as_ref(),
+        ) {
             Ok(b) => b,
             Err(e) => return self.fail(entry, SendError::new(SendErrorKind::Config, e.to_string()), now),
         };

@@ -73,8 +73,8 @@ fn check_size(bytes: &[u8]) -> Result<()> {
 pub fn parse_public(bytes: &[u8]) -> Result<SignedPublicKey> {
     check_size(bytes)?;
     guard("leer clave pública", || {
-        let (key, _) = SignedPublicKey::from_reader_single(Cursor::new(bytes))
-            .map_err(|e| CryptoError::BadKey(e.to_string()))?;
+        let (key, _) =
+            SignedPublicKey::from_reader_single(Cursor::new(bytes)).map_err(|e| CryptoError::BadKey(e.to_string()))?;
         key.verify_bindings().map_err(|e| CryptoError::BadKey(e.to_string()))?;
         Ok(key)
     })
@@ -84,8 +84,8 @@ pub fn parse_public(bytes: &[u8]) -> Result<SignedPublicKey> {
 pub fn parse_secret(bytes: &[u8]) -> Result<SignedSecretKey> {
     check_size(bytes)?;
     guard("leer clave secreta", || {
-        let (key, _) = SignedSecretKey::from_reader_single(Cursor::new(bytes))
-            .map_err(|e| CryptoError::BadKey(e.to_string()))?;
+        let (key, _) =
+            SignedSecretKey::from_reader_single(Cursor::new(bytes)).map_err(|e| CryptoError::BadKey(e.to_string()))?;
         key.verify_bindings().map_err(|e| CryptoError::BadKey(e.to_string()))?;
         Ok(key)
     })
@@ -201,8 +201,7 @@ fn verify_with(sig: &Signature, k: &SignedPublicKey, data: &[u8]) -> Option<std:
     fn attempt<K: VerifyingKey>(sig: &Signature, key: &K, data: &[u8], no_issuer: bool, found: &mut bool) -> bool {
         let fp = key.fingerprint();
         let id = key.legacy_key_id();
-        let mine =
-            sig.issuer_fingerprint().iter().any(|f| **f == fp) || sig.issuer_key_id().iter().any(|i| **i == id);
+        let mine = sig.issuer_fingerprint().iter().any(|f| **f == fp) || sig.issuer_key_id().iter().any(|i| **i == id);
         if !no_issuer && !mine {
             return false;
         }
@@ -259,7 +258,8 @@ pub fn verify_detached(signature: &[u8], data: &[u8], candidates: &[&SignedPubli
 pub fn verify_cleartext(armored: &str, candidates: &[&SignedPublicKey]) -> Result<(String, Verification)> {
     check_size(armored.as_bytes())?;
     guard("verificar texto firmado", || {
-        let (msg, _) = CleartextSignedMessage::from_string(armored).map_err(|e| CryptoError::Malformed(e.to_string()))?;
+        let (msg, _) =
+            CleartextSignedMessage::from_string(armored).map_err(|e| CryptoError::Malformed(e.to_string()))?;
         let text = msg.signed_text();
         let v = verify_signatures(msg.signatures(), text.as_bytes(), candidates);
         Ok((msg.text().to_string(), v))
@@ -325,8 +325,7 @@ pub fn decrypt(msg: &[u8], keys: &[(&SignedSecretKey, &str)], candidates: &[&Sig
         return Err(CryptoError::NoOwnKey(String::new()));
     }
     guard("descifrar", || {
-        let (parsed, _) =
-            Message::from_reader(Cursor::new(msg)).map_err(|e| CryptoError::Malformed(e.to_string()))?;
+        let (parsed, _) = Message::from_reader(Cursor::new(msg)).map_err(|e| CryptoError::Malformed(e.to_string()))?;
         let pws: Vec<Password> = keys.iter().map(|(_, p)| Password::from(*p)).collect();
         let mut m = parsed
             .decrypt_with_keys(pws.iter().collect(), keys.iter().map(|(k, _)| *k).collect())
@@ -406,7 +405,10 @@ mod tests {
 
     #[test]
     fn garbage_is_an_error() {
-        assert!(parse_public(b"-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nAAAA\n-----END PGP PUBLIC KEY BLOCK-----\n").is_err());
+        assert!(
+            parse_public(b"-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nAAAA\n-----END PGP PUBLIC KEY BLOCK-----\n")
+                .is_err()
+        );
         assert!(parse_public(&[0xff; 100]).is_err());
         assert!(verify_detached(b"nada", b"x", &[]).is_err());
         assert!(verify_cleartext("hola", &[]).is_err());

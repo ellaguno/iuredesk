@@ -104,12 +104,14 @@ fn verify_raw(spki: &SubjectPublicKeyInfoOwned, hash: Hash, msg: &[u8], sig: &[u
     if alg == rfc5912::ID_EC_PUBLIC_KEY {
         let curve = spki.algorithm.parameters.as_ref().and_then(|p| p.decode_as::<ObjectIdentifier>().ok());
         if curve == Some(rfc5912::SECP_256_R_1) {
-            let vk = p256::ecdsa::VerifyingKey::from_public_key_der(&der).map_err(|e| CryptoError::BadKey(e.to_string()))?;
+            let vk =
+                p256::ecdsa::VerifyingKey::from_public_key_der(&der).map_err(|e| CryptoError::BadKey(e.to_string()))?;
             let s = p256::ecdsa::Signature::from_der(sig).map_err(|e| CryptoError::Malformed(e.to_string()))?;
             return vk.verify_prehash(&h, &s).map_err(|_| CryptoError::Malformed("firma ECDSA no válida".into()));
         }
         if curve == Some(rfc5912::SECP_384_R_1) {
-            let vk = p384::ecdsa::VerifyingKey::from_public_key_der(&der).map_err(|e| CryptoError::BadKey(e.to_string()))?;
+            let vk =
+                p384::ecdsa::VerifyingKey::from_public_key_der(&der).map_err(|e| CryptoError::BadKey(e.to_string()))?;
             let s = p384::ecdsa::Signature::from_der(sig).map_err(|e| CryptoError::Malformed(e.to_string()))?;
             return vk.verify_prehash(&h, &s).map_err(|_| CryptoError::Malformed("firma ECDSA no válida".into()));
         }
@@ -318,7 +320,9 @@ pub fn cert_fingerprint(der: &[u8]) -> String {
 
 fn time_rfc3339(t: &x509_cert::time::Time) -> String {
     let secs = t.to_unix_duration().as_secs();
-    chrono::DateTime::<chrono::Utc>::from_timestamp(secs as i64, 0).map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default()
+    chrono::DateTime::<chrono::Utc>::from_timestamp(secs as i64, 0)
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
 }
 
 fn valid_now(c: &Certificate, now: SystemTime) -> bool {
@@ -402,7 +406,13 @@ fn parse_signed_data(cms_der: &[u8]) -> Result<SignedData> {
 /// Verifica un `SignedData`. `detached` = contenido externo (multipart/signed); si es `None`, el
 /// contenido va dentro (application/pkcs7-mime; smime-type=signed-data). `from` = dirección del
 /// campo «De» para comprobar que el firmante es quien dice ser.
-pub fn verify(cms_der: &[u8], detached: Option<&[u8]>, from: &str, trust: &TrustStore, now: SystemTime) -> Result<Verified> {
+pub fn verify(
+    cms_der: &[u8],
+    detached: Option<&[u8]>,
+    from: &str,
+    trust: &TrustStore,
+    now: SystemTime,
+) -> Result<Verified> {
     guard("verificar S/MIME", || {
         let sd = parse_signed_data(cms_der)?;
         let content = match detached {
@@ -411,7 +421,9 @@ pub fn verify(cms_der: &[u8], detached: Option<&[u8]>, from: &str, trust: &Trust
                 .encap_content_info
                 .econtent
                 .as_ref()
-                .map(|a| a.decode_as::<OctetString>().map(|o| o.as_bytes().to_vec()).unwrap_or_else(|_| a.value().to_vec()))
+                .map(|a| {
+                    a.decode_as::<OctetString>().map(|o| o.as_bytes().to_vec()).unwrap_or_else(|_| a.value().to_vec())
+                })
                 .ok_or_else(|| CryptoError::Malformed("la firma no trae contenido".into()))?,
         };
         let certs = certs_of(&sd);
@@ -488,7 +500,8 @@ impl Identity {
                 ks.private_key_chain().ok_or_else(|| CryptoError::BadKey("el archivo no trae clave privada".into()))?;
             let certs: Vec<Certificate> =
                 chain.chain().iter().filter_map(|c| Certificate::from_der(c.as_der()).ok()).collect();
-            let cert = certs.first().cloned().ok_or_else(|| CryptoError::BadKey("el archivo no trae certificado".into()))?;
+            let cert =
+                certs.first().cloned().ok_or_else(|| CryptoError::BadKey("el archivo no trae certificado".into()))?;
             let key = if let Ok(k) = RsaPrivateKey::from_pkcs8_der(chain.key()) {
                 PrivKey::Rsa(Box::new(k))
             } else if let Ok(k) = p256::ecdsa::SigningKey::from_pkcs8_der(chain.key()) {
@@ -614,11 +627,20 @@ fn aes_cbc_decrypt(oid: &ObjectIdentifier, key: &[u8], iv: &[u8], data: &[u8]) -
     let bad = |_| CryptoError::Malformed("clave de contenido no válida".into());
     let pad = |_| CryptoError::Malformed("relleno no válido".into());
     if *oid == rfc5911::ID_AES_128_CBC {
-        cbc::Decryptor::<aes::Aes128>::new_from_slices(key, iv).map_err(bad)?.decrypt_padded_vec_mut::<Pkcs7>(data).map_err(pad)
+        cbc::Decryptor::<aes::Aes128>::new_from_slices(key, iv)
+            .map_err(bad)?
+            .decrypt_padded_vec_mut::<Pkcs7>(data)
+            .map_err(pad)
     } else if *oid == rfc5911::ID_AES_192_CBC {
-        cbc::Decryptor::<aes::Aes192>::new_from_slices(key, iv).map_err(bad)?.decrypt_padded_vec_mut::<Pkcs7>(data).map_err(pad)
+        cbc::Decryptor::<aes::Aes192>::new_from_slices(key, iv)
+            .map_err(bad)?
+            .decrypt_padded_vec_mut::<Pkcs7>(data)
+            .map_err(pad)
     } else if *oid == rfc5911::ID_AES_256_CBC {
-        cbc::Decryptor::<aes::Aes256>::new_from_slices(key, iv).map_err(bad)?.decrypt_padded_vec_mut::<Pkcs7>(data).map_err(pad)
+        cbc::Decryptor::<aes::Aes256>::new_from_slices(key, iv)
+            .map_err(bad)?
+            .decrypt_padded_vec_mut::<Pkcs7>(data)
+            .map_err(pad)
     } else {
         Err(CryptoError::Unsupported(format!("cifrado {oid} (se admite AES-CBC)")))
     }

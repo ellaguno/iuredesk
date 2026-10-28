@@ -31,7 +31,8 @@ fn autocrypt_then_signed_then_encrypted() {
     beto.keys.generate_pgp("Beto", "beto@cliente.mx").unwrap();
 
     // 1) Primer correo de Ana, firmado: Beto ve «Clave nueva» y aprende su clave por Autocrypt.
-    let m1 = ana.seal(&msg("Ana <ana@despacho.mx>", "beto@cliente.mx", "Hola"), &["beto@cliente.mx".into()], SIGN).unwrap();
+    let m1 =
+        ana.seal(&msg("Ana <ana@despacho.mx>", "beto@cliente.mx", "Hola"), &["beto@cliente.mx".into()], SIGN).unwrap();
     let t1 = String::from_utf8_lossy(&m1).to_string();
     assert!(t1.contains("Autocrypt: addr=ana@despacho.mx; prefer-encrypt=mutual; keydata="));
     assert!(t1.contains("multipart/signed; micalg=pgp-sha256"));
@@ -47,7 +48,8 @@ fn autocrypt_then_signed_then_encrypted() {
     assert!(d1.starts_with("From: Ana <ana@despacho.mx>"));
 
     // 2) Segundo correo firmado: ahora «Verificado».
-    let m2 = ana.seal(&msg("Ana <ana@despacho.mx>", "beto@cliente.mx", "Otra"), &["beto@cliente.mx".into()], SIGN).unwrap();
+    let m2 =
+        ana.seal(&msg("Ana <ana@despacho.mx>", "beto@cliente.mx", "Otra"), &["beto@cliente.mx".into()], SIGN).unwrap();
     let r2 = beto.open(&m2).report.unwrap();
     assert_eq!(r2.signature.as_ref().unwrap().state, SignatureState::Verified);
     assert_eq!(r2.tone(), Tone::Good);
@@ -55,12 +57,15 @@ fn autocrypt_then_signed_then_encrypted() {
     // 3) Beto responde (Ana aprende su clave) y ya pueden cifrar en los dos sentidos.
     let caps = ana.capabilities("ana@despacho.mx", &["beto@cliente.mx".into()]);
     assert!(caps.can_sign && !caps.can_encrypt && caps.missing == vec!["beto@cliente.mx".to_string()]);
-    let reply = beto.seal(&msg("beto@cliente.mx", "ana@despacho.mx", "Recibido"), &["ana@despacho.mx".into()], SIGN).unwrap();
+    let reply =
+        beto.seal(&msg("beto@cliente.mx", "ana@despacho.mx", "Recibido"), &["ana@despacho.mx".into()], SIGN).unwrap();
     ana.open(&reply);
     let caps = ana.capabilities("ana@despacho.mx", &["beto@cliente.mx".into()]);
     assert!(caps.can_encrypt && caps.all_mutual, "{caps:?}");
 
-    let m3 = ana.seal(&msg("Ana <ana@despacho.mx>", "beto@cliente.mx", "Confidencial"), &["beto@cliente.mx".into()], BOTH).unwrap();
+    let m3 = ana
+        .seal(&msg("Ana <ana@despacho.mx>", "beto@cliente.mx", "Confidencial"), &["beto@cliente.mx".into()], BOTH)
+        .unwrap();
     let t3 = String::from_utf8_lossy(&m3).to_string();
     assert!(t3.contains("multipart/encrypted; protocol=\"application/pgp-encrypted\""));
     assert!(!t3.contains("Confidencial"), "el texto no viaja en claro");
@@ -170,7 +175,8 @@ async fn fake_wkd(path: String, body: Vec<u8>) -> String {
             let req = String::from_utf8_lossy(&buf[..n]).to_string();
             let line = req.lines().next().unwrap_or("").to_string();
             let resp = if line.contains(&path) {
-                let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).into_bytes();
+                let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len())
+                    .into_bytes();
                 r.extend_from_slice(&body);
                 r
             } else {

@@ -56,9 +56,8 @@ pub fn init(dir: Option<&Path>, secrets: Arc<dyn SecretStore>) {
     }
     let vault: Arc<dyn Vault> = Arc::new(SecretVault(secrets));
     let crypto = match dir {
-        Some(d) => Crypto::open_dir(d, Arc::clone(&vault)).unwrap_or_else(|_| {
-            Crypto::in_memory(Arc::new(MemoryVault::default()), TrustStore::system())
-        }),
+        Some(d) => Crypto::open_dir(d, Arc::clone(&vault))
+            .unwrap_or_else(|_| Crypto::in_memory(Arc::new(MemoryVault::default()), TrustStore::system())),
         None => Crypto::in_memory(vault, TrustStore::empty()),
     };
     install(Arc::new(crypto));
@@ -84,10 +83,7 @@ impl MessageSealer for Sealer {
     fn seal(&self, raw: &[u8], recipients: &[String], req: SecurityRequest) -> Result<Vec<u8>, (String, String)> {
         let Some(c) = get() else {
             if req.sign || req.encrypt {
-                return Err((
-                    "El correo seguro no está disponible.".into(),
-                    "Secure mail isn't available.".into(),
-                ));
+                return Err(("El correo seguro no está disponible.".into(), "Secure mail isn't available.".into()));
             }
             return Ok(raw.to_vec());
         };
@@ -107,7 +103,8 @@ mod tests {
         let c = get().unwrap();
         c.keys.generate_pgp("Ana", "ana-sealtest@x.mx").unwrap();
         let raw = b"From: ana-sealtest@x.mx\r\nTo: ana-sealtest@x.mx\r\nSubject: s\r\nContent-Type: text/plain\r\n\r\nhola\r\n";
-        let sealed = Sealer.seal(raw, &["ana-sealtest@x.mx".into()], SecurityRequest { sign: true, encrypt: true }).unwrap();
+        let sealed =
+            Sealer.seal(raw, &["ana-sealtest@x.mx".into()], SecurityRequest { sign: true, encrypt: true }).unwrap();
         assert!(!String::from_utf8_lossy(&sealed).contains("hola"));
         let body = crate::body::parse(&sealed);
         assert!(body.text.contains("hola"));

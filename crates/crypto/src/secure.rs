@@ -147,7 +147,8 @@ impl Crypto {
         let use_smime = match (pgp_own.is_some(), smime_own.is_some()) {
             (true, true) => {
                 req.prefer_smime
-                    || (req.encrypt && recipients.iter().all(|r| self.keys.smime_cert_for(r).is_some())
+                    || (req.encrypt
+                        && recipients.iter().all(|r| self.keys.smime_cert_for(r).is_some())
                         && !recipients.iter().all(|r| self.keys.public_key_for(r).is_some()))
             }
             (false, true) => true,
@@ -526,8 +527,10 @@ fn invalid(e: String) -> SignatureInfo {
 fn decrypt_error_text(e: &CryptoError) -> (String, String) {
     match e {
         CryptoError::NoOwnKey(_) => (
-            "No tienes la clave con la que se cifró este mensaje. Importa tu clave privada en Ajustes › Seguridad.".into(),
-            "You don't have the key this message was encrypted to. Import your private key in Settings › Security.".into(),
+            "No tienes la clave con la que se cifró este mensaje. Importa tu clave privada en Ajustes › Seguridad."
+                .into(),
+            "You don't have the key this message was encrypted to. Import your private key in Settings › Security."
+                .into(),
         ),
         e => (e.message(true), e.message(false)),
     }

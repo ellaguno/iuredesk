@@ -65,7 +65,8 @@ fn blank_row(rgba: &[u8], width: usize, y: usize) -> bool {
     let start = y.saturating_mul(width).saturating_mul(4);
     let Some(row) = rgba.get(start..start.saturating_add(width.saturating_mul(4))) else { return false };
     let Some(first) = row.get(..3) else { return false };
-    let (r, g, b) = (first.first().copied().unwrap_or(0), first.get(1).copied().unwrap_or(0), first.get(2).copied().unwrap_or(0));
+    let (r, g, b) =
+        (first.first().copied().unwrap_or(0), first.get(1).copied().unwrap_or(0), first.get(2).copied().unwrap_or(0));
     row.chunks_exact(4).all(|p| {
         let d = |a: Option<&u8>, b: u8| a.copied().unwrap_or(0).abs_diff(b) < 8;
         d(p.first(), r) && d(p.get(1), g) && d(p.get(2), b)

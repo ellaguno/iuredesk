@@ -12,6 +12,7 @@ use rsa::RsaPrivateKey;
 use rsa::pkcs8::EncodePrivateKey;
 use sha2::Sha256;
 use spki::EncodePublicKey;
+use x509_cert::Certificate;
 use x509_cert::builder::{Builder, CertificateBuilder, Profile};
 use x509_cert::der::asn1::Ia5String;
 use x509_cert::ext::pkix::SubjectAltName;
@@ -20,7 +21,6 @@ use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::SubjectPublicKeyInfoOwned;
 use x509_cert::time::Validity;
-use x509_cert::Certificate;
 
 struct Ca {
     key: RsaPrivateKey,
@@ -82,7 +82,11 @@ fn p12(key: &RsaPrivateKey, cert: &Certificate, ca: &Ca, password: &str) -> Vec<
     let mut ks = p12_keystore::KeyStore::new();
     ks.add_entry(
         "yo",
-        p12_keystore::KeyStoreEntry::PrivateKeyChain(p12_keystore::PrivateKeyChain::new(pkcs8.as_bytes(), [1u8; 20], chain)),
+        p12_keystore::KeyStoreEntry::PrivateKeyChain(p12_keystore::PrivateKeyChain::new(
+            pkcs8.as_bytes(),
+            [1u8; 20],
+            chain,
+        )),
     );
     ks.writer(password).write().unwrap()
 }
@@ -103,8 +107,9 @@ fn p12_sign_verify_trusted_and_untrusted() {
     let sender = Crypto::in_memory(Arc::new(MemoryVault::default()), TrustStore::empty());
     let info = sender.keys.import_p12(&file, "secreto").unwrap();
     assert_eq!(info.addrs, vec!["ana@despacho.mx"]);
-    let sealed =
-        sender.seal(MSG, &["beto@cliente.mx".into()], SealRequest { sign: true, encrypt: false, prefer_smime: false }).unwrap();
+    let sealed = sender
+        .seal(MSG, &["beto@cliente.mx".into()], SealRequest { sign: true, encrypt: false, prefer_smime: false })
+        .unwrap();
     let text = String::from_utf8_lossy(&sealed);
     assert!(text.contains("application/pkcs7-signature") && text.contains("micalg=sha-256"));
 

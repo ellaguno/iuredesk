@@ -60,9 +60,10 @@ impl CryptoError {
                     v.join(", ")
                 ),
             ),
-            CryptoError::BadKey(e) => {
-                (format!("The key or certificate is not valid ({e})."), format!("La clave o el certificado no es válido ({e})."))
-            }
+            CryptoError::BadKey(e) => (
+                format!("The key or certificate is not valid ({e})."),
+                format!("La clave o el certificado no es válido ({e})."),
+            ),
             CryptoError::Malformed(e) => {
                 (format!("The protected message is damaged ({e})."), format!("El mensaje protegido está dañado ({e})."))
             }
@@ -75,7 +76,10 @@ impl CryptoError {
                 format!("The system keyring couldn't be used ({e})."),
                 format!("No se pudo usar el llavero del sistema ({e})."),
             ),
-            CryptoError::Io(e) => (format!("A key file couldn't be read or saved ({e})."), format!("No se pudo leer o guardar un archivo de claves ({e}).")),
+            CryptoError::Io(e) => (
+                format!("A key file couldn't be read or saved ({e})."),
+                format!("No se pudo leer o guardar un archivo de claves ({e})."),
+            ),
             CryptoError::Network(e) => (
                 format!("The key server couldn't be reached ({e})."),
                 format!("No se pudo consultar el servidor de claves ({e})."),

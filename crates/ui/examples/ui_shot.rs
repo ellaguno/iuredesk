@@ -240,7 +240,13 @@ fn main() -> Result<(), String> {
             }
             for a in ["carmen.brown@example.net", "pablo@despacho.example.org"] {
                 if let Ok(k) = openpgp::generate("", a, "x") {
-                    let _ = c.keys.learn(a, &k.to_public_key(), KeySource::Autocrypt, PreferEncrypt::Mutual, chrono::Utc::now());
+                    let _ = c.keys.learn(
+                        a,
+                        &k.to_public_key(),
+                        KeySource::Autocrypt,
+                        PreferEncrypt::Mutual,
+                        chrono::Utc::now(),
+                    );
                 }
             }
         }

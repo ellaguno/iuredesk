@@ -42,7 +42,7 @@ struct State {
 type Shared = Arc<Mutex<State>>;
 
 fn shared(ctx: &Context) -> Shared {
-    ctx.data_mut(|d| d.get_temp_or_insert_with(egui::Id::new("iuredesk-security-ui"), Shared::default).clone())
+    ctx.data_mut(|d| d.get_temp_mut_or_insert_with(egui::Id::unique("iuredesk-security-ui"), Shared::default).clone())
 }
 
 fn sender(st: &mut State) -> Sender<Msg> {
@@ -66,7 +66,7 @@ fn tone_color(ui: &Ui, t: Tone) -> egui::Color32 {
 }
 
 /// Insignia de seguridad bajo la cabecera del mensaje.
-pub fn badge(ui: &mut Ui, id: impl std::hash::Hash, report: Option<&SecurityReport>) {
+pub fn badge(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, report: Option<&SecurityReport>) {
     let Some(r) = report else { return };
     let es = iuredesk_engine::lang::spanish();
     let color = tone_color(ui, r.tone());
@@ -76,7 +76,7 @@ pub fn badge(ui: &mut Ui, id: impl std::hash::Hash, report: Option<&SecurityRepo
         Tone::Warning => Icon::Warning,
         Tone::Bad => Icon::Alert,
     };
-    let key = egui::Id::new(("security-details", id));
+    let key = egui::Id::unique(("security-details", id));
     let mut open = ui.data(|d| d.get_temp::<bool>(key)).unwrap_or(false);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -113,8 +113,14 @@ pub struct ComposeSecurity {
 /// «Firmar» / «Cifrar» en la barra inferior del redactor.
 pub fn compose_toggles(ui: &mut Ui, cd: &mut ComposeDraft, st: &mut ComposeSecurity) {
     let from = cd.draft.identity.email.trim().to_ascii_lowercase();
-    let rcpts: Vec<String> =
-        cd.draft.to.iter().chain(&cd.draft.cc).chain(&cd.draft.bcc).map(|m| m.addr.trim().to_ascii_lowercase()).collect();
+    let rcpts: Vec<String> = cd
+        .draft
+        .to
+        .iter()
+        .chain(&cd.draft.cc)
+        .chain(&cd.draft.bcc)
+        .map(|m| m.addr.trim().to_ascii_lowercase())
+        .collect();
     let key = format!("{from}|{}", rcpts.join(","));
     if st.cache.as_ref().is_none_or(|(k, _)| *k != key) {
         st.cache = Some((key, security::capabilities(&from, &rcpts)));
@@ -131,9 +137,15 @@ pub fn compose_toggles(ui: &mut Ui, cd: &mut ComposeDraft, st: &mut ComposeSecur
         sec.encrypt = false;
     }
     let sign_tip = if caps.can_sign {
-        pick("Add a digital signature so recipients can check it's from you", "Agrega una firma digital para que comprueben que es tuyo")
+        pick(
+            "Add a digital signature so recipients can check it's from you",
+            "Agrega una firma digital para que comprueben que es tuyo",
+        )
     } else {
-        pick("Create or import a key in Encryption keys… (Ctrl+K)", "Crea o importa una clave en «Claves de cifrado…» (Ctrl+K)")
+        pick(
+            "Create or import a key in Encryption keys… (Ctrl+K)",
+            "Crea o importa una clave en «Claves de cifrado…» (Ctrl+K)",
+        )
     };
     let enc_tip = if caps.can_encrypt {
         pick("Only the recipients will be able to read it", "Solo los destinatarios podrán leerlo")
@@ -171,14 +183,13 @@ fn message_print(app: &mut DeskApp) -> Option<(String, String, PrintOptions)> {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let mut headers = vec![
-        (pick("From", "De").to_string(), list(&env.from)),
-        (pick("To", "Para").to_string(), list(&env.to)),
-    ];
+    let mut headers =
+        vec![(pick("From", "De").to_string(), list(&env.from)), (pick("To", "Para").to_string(), list(&env.to))];
     if !env.cc.is_empty() {
         headers.push((pick("Cc", "CC").to_string(), list(&env.cc)));
     }
-    headers.push((pick("Date", "Fecha").to_string(), env.date.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string()));
+    headers
+        .push((pick("Date", "Fecha").to_string(), env.date.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string()));
     headers.push((pick("Subject", "Asunto").to_string(), env.subject.clone()));
     if let Some(r) = &body.security {
         headers.push((pick("Security", "Seguridad").to_string(), r.title(iuredesk_engine::lang::spanish())));
@@ -204,7 +215,11 @@ fn message_print(app: &mut DeskApp) -> Option<(String, String, PrintOptions)> {
 /// Carta en EE. UU., Canadá y México; A4 en el resto (por la configuración regional).
 fn paper() -> Paper {
     let loc = std::env::var("LC_PAPER").or_else(|_| std::env::var("LANG")).unwrap_or_default();
-    if ["_US", "_CA", "_MX", "_PH", "_CL", "_CO", "_VE"].iter().any(|r| loc.contains(r)) { Paper::Letter } else { Paper::A4 }
+    if ["_US", "_CA", "_MX", "_PH", "_CL", "_CO", "_VE"].iter().any(|r| loc.contains(r)) {
+        Paper::Letter
+    } else {
+        Paper::A4
+    }
 }
 
 fn file_stem(s: &str) -> String {
@@ -242,7 +257,12 @@ fn agenda_print(app: &mut DeskApp) -> (String, String, PrintOptions) {
     let mut occ = app.session.occurrences(from, until).to_vec();
     occ.sort_by_key(|o| o.start);
     let es = iuredesk_engine::lang::spanish();
-    let title = format!("{} {} – {}", pick("Calendar", "Calendario"), start.format("%Y-%m-%d"), (start + Duration::days(days - 1)).format("%Y-%m-%d"));
+    let title = format!(
+        "{} {} – {}",
+        pick("Calendar", "Calendario"),
+        start.format("%Y-%m-%d"),
+        (start + Duration::days(days - 1)).format("%Y-%m-%d")
+    );
     let mut body = format!("<h2>{}</h2>", pdf::escape(&title));
     for i in 0..days {
         let day = start + Duration::days(i);
@@ -274,9 +294,14 @@ fn agenda_print(app: &mut DeskApp) -> (String, String, PrintOptions) {
             let when = if o.all_day {
                 pick("All day", "Todo el día").to_string()
             } else {
-                format!("{}–{}", o.start.with_timezone(&Local).format("%H:%M"), o.end.with_timezone(&Local).format("%H:%M"))
+                format!(
+                    "{}–{}",
+                    o.start.with_timezone(&Local).format("%H:%M"),
+                    o.end.with_timezone(&Local).format("%H:%M")
+                )
             };
-            let loc = if o.location.trim().is_empty() { String::new() } else { format!(" · {}", pdf::escape(&o.location)) };
+            let loc =
+                if o.location.trim().is_empty() { String::new() } else { format!(" · {}", pdf::escape(&o.location)) };
             body.push_str(&format!(
                 "<p style=\"margin:2px 0\"><span style=\"display:inline-block;width:110px;color:#444\">{when}</span><b>{}</b>{loc}</p>",
                 pdf::escape(&o.summary)
@@ -387,18 +412,27 @@ pub fn command(app: &mut DeskApp, ctx: &Context, id: &str) {
 // --- Ventana de claves ---------------------------------------------------------------------------
 
 fn import_file(path: &std::path::Path, password: &str) -> Notice {
-    let Some(c) = security::get() else { return Notice::info("Secure mail isn't available.", "El correo seguro no está disponible.") };
+    let Some(c) = security::get() else {
+        return Notice::info("Secure mail isn't available.", "El correo seguro no está disponible.");
+    };
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => {
-            return Notice::error(iuredesk_engine::Text::new(format!("Couldn't read the file ({e})."), format!("No se pudo leer el archivo ({e}).")));
+            return Notice::error(iuredesk_engine::Text::new(
+                format!("Couldn't read the file ({e})."),
+                format!("No se pudo leer el archivo ({e})."),
+            ));
         }
     };
     let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    let fail = |e: iuredesk_engine::iuredesk_crypto::CryptoError| Notice::error(iuredesk_engine::Text::new(e.message(false), e.message(true)));
+    let fail = |e: iuredesk_engine::iuredesk_crypto::CryptoError| {
+        Notice::error(iuredesk_engine::Text::new(e.message(false), e.message(true)))
+    };
     if ext == "p12" || ext == "pfx" {
         return match c.keys.import_p12(&data, password) {
-            Ok(i) => Notice::info(format!("Certificate added: {}", i.label), format!("Certificado agregado: {}", i.label)),
+            Ok(i) => {
+                Notice::info(format!("Certificate added: {}", i.label), format!("Certificado agregado: {}", i.label))
+            }
             Err(e) => fail(e),
         };
     }
@@ -410,14 +444,18 @@ fn import_file(path: &std::path::Path, password: &str) -> Notice {
         };
     }
     match c.keys.import_public(&data) {
-        Ok(a) => Notice::info(format!("Key added for {}", a.join(", ")), format!("Clave agregada para {}", a.join(", "))),
+        Ok(a) => {
+            Notice::info(format!("Key added for {}", a.join(", ")), format!("Clave agregada para {}", a.join(", ")))
+        }
         Err(e) => fail(e),
     }
 }
 
 fn needs_password(path: &std::path::Path) -> bool {
     let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    ext == "p12" || ext == "pfx" || std::fs::read(path).is_ok_and(|d| String::from_utf8_lossy(&d).contains("PRIVATE KEY BLOCK"))
+    ext == "p12"
+        || ext == "pfx"
+        || std::fs::read(path).is_ok_and(|d| String::from_utf8_lossy(&d).contains("PRIVATE KEY BLOCK"))
 }
 
 /// Cada cuadro: resultados de fondo y la ventana de claves.
@@ -464,19 +502,24 @@ pub fn frame(app: &mut DeskApp, ctx: &Context) {
             ui.label(RichText::new(pick("Your keys", "Tus claves")).strong());
             let own = c.keys.own_keys();
             if own.is_empty() {
-                ui.label(RichText::new(pick(
-                    "You have no keys yet. Create one to sign and receive encrypted mail.",
-                    "Aún no tienes claves. Crea una para firmar y recibir correo cifrado.",
-                )).color(col.text_muted));
+                ui.label(
+                    RichText::new(pick(
+                        "You have no keys yet. Create one to sign and receive encrypted mail.",
+                        "Aún no tienes claves. Crea una para firmar y recibir correo cifrado.",
+                    ))
+                    .color(col.text_muted),
+                );
             }
             for k in &own {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(k.technology.label()).color(col.text_muted));
                     ui.label(&k.label);
                     ui.label(
-                        RichText::new(iuredesk_engine::iuredesk_crypto::openpgp::pretty_fingerprint(k.fingerprint.get(..40).unwrap_or(&k.fingerprint)))
-                            .monospace()
-                            .small(),
+                        RichText::new(iuredesk_engine::iuredesk_crypto::openpgp::pretty_fingerprint(
+                            k.fingerprint.get(..40).unwrap_or(&k.fingerprint),
+                        ))
+                        .monospace()
+                        .small(),
                     );
                 });
             }
@@ -486,7 +529,10 @@ pub fn frame(app: &mut DeskApp, ctx: &Context) {
                 let has = own.iter().any(|k| k.addrs.contains(&addr));
                 ui.horizontal(|ui| {
                     if !has {
-                        if ui.button(format!("{} {addr}", pick("Create OpenPGP key for", "Crear clave OpenPGP para"))).clicked() {
+                        if ui
+                            .button(format!("{} {addr}", pick("Create OpenPGP key for", "Crear clave OpenPGP para")))
+                            .clicked()
+                        {
                             let (name, a) = (ident.name.clone(), addr.clone());
                             actions.push(Box::new(move |app: &mut DeskApp| {
                                 let n = match security::get().map(|c| c.keys.generate_pgp(&name, &a)) {
@@ -494,13 +540,18 @@ pub fn frame(app: &mut DeskApp, ctx: &Context) {
                                         format!("Key created for {a}. It travels with your messages (Autocrypt)."),
                                         format!("Clave creada para {a}. Viaja con tus mensajes (Autocrypt)."),
                                     ),
-                                    Some(Err(e)) => Notice::error(iuredesk_engine::Text::new(e.message(false), e.message(true))),
+                                    Some(Err(e)) => {
+                                        Notice::error(iuredesk_engine::Text::new(e.message(false), e.message(true)))
+                                    }
                                     None => return,
                                 };
                                 app.notice(n);
                             }));
                         }
-                    } else if ui.button(format!("{} {addr}…", pick("Export public key of", "Exportar clave pública de"))).clicked() {
+                    } else if ui
+                        .button(format!("{} {addr}…", pick("Export public key of", "Exportar clave pública de")))
+                        .clicked()
+                    {
                         let a = addr.clone();
                         actions.push(Box::new(move |app: &mut DeskApp| {
                             let Some(armored) = security::get().and_then(|c| c.keys.export_pgp_public(&a).ok()) else {
@@ -518,14 +569,20 @@ pub fn frame(app: &mut DeskApp, ctx: &Context) {
                 });
             }
             ui.add_space(6.0);
-            if ui.button(pick("Import key or certificate (.asc, .p12)…", "Importar clave o certificado (.asc, .p12)…")).clicked() {
+            if ui
+                .button(pick("Import key or certificate (.asc, .p12)…", "Importar clave o certificado (.asc, .p12)…"))
+                .clicked()
+            {
                 let ctx_tx = Some(import_tx.clone());
                 actions.push(Box::new(move |app: &mut DeskApp| {
                     let waker = app.session.waker();
                     app.session.runtime().spawn_blocking(move || {
                         let p = rfd::FileDialog::new()
                             .set_title(pick("Import key", "Importar clave"))
-                            .add_filter(pick("Keys and certificates", "Claves y certificados"), &["asc", "gpg", "pgp", "key", "p12", "pfx"])
+                            .add_filter(
+                                pick("Keys and certificates", "Claves y certificados"),
+                                &["asc", "gpg", "pgp", "key", "p12", "pfx"],
+                            )
                             .pick_file();
                         if let (Some(p), Some(tx)) = (p, ctx_tx) {
                             let _ = tx.send(Msg::Import(p));
@@ -536,16 +593,21 @@ pub fn frame(app: &mut DeskApp, ctx: &Context) {
             }
             ui.add_space(8.0);
             let peers = c.keys.peers();
-            ui.label(RichText::new(format!("{} ({})", pick("Contacts with a key", "Contactos con clave"), peers.len())).strong());
+            ui.label(
+                RichText::new(format!("{} ({})", pick("Contacts with a key", "Contactos con clave"), peers.len()))
+                    .strong(),
+            );
             egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
                 for p in peers.iter().take(500) {
                     ui.horizontal(|ui| {
                         ui.label(&p.addr);
                         ui.label(
-                            RichText::new(iuredesk_engine::iuredesk_crypto::openpgp::pretty_fingerprint(&p.fingerprint))
-                                .monospace()
-                                .small()
-                                .color(col.text_muted),
+                            RichText::new(iuredesk_engine::iuredesk_crypto::openpgp::pretty_fingerprint(
+                                &p.fingerprint,
+                            ))
+                            .monospace()
+                            .small()
+                            .color(col.text_muted),
                         );
                     });
                 }
@@ -555,7 +617,11 @@ pub fn frame(app: &mut DeskApp, ctx: &Context) {
         let mut done = false;
         let mut cancel = false;
         egui::Window::new(pick("Password", "Contraseña")).collapsible(false).show(ctx, |ui| {
-            ui.label(format!("{} {}", pick("Password of", "Contraseña de"), path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+            ui.label(format!(
+                "{} {}",
+                pick("Password of", "Contraseña de"),
+                path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+            ));
             let r = ui.add(egui::TextEdit::singleline(&mut s.password).password(true));
             if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 done = true;

@@ -22,7 +22,12 @@ pub struct SecurityRequest {
 /// pedida, para agregar la cabecera `Autocrypt`). Devuelve los bytes nuevos o un mensaje humano
 /// (español, inglés) que impide el envío.
 pub trait MessageSealer: Send + Sync {
-    fn seal(&self, raw: &[u8], recipients: &[String], req: SecurityRequest) -> std::result::Result<Vec<u8>, (String, String)>;
+    fn seal(
+        &self,
+        raw: &[u8],
+        recipients: &[String],
+        req: SecurityRequest,
+    ) -> std::result::Result<Vec<u8>, (String, String)>;
 }
 
 /// Construye el mensaje y, si hay sellador, lo protege.
@@ -34,7 +39,9 @@ pub fn build_sealed(
 ) -> Result<BuiltMessage> {
     let mut built = build_message(draft, resolver, opts)?;
     if let Some(s) = sealer {
-        built.raw = s.seal(&built.raw, &built.recipients, draft.security).map_err(|(es, en)| ComposeError::Security { es, en })?;
+        built.raw = s
+            .seal(&built.raw, &built.recipients, draft.security)
+            .map_err(|(es, en)| ComposeError::Security { es, en })?;
     } else if draft.security.sign || draft.security.encrypt {
         return Err(ComposeError::Security {
             es: "El correo seguro no está disponible en esta sesión.".into(),
