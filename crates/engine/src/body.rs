@@ -33,7 +33,7 @@ pub struct MessageBody {
     /// Aviso sobre el cuerpo (p. ej. no se pudo descargar y solo hay extracto).
     pub note: Option<crate::lang::Text>,
     /// F5.4: firmado / cifrado (insignia de seguridad del panel de lectura).
-    pub security: Option<crate::security::SecurityReport>,
+    pub security: Option<Box<crate::security::SecurityReport>>,
 }
 
 fn clip_chars(s: &str, max: usize) -> String {
@@ -48,7 +48,7 @@ pub fn parse(raw: &[u8]) -> MessageBody {
     // F5.4: descifrar / verificar antes de leer el contenido.
     let opened = crate::security::open(raw);
     let mut body = parse_plain(&opened.display);
-    body.security = opened.report;
+    body.security = opened.report.map(Box::new);
     body
 }
 

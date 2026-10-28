@@ -447,7 +447,7 @@ pub fn verify(
             return Ok(Verified { info, signer_cert: None, content });
         }
         let from = from.trim().to_ascii_lowercase();
-        if !from.is_empty() && !emails.iter().any(|e| *e == from) {
+        if !from.is_empty() && !emails.contains(&from) {
             info.state = SignatureState::Mismatch;
             info.detail = Some(format!("certificado para {}", emails.join(", ")));
         } else if !valid_now(cert, now) {

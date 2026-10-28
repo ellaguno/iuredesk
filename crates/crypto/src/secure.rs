@@ -406,7 +406,8 @@ impl Crypto {
                     text.clone()
                 }
             }
-        } else if let Some(start) = enc_at {
+        } else {
+            let start = enc_at?;
             let end_marker = "-----END PGP MESSAGE-----";
             let end = text.get(start..)?.find(end_marker)?.saturating_add(start).saturating_add(end_marker.len());
             let block = text.get(start..end)?;
@@ -430,8 +431,6 @@ impl Crypto {
                     text.clone()
                 }
             }
-        } else {
-            return None;
         };
         *report = Some(r);
         let mut out = b"Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n".to_vec();

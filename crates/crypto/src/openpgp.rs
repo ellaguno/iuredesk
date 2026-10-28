@@ -147,6 +147,8 @@ pub fn user_label(k: &SignedPublicKey) -> Option<String> {
 }
 
 /// Clave con la que se firma: la subclave de firma si la hay; si no, la primaria.
+// `Box<&dyn …>`: rPGP solo implementa `SigningKey` (tamaño conocido) para esa forma.
+#[allow(clippy::redundant_allocation)]
 fn signing_key(k: &SignedSecretKey) -> Box<&dyn pgp::types::SigningKey> {
     for sub in &k.secret_subkeys {
         if sub.signatures.iter().any(|s| s.key_flags().sign()) {

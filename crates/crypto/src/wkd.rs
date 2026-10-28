@@ -134,7 +134,7 @@ impl WkdClient {
             let Some(body) = self.get(&url).await? else { continue };
             // La respuesta puede traer varias claves: vale la primera con un User ID de `email`.
             if let Ok(k) = openpgp::parse_public(&body) {
-                if openpgp::emails(&k).iter().any(|e| *e == want) {
+                if openpgp::emails(&k).contains(&want) {
                     return Ok(Some(k));
                 }
                 return Err(CryptoError::BadKey(format!("la clave publicada no es de {want}")));
