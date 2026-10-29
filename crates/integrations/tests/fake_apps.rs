@@ -164,7 +164,9 @@ fn iureditor_por_deep_link() {
     let path = opened.path.unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "# Hola");
     assert!(path.to_string_lossy().ends_with("Respuesta a Ana.md"));
-    assert!(opened.link.starts_with("iureditor://open?path=%2F"));
+    // Ruta absoluta codificada: «%2F…» en Unix, «C%3A%5C…» en Windows.
+    assert!(opened.link.starts_with("iureditor://open?path="), "{}", opened.link);
+    assert!(opened.link.len() > "iureditor://open?path=".len() + 3);
     assert_eq!(rec.urls.lock().unwrap().len(), 1);
     assert!(rec.launched.lock().unwrap().is_empty());
 
