@@ -293,6 +293,7 @@ fn full_editor(app: &mut DeskApp, ctx: &Context) {
     let Some(mut f) = app.calendar.editor.full.take() else { return };
     let mut open_flag = true;
     let mut action: Option<&'static str> = None;
+    let mut join: Option<String> = None;
     let title = if f.draft.id.is_some() { pick("Event", "Evento") } else { pick("New event", "Nuevo evento") };
     egui::Window::new(title)
         .id(egui::Id::unique("event-editor"))
@@ -304,6 +305,16 @@ fn full_editor(app: &mut DeskApp, ctx: &Context) {
         .max_height(ctx.content_rect().height() - 40.0)
         .default_pos(ctx.content_rect().center() - vec2(310.0, 320.0))
         .show(ctx, |ui| {
+            // «Unirse a la reunión» arriba y fuera de lo deshabilitado (vale en calendarios de
+            // solo lectura e invitaciones).
+            if let Some(j) = iuredesk_engine::today::meeting_link(&[&f.draft.location, &f.draft.description]) {
+                ui.horizontal(|ui| {
+                    if crate::meeting::join_button(ui, &j, true) {
+                        join = Some(j.url.clone());
+                    }
+                });
+                ui.add_space(4.0);
+            }
             egui::ScrollArea::vertical()
                 .auto_shrink([false, true])
                 .max_height(ctx.content_rect().height() - 150.0)
@@ -337,6 +348,9 @@ fn full_editor(app: &mut DeskApp, ctx: &Context) {
         });
     if !open_flag {
         action = Some("cancel");
+    }
+    if let Some(u) = join {
+        crate::meeting::join(app, ctx, &u);
     }
     match action {
         Some("cancel") => {}

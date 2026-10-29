@@ -430,6 +430,30 @@ impl DeskApp {
         }
     }
 
+    /// Asistente en «Configurar manualmente» como queda cuando no se encontró nada (capturas).
+    pub fn demo_manual_step(&mut self, email: &str) {
+        self.session.wizard_begin();
+        if let Some(w) = self.session.wizard.as_mut() {
+            w.email = email.to_string();
+        }
+        self.session.wizard_manual();
+        if let Some(w) = self.session.wizard.as_mut() {
+            w.message = Some(iuredesk_engine::Notice::info(
+                "We couldn't find the mail servers for that address. Enter them below (your provider has them) and test the connection.",
+                "No encontramos los servidores de correo de esa dirección. Escríbelos abajo (tu proveedor te los da) y prueba la conexión.",
+            ));
+        }
+    }
+
+    /// Asistente con una dirección que ya es de una cuenta (capturas).
+    pub fn demo_duplicate_step(&mut self, email: &str) {
+        self.session.wizard_begin();
+        if let Some(w) = self.session.wizard.as_mut() {
+            w.email = email.to_string();
+        }
+        self.session.wizard_check_existing();
+    }
+
     /// Ajustes abiertos en una sección (`accounts`, `appearance`…) y, con `edit`, el editor de
     /// esa cuenta (capturas).
     pub fn demo_settings(&mut self, section: &str, edit: Option<&str>) {

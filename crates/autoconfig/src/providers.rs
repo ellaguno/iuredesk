@@ -346,6 +346,94 @@ impl KnownProvider {
     }
 }
 
+/// Hospedaje de correo reconocible por su MX pero sin ISPDB ni autoconfig: solo sirve para
+/// **proponer** servidores en «Configurar manualmente» (confianza baja; el usuario los prueba).
+/// `{domain}` en un nombre se cambia por el dominio del correo.
+#[derive(Debug, Clone, Copy)]
+pub struct Hosting {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub mx_suffixes: &'static [&'static str],
+    pub imap: Host,
+    pub smtp: Host,
+}
+
+/// Hospedajes conocidos (servidores según su documentación pública).
+pub static HOSTINGS: &[Hosting] = &[
+    // Network Solutions / Web.com / Register.com: el MX es `mx*.carrierzone.com` y los servidores
+    // se publican con el dominio del cliente (`mail.<dominio>`).
+    Hosting {
+        id: "carrierzone",
+        name: "Network Solutions / Web.com",
+        mx_suffixes: &["carrierzone.com"],
+        imap: Host { host: "mail.{domain}", port: 993, security: Security::Tls },
+        smtp: Host { host: "mail.{domain}", port: 465, security: Security::Tls },
+    },
+    Hosting {
+        id: "godaddy",
+        name: "GoDaddy",
+        mx_suffixes: &["secureserver.net"],
+        imap: Host { host: "imap.secureserver.net", port: 993, security: Security::Tls },
+        smtp: Host { host: "smtpout.secureserver.net", port: 465, security: Security::Tls },
+    },
+    Hosting {
+        id: "hostinger",
+        name: "Hostinger",
+        mx_suffixes: &["hostinger.com"],
+        imap: Host { host: "imap.hostinger.com", port: 993, security: Security::Tls },
+        smtp: Host { host: "smtp.hostinger.com", port: 465, security: Security::Tls },
+    },
+];
+
+/// Puntuación de una propuesta de hospedaje (confianza baja: se ofrece en el formulario manual).
+pub const HOSTING_SCORE: u8 = 40;
+
+impl Hosting {
+    fn server(&self, protocol: Protocol, h: Host, email: &EmailAddress) -> ServerConfig {
+        ServerConfig {
+            protocol,
+            host: h.host.replace("{domain}", &email.domain),
+            port: h.port,
+            security: h.security,
+            auth: AuthMethod::Password,
+            username: email.address.clone(),
+        }
+    }
+
+    /// La propuesta para `email`.
+    pub fn candidate(&self, email: &EmailAddress) -> Candidate {
+        Candidate {
+            kind: AccountKind::Generic,
+            provider: Some(self.name.to_string()),
+            incoming: self.server(Protocol::Imap, self.imap, email),
+            outgoing: Some(self.server(Protocol::Smtp, self.smtp, email)),
+            source: Source::Mx,
+            score: HOSTING_SCORE,
+            caldav_url: None,
+            carddav_url: None,
+        }
+    }
+
+    /// Aviso para el usuario.
+    pub fn note(&self) -> Note {
+        Note {
+            en: format!(
+                "Your domain's mail is hosted by {}. We filled in its usual servers: check them with your provider.",
+                self.name
+            ),
+            es: format!(
+                "El correo de tu dominio lo aloja {}. Pusimos sus servidores habituales: confírmalos con tu proveedor.",
+                self.name
+            ),
+        }
+    }
+}
+
+/// Hospedaje por un nombre de MX.
+pub fn hosting_by_mx(mx: &str) -> Option<&'static Hosting> {
+    HOSTINGS.iter().find(|h| h.mx_suffixes.iter().any(|s| host_matches(mx, s)))
+}
+
 /// `es`, `com.mx`, `co.uk`: uno o dos niveles cortos.
 fn looks_like_public_suffix(rest: &str) -> bool {
     let labels: Vec<&str> = rest.split('.').collect();
@@ -399,6 +487,24 @@ mod tests {
         assert_eq!(by_mx("in1-smtp.messagingengine.com").map(|p| p.id), Some("fastmail"));
         assert!(by_mx("mx.example.com").is_none());
         assert!(by_mx("fakegoogle.com").is_none());
+    }
+
+    #[test]
+    fn hosting_by_mx_fills_the_domain() {
+        let e = EmailAddress::parse("ellaguno@confiabilidad.com.mx").unwrap();
+        let h = hosting_by_mx("mx1.carrierzone.com").unwrap();
+        let c = h.candidate(&e);
+        assert_eq!(c.incoming.host, "mail.confiabilidad.com.mx");
+        assert_eq!(c.incoming.port, 993);
+        assert_eq!(c.outgoing.as_ref().map(|o| o.host.as_str()), Some("mail.confiabilidad.com.mx"));
+        assert_eq!(c.confidence(), crate::Confidence::Low);
+        assert!(hosting_by_mx("mx.example.com").is_none());
+        assert!(hosting_by_mx("notcarrierzone.com").is_none());
+        for h in HOSTINGS {
+            for x in [h.imap, h.smtp] {
+                assert!(crate::xml::valid_host(&x.host.replace("{domain}", "example.com")), "{}", x.host);
+            }
+        }
     }
 
     #[test]

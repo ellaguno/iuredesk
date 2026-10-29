@@ -296,10 +296,18 @@ impl<H: Http + Sync, D: Dns + Sync> Discoverer<H, D> {
             }
             return Partial { candidates, notes, ..Default::default() };
         }
-        match base_domain(&first) {
+        let mut found = match base_domain(&first) {
             Some(base) if base != email.domain => self.ispdb(&base, email, Source::MxIspdb, 70).await,
             _ => Partial::default(),
+        };
+        // Sin ISPDB: un hospedaje conocido por su MX deja al menos una propuesta (confianza baja).
+        if found.candidates.is_empty()
+            && let Some(h) = providers::hosting_by_mx(&first)
+        {
+            found.candidates.push(h.candidate(email));
+            found.notes.push(h.note());
         }
+        found
     }
 
     async fn autodiscover(&self, email: &EmailAddress) -> Partial {

@@ -232,6 +232,18 @@ fn mx_base_domain_queries_ispdb() {
 }
 
 #[test]
+fn mx_of_a_known_hosting_proposes_its_servers() {
+    // confiabilidad.com.mx: MX en carrierzone (Network Solutions), sin ISPDB ni autoconfig.
+    let dns = FakeDns::default().mx("confiabilidad.com.mx", &[(10, "mx1.carrierzone.com")]);
+    let d = Discoverer::new(FakeHttp::default(), dns);
+    let r = run(&d, "ellaguno@confiabilidad.com.mx").unwrap();
+    let best = r.best().unwrap();
+    assert_eq!(best.incoming.host, "mail.confiabilidad.com.mx");
+    assert_eq!(best.confidence(), Confidence::Low);
+    assert!(r.notes.iter().any(|n| n.es.contains("Network Solutions")));
+}
+
+#[test]
 fn srv_records_rfc6186_and_rfc6764() {
     let dns = FakeDns::default()
         .srv("_imaps._tcp.example.org", "mail.example.org", 993)
