@@ -15,7 +15,11 @@
 //! - `icons`: rasteriza `assets/icons/*.svg` a PNG 16–1024, `.ico` y `.icns` (ver `icons.rs`).
 //! - `package <linux|windows|macos> [--tag vX.Y.Z] [--target <triple>]`: instaladores con
 //!   cargo-packager (`.deb` + AppImage, NSIS, `.app` + `.dmg`) en `dist/` (ver `package.rs` y
-//!   `docs/publicacion.md`).
+//!   `docs/publicacion.md`); los nombres siguen el esquema que espera iureapps
+//!   (`IureDesk_<versión>-<plataforma>.<ext>`).
+//! - `sign <archivos…>`: firma minisign `<archivo>.sig` (formato de Tauri, lo verifica iureapps) con
+//!   la clave de `IUREDESK_MINISIGN_KEY` (ver `sign.rs`).
+//! - `keygen <secreta> <pública>`: par minisign nuevo (la secreta con permisos 600, nunca se imprime).
 #![deny(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -27,6 +31,7 @@
 
 mod icons;
 mod package;
+mod sign;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -49,6 +54,8 @@ fn main() -> ExitCode {
         "icons" => icons::icons(),
         "package" => package::package(std::env::args().skip(2).collect()),
         "bench" => bench(std::env::args().skip(2).collect()),
+        "sign" => sign::sign(std::env::args().skip(2).collect()),
+        "keygen" => sign::keygen(std::env::args().skip(2).collect()),
         other => Err(format!("tarea desconocida: {other}")),
     };
     match r {

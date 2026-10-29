@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Tareas de mantenimiento: ci, layers, purity, licenses, notices, assets, dist, icons, package"
+description = "Tareas de mantenimiento: ci, layers, purity, licenses, notices, assets, dist, icons, package, sign, keygen"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,11 @@ tar = { workspace = true }
 resvg = { workspace = true }
 icns = { workspace = true }
 image = { workspace = true }
+minisign = { workspace = true }
+base64 = { workspace = true }
+
+[dev-dependencies]
+minisign-verify = { workspace = true }
 
 [lints]
 workspace = true
