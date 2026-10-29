@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chrono::{TimeZone, Utc};
 use chrono_tz::Tz;
-use iuredesk_mcp::{BridgeOptions, DeskMcp, ToolContext, ToolError, ToolOutput, dispatch, start_bridge};
+use iuredesk_mcp::{BridgeClient, BridgeOptions, DeskMcp, ToolContext, ToolError, ToolOutput, dispatch, start_bridge};
 use iuredesk_model::{FolderRole, MessageId};
 use iuredesk_store::Store;
 use serde_json::{Value, json};
@@ -158,6 +158,7 @@ fn puente_con_la_app_abierta() {
             seen.fetch_add(1, Ordering::SeqCst);
         })),
         context: Some(ctx()),
+        ..Default::default()
     };
     let bridge = start_bridge(store.clone(), opts.clone()).unwrap();
     let endpoint = bridge.endpoint_file().to_path_buf();
@@ -211,4 +212,54 @@ fn sin_datos_no_crea_el_almacen() {
     let mcp = DeskMcp::new(&store_dir).with_runtime_dir(dir.path()).with_context(ctx());
     assert!(matches!(mcp.run("mis_tareas", &json!({})), Err(ToolError::Failed(_))));
     assert!(!store_dir.exists());
+}
+
+/// R1.2: una segunda instancia pasa sus argumentos a la abierta por el puente (y nada más).
+#[test]
+fn segunda_instancia_reenvia_argumentos() {
+    let dir = tempfile::tempdir().unwrap();
+    let rt = tempfile::tempdir().unwrap();
+    let store_dir = dir.path().join("store");
+    let store = Arc::new(Store::open(&store_dir).unwrap());
+    let got: Arc<std::sync::Mutex<Vec<Vec<String>>>> = Arc::default();
+    let sink = got.clone();
+    let opts = BridgeOptions {
+        runtime_dir: Some(rt.path().to_path_buf()),
+        on_open: Some(Arc::new(move |args: Vec<String>| sink.lock().unwrap().push(args))),
+        ..Default::default()
+    };
+    let bridge = start_bridge(store.clone(), opts).unwrap();
+    let client = BridgeClient::discover(&store_dir, Some(rt.path())).expect("punto de acceso");
+    let args = vec!["/tmp/factura.eml".to_string(), "mailto:ana@example.com".to_string()];
+    client.open(&args).unwrap();
+    client.open(&[]).unwrap();
+    // Hostil: demasiados y demasiado largos se recortan.
+    let many: Vec<String> = (0..500).map(|i| format!("/tmp/{i}.ics")).chain(["x".repeat(20_000)]).collect();
+    client.open(&many).unwrap();
+    {
+        let got = got.lock().unwrap();
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0], args);
+        assert!(got[1].is_empty(), "sin argumentos = traer la ventana al frente");
+        assert_eq!(got[2].len(), iuredesk_mcp::bridge::MAX_OPEN_ARGS);
+    }
+    // Con un token falso no entra nada.
+    std::fs::write(
+        bridge.endpoint_file(),
+        std::fs::read_to_string(bridge.endpoint_file()).unwrap().replace("\"token\":\"", "\"token\":\"0"),
+    )
+    .unwrap();
+    let forged = BridgeClient::discover(&store_dir, Some(rt.path())).unwrap();
+    assert!(forged.open(&args).is_err());
+    assert_eq!(got.lock().unwrap().len(), 3);
+    // Sin `on_open`, la app no acepta archivos (y lo dice).
+    drop(bridge);
+    let bridge =
+        start_bridge(store, BridgeOptions { runtime_dir: Some(rt.path().to_path_buf()), ..Default::default() })
+            .unwrap();
+    let client = BridgeClient::discover(&store_dir, Some(rt.path())).unwrap();
+    assert!(matches!(client.open(&args), Err(iuredesk_mcp::bridge::BridgeCallError::Tool(_))));
+    drop(bridge);
+    // App cerrada: no contesta (el segundo proceso arranca normalmente).
+    assert!(BridgeClient::discover(&store_dir, Some(rt.path())).is_none());
 }

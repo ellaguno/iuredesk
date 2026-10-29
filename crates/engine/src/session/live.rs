@@ -324,7 +324,8 @@ impl Session {
                 };
                 let detail =
                     sample.iter().take(3).map(|s| format!("{} — {}", s.from, s.subject)).collect::<Vec<_>>().join("\n");
-                out.push(Event::NewMail { summary, detail, account: who });
+                let link = if count == 1 { self.newmail_link(&sample) } else { None };
+                out.push(Event::NewMail { summary, detail, account: who, link });
             }
             SyncEvent::Error(f) => {
                 let text = Text::new(f.en.clone(), f.es.clone());

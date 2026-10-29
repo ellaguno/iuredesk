@@ -14,7 +14,7 @@ StartupWMClass=iuredesk
 Categories=Office;Email;Calendar;ContactManagement;
 Keywords=mail;email;e-mail;calendar;contacts;tasks;notes;imap;caldav;
 Keywords[es]=correo;email;calendario;contactos;tareas;notas;agenda;imap;caldav;
-MimeType=x-scheme-handler/mailto;text/calendar;text/vcard;text/x-vcard;message/rfc822;
+MimeType=x-scheme-handler/mailto;text/calendar;text/vcard;text/x-vcard;message/rfc822;x-scheme-handler/iuredesk;
 Actions=compose;
 
 [Desktop Action compose]

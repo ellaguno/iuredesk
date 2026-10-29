@@ -14,6 +14,12 @@
 //! - cada conexión manda una línea JSON `{"v":1,"token":…,"tool":…,"args":{…}}` y recibe una
 //!   línea `{"ok":true,"kind":"data"|"text","value":…}` o `{"ok":false,"kind":"params"|"failed",
 //!   "error":…}`; tamaños acotados y tiempos de espera en las dos puntas.
+//!
+//! **Una sola instancia (R1.2):** la misma conexión sirve para que un segundo `iuredesk` (abierto
+//! por el sistema con un `.eml`, un `mailto:` o un enlace `iuredesk://`) le pase sus argumentos a
+//! la ventana abierta y termine: `{"v":1,"token":…,"open":["…", …]}` → `{"ok":true,"kind":"text",
+//! "value":"open"}`. La app recibe la lista por [`BridgeOptions::on_open`] (lista vacía = solo
+//! traer la ventana al frente).
 
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(not(unix))]
@@ -39,6 +45,9 @@ const MAX_RESPONSE: u64 = 16 * 1024 * 1024;
 /// Conexiones simultáneas máximas.
 const MAX_CONNECTIONS: usize = 8;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
+/// Argumentos que se reenvían como mucho (y largo máximo de cada uno).
+pub const MAX_OPEN_ARGS: usize = 64;
+const MAX_OPEN_ARG_LEN: usize = 8 * 1024;
 
 /// Fallo al arrancar o usar el puente.
 #[derive(Debug, thiserror::Error)]
@@ -57,6 +66,10 @@ pub enum BridgeError {
 /// Quién avisa a la interfaz de que una herramienta escribió en el almacén (recibe el nombre).
 pub type ChangeHook = Arc<dyn Fn(&str) + Send + Sync>;
 
+/// Quién recibe los argumentos que reenvía otra instancia (R1.2). Corre en el hilo del puente:
+/// que solo encole y despierte a la interfaz.
+pub type OpenHook = Arc<dyn Fn(Vec<String>) + Send + Sync>;
+
 /// Opciones del puente.
 #[derive(Clone, Default)]
 pub struct BridgeOptions {
@@ -65,6 +78,8 @@ pub struct BridgeOptions {
     /// Aviso tras cada herramienta que escribe (`crear_borrador`, `crear_evento`, `crear_nota`):
     /// la interfaz recarga carpetas/agenda/notas. Corre en el hilo del puente: que solo marque.
     pub on_change: Option<ChangeHook>,
+    /// Argumentos reenviados por otra instancia (`None` = no se aceptan).
+    pub on_open: Option<OpenHook>,
     /// Contexto fijo (pruebas). `None` = [`ToolContext::system`] en cada llamada.
     pub context: Option<ToolContext>,
 }
@@ -388,6 +403,23 @@ fn handle(req: &Value, store: &Store, opts: &BridgeOptions, token: &str) -> Valu
     if req.get("v").and_then(Value::as_u64) != Some(BRIDGE_VERSION) {
         return json!({"ok": false, "kind": "params", "error": "versión del puente"});
     }
+    if let Some(list) = req.get("open") {
+        let Some(hook) = &opts.on_open else {
+            return json!({"ok": false, "kind": "params", "error": "esta ventana no acepta archivos"});
+        };
+        let Some(list) = list.as_array() else {
+            return json!({"ok": false, "kind": "params", "error": "open: se esperaba una lista"});
+        };
+        let args: Vec<String> = list
+            .iter()
+            .take(MAX_OPEN_ARGS)
+            .filter_map(Value::as_str)
+            .filter(|a| !a.is_empty() && a.len() <= MAX_OPEN_ARG_LEN)
+            .map(str::to_string)
+            .collect();
+        hook(args);
+        return json!({"ok": true, "kind": "text", "value": "open"});
+    }
     let tool = req.get("tool").and_then(Value::as_str).unwrap_or("");
     let args = req.get("args").cloned().unwrap_or_else(|| json!({}));
     let ctx = opts.context.clone().unwrap_or_else(ToolContext::system);
@@ -445,6 +477,24 @@ impl BridgeClient {
     pub fn discover(store_dir: &Path, runtime: Option<&Path>) -> Option<Self> {
         let dir = runtime.map(Path::to_path_buf).unwrap_or_else(runtime_dir);
         Self::from_file(&endpoint_file(&dir, store_dir))
+    }
+
+    /// R1.2: pasa los argumentos a la app abierta (que se trae al frente). `Unreachable` si no
+    /// contesta: entonces hay que arrancar normalmente.
+    pub fn open(&self, args: &[String]) -> Result<(), BridgeCallError> {
+        let un = BridgeCallError::Unreachable;
+        let mut conn = self.endpoint.connect().map_err(|e| un(e.into()))?;
+        let list: Vec<&String> = args.iter().take(MAX_OPEN_ARGS).collect();
+        let req = json!({"v": BRIDGE_VERSION, "token": self.token, "open": list});
+        write_json_line(&mut conn, &req).map_err(|e| un(e.into()))?;
+        let r = read_json_line(&mut conn, MAX_RESPONSE).map_err(un)?;
+        match r.get("ok").and_then(Value::as_bool) {
+            Some(true) => Ok(()),
+            _ => {
+                let error = r.get("error").and_then(Value::as_str).unwrap_or("").to_string();
+                Err(BridgeCallError::Tool(ToolError::Failed(error)))
+            }
+        }
     }
 
     /// Llama a una herramienta en la app.

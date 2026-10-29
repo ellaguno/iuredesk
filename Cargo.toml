@@ -19,6 +19,7 @@ members = [
     "crates/mcp-server",
     "crates/import",
     "crates/rules",
+    "crates/desktop",
     "crates/engine",
     "crates/assistant",
     "crates/html-view",
@@ -55,6 +56,7 @@ iuredesk-integrations = { path = "crates/integrations" }
 iuredesk-mcp = { path = "crates/mcp-server" }
 iuredesk-import = { path = "crates/import" }
 iuredesk-rules = { path = "crates/rules" }
+iuredesk-desktop = { path = "crates/desktop" }
 iuredesk-engine = { path = "crates/engine" }
 iuredesk-assistant = { path = "crates/assistant" }
 iuredesk-html-view = { path = "crates/html-view" }
@@ -166,6 +168,19 @@ rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "w
 notify-rust = { version = "4.18", default-features = false, features = ["z"] }
 # D-Bus en Rust puro (la versión que ya traen notify-rust, keyring y el ui-kit).
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+# R1.2: integración con el sistema (enlaces del SO, Rust puro; solo en su plataforma).
+# Windows: avisos de WinRT (ToastNotificationManager) y registro (HKCU Run, AppUserModelId).
+windows = { version = "0.62", default-features = false, features = ["std", "UI_Notifications", "Data_Xml_Dom"] }
+windows-registry = "0.6"
+# macOS: UserNotifications por objc2 (enlaces a los frameworks del sistema; sin Objective-C).
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSBundle", "NSError"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter"] }
+block2 = "0.6"
+# Memoria del proceso en Windows y macOS (GetProcessMemoryInfo / task_info).
+memory-stats = "1.2"
+# Icono y versión en el .exe (herramienta de compilación: rc.exe o windres; solo para Windows).
+winresource = "0.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

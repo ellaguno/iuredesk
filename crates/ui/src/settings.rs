@@ -85,6 +85,8 @@ pub struct AccountsUi {
     /// Cuenta pendiente de confirmar que se quita.
     pub(crate) confirm_remove: Option<String>,
     pub(crate) editor: Option<AccountEditor>,
+    /// R1.2: «Abrir al iniciar sesión» leído del sistema (una vez por apertura de Ajustes).
+    autostart: Option<iuredesk_desktop::autostart::State>,
 }
 
 /// Abre el editor de una cuenta.
@@ -97,6 +99,7 @@ pub(crate) fn open_editor(app: &mut DeskApp, id: &str) {
 
 pub fn show(app: &mut DeskApp, ctx: &Context) {
     if !app.settings_open {
+        app.settings_ui.autostart = None;
         return;
     }
     let mut open = true;
@@ -581,6 +584,8 @@ fn general(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
         app.session.prefs.start = st;
         app.session.save_prefs();
     }
+    ui.add_space(8.0);
+    startup(app, ui);
     ui.add_space(14.0);
     section_label(ui, pick("Language", "Idioma"));
     let mut l = lang::lang();
@@ -595,6 +600,32 @@ fn general(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
     let mut s = app.session.prefs.scheme;
     if segmented(ui, &mut s, &ShortcutScheme::ALL.map(|s| (s, s.label()))).changed() {
         *run = Some(format!("view.scheme.{}", s.key()));
+    }
+}
+
+/// R1.2: «Abrir IureDesk al iniciar sesión» e «Iniciar minimizado» (XDG Autostart, `HKCU\…\Run`
+/// o un `LaunchAgent`; el estado se lee del sistema, no de las preferencias).
+fn startup(app: &mut DeskApp, ui: &mut Ui) {
+    use iuredesk_desktop::autostart;
+    let st = *app.settings_ui.autostart.get_or_insert_with(autostart::state);
+    let (mut on, mut min) = (st.enabled, st.minimized);
+    let a = ui.checkbox(&mut on, pick("Open IureDesk when I sign in", "Abrir IureDesk al iniciar sesión")).changed();
+    let b = ui
+        .add_enabled_ui(on, |ui| {
+            ui.indent("autostart-min", |ui| {
+                ui.checkbox(&mut min, pick("Start minimized", "Iniciar minimizado")).changed()
+            })
+            .inner
+        })
+        .inner;
+    if a || b {
+        match autostart::set(on, min) {
+            Ok(()) => app.settings_ui.autostart = Some(autostart::State { enabled: on, minimized: min }),
+            Err(e) => {
+                let (en, es) = e.human();
+                app.notice(iuredesk_engine::Notice::error(iuredesk_engine::Text::new(en, es)));
+            }
+        }
     }
 }
 

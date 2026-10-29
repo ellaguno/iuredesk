@@ -84,11 +84,13 @@ pub struct MemInfo {
     pub peak: u64,
 }
 
-/// Lee la memoria del proceso (`/proc/self/status`); `None` donde no se puede leer sin código
-/// nativo (Windows, macOS).
+/// Lee la memoria del proceso: `/proc/self/status` en Linux (residente, anónima y pico); en
+/// Windows y macOS solo la residente, por las llamadas del sistema (R1.2). `None` si no se puede.
 pub fn process_memory() -> Option<MemInfo> {
-    let s = std::fs::read_to_string("/proc/self/status").ok()?;
-    Some(parse_status(&s))
+    match std::fs::read_to_string("/proc/self/status") {
+        Ok(s) => Some(parse_status(&s)),
+        Err(_) => iuredesk_desktop::memory::resident_bytes().map(|rss| MemInfo { rss, anon: 0, peak: 0 }),
+    }
 }
 
 /// Interpreta `/proc/self/status` (separado para probarlo).
@@ -175,6 +177,8 @@ pub fn report(app: &mut DeskApp) -> Vec<(String, String)> {
     rows.push((
         pick("Memory", "Memoria").into(),
         match mem {
+            // Windows y macOS: solo la residente.
+            Some(m) if m.anon == 0 && m.peak == 0 => mb(m.rss),
             Some(m) => format!(
                 "{} ({} {}) · {} {}",
                 mb(m.rss),

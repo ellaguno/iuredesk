@@ -34,6 +34,8 @@ const MAX_ARRIVAL: usize = 500;
 const MAX_APPLY: usize = 5_000;
 /// Clasificaciones recordadas (con cabeceras) entre sesiones.
 const MAX_FOCUS_CACHE: usize = 20_000;
+/// Desde cuántos mensajes sin clasificar se clasifica en segundo plano al arrancar (R1.2).
+const WARM_MIN: usize = 1_000;
 /// Clave de las clasificaciones recordadas.
 const FOCUS_KEY: &str = "rules/category";
 /// Espera máxima de un aviso de correo nuevo mientras se aplican las reglas.
@@ -180,8 +182,19 @@ struct Held {
 }
 
 enum BgDone {
-    Sieve { account: AccountId, result: std::result::Result<SieveResult, Text> },
-    Unsubscribed { sender: String, result: std::result::Result<(), Text> },
+    /// R1.2: clasificación inicial hecha en segundo plano.
+    Classified {
+        signals: Signals,
+        cache: Vec<(MessageId, Category)>,
+    },
+    Sieve {
+        account: AccountId,
+        result: std::result::Result<SieveResult, Text>,
+    },
+    Unsubscribed {
+        sender: String,
+        result: std::result::Result<(), Text>,
+    },
 }
 
 struct SieveResult {
@@ -224,6 +237,9 @@ pub(crate) struct RulesState {
     rx: Receiver<BgDone>,
     sieve_busy: HashSet<AccountId>,
     detected: bool,
+    /// R1.2: clasificación inicial en segundo plano en curso / ya hecha.
+    warming: bool,
+    warmed: bool,
 }
 
 impl Default for RulesState {
@@ -257,6 +273,8 @@ impl Default for RulesState {
             rx,
             sieve_busy: HashSet::new(),
             detected: false,
+            warming: false,
+            warmed: false,
         }
     }
 }
@@ -531,7 +549,8 @@ impl Session {
         };
         let detail =
             sample.iter().take(3).map(|s| format!("{} — {}", s.from, s.subject)).collect::<Vec<_>>().join("\n");
-        Event::NewMail { summary, detail, account: who }
+        let link = if count == 1 { self.newmail_link(sample) } else { None };
+        Event::NewMail { summary, detail, account: who, link }
     }
 
     /// Correo recién llegado: reglas, respuesta de vacaciones, Enfocados/Otros y el aviso.
@@ -676,28 +695,53 @@ impl Session {
         if let Some(s) = &self.rules.signals {
             return s.clone();
         }
-        let mut s = Signals::default();
-        for a in self.my_addresses() {
-            s.add_mine(&a);
-        }
-        // Directo del almacén: no se llena la caché de contactos de la sesión antes de tiempo.
-        let mut contacts: Vec<String> = Vec::new();
-        for b in self.store.address_books().unwrap_or_default() {
-            for c in self.store.contacts(b.id).unwrap_or_default() {
-                contacts.extend(c.emails.iter().map(|e| iuredesk_rules::norm_addr(&e.value)));
-            }
-        }
-        s.contacts.extend(contacts);
-        let sent: Vec<FolderId> = self.folders.iter().filter(|f| f.role == FolderRole::Sent).map(|f| f.id).collect();
-        for f in sent {
-            for e in self.store.list_envelopes(f, 0, 2_000).unwrap_or_default() {
-                for m in e.to.iter().chain(e.cc.iter()) {
-                    s.replied.insert(iuredesk_rules::norm_addr(&m.addr));
-                }
-            }
-        }
+        let s = compute_signals(&self.store, &self.my_addresses(), &self.sent_folders());
         self.rules.signals = Some(s.clone());
         s
+    }
+
+    fn sent_folders(&self) -> Vec<FolderId> {
+        self.folders.iter().filter(|f| f.role == FolderRole::Sent).map(|f| f.id).collect()
+    }
+
+    /// R1.2: ¿hay que clasificar tantos mensajes que conviene hacerlo en segundo plano? Si es
+    /// así, lanza el trabajo (una vez) y devuelve `true`: la lista se queda «cargando» y se
+    /// rehace cuando llega [`BgDone::Classified`]. Así el primer cuadro no espera ≈ 90 ms.
+    pub(crate) fn rules_warming(&mut self, order: &[MessageId]) -> bool {
+        self.rules_ensure();
+        if self.rules.warmed || !self.rules.book.categories.enabled || !self.focus_view() {
+            return false;
+        }
+        if self.rules.warming {
+            return true;
+        }
+        let head: Vec<MessageId> = order.iter().take(5_000).copied().collect();
+        let need: Vec<MessageId> = head.into_iter().filter(|id| !self.rules.focus_cache.contains_key(id)).collect();
+        if need.len() < WARM_MIN {
+            // Pocos mensajes: lo síncrono es más barato que un cuadro de «cargando».
+            self.rules.warmed = true;
+            return false;
+        }
+        self.reload_hints();
+        let store = std::sync::Arc::clone(&self.store);
+        let my = self.my_addresses();
+        let sent = self.sent_folders();
+        let known = self.rules.signals.clone();
+        let hints = self.rules.hints.clone();
+        let overrides = self.rules.book.categories.overrides.clone();
+        let tx = self.rules.tx.clone();
+        self.rules.warming = true;
+        self.bg.spawn_blocking(move || {
+            let signals = known.unwrap_or_else(|| compute_signals(&store, &my, &sent));
+            let mut out = Vec::with_capacity(need.len());
+            for e in store.get_envelopes(&need).unwrap_or_default().into_iter().flatten() {
+                let hint = hints.get(&e.account).and_then(|m| m.get(&e.id.get())).map(String::as_str);
+                out.push((e.id, category::classify(&e, &Headers::default(), &signals, &overrides, hint).0));
+            }
+            let _ = tx.send(BgDone::Classified { signals, cache: out });
+            JobOutput::Custom(Box::new(()))
+        });
+        true
     }
 
     /// La vista actual es una bandeja de entrada (donde hay pestañas).
@@ -1511,6 +1555,17 @@ impl Session {
         }
         while let Ok(done) = self.rules.rx.try_recv() {
             match done {
+                BgDone::Classified { signals, cache } => {
+                    self.rules.warming = false;
+                    self.rules.warmed = true;
+                    if self.rules.signals.is_none() {
+                        self.rules.signals = Some(signals);
+                    }
+                    for (id, c) in cache {
+                        self.rules.focus_cache.entry(id).or_insert(c);
+                    }
+                    self.refresh_rows();
+                }
                 BgDone::Unsubscribed { sender, result } => self.notices.push(match result {
                     Ok(()) => {
                         Notice::success(format!("Unsubscribed from {sender}"), format!("Te diste de baja de {sender}"))
@@ -1626,4 +1681,26 @@ fn undo_step(u: UndoStep) -> (Inverse, Option<u64>) {
             (Inverse::Rules(Box::new(RulesUndo::Keywords { id, keywords, added })), None)
         }
     }
+}
+
+/// Señales de Enfocados/Otros: mis direcciones, contactos y a quién he escrito (2 000 enviados por
+/// carpeta). Directo del almacén: no llena la caché de contactos de la sesión antes de tiempo.
+fn compute_signals(store: &iuredesk_store::Store, my: &[String], sent: &[FolderId]) -> Signals {
+    let mut s = Signals::default();
+    for a in my {
+        s.add_mine(a);
+    }
+    for b in store.address_books().unwrap_or_default() {
+        for c in store.contacts(b.id).unwrap_or_default() {
+            s.contacts.extend(c.emails.iter().map(|e| iuredesk_rules::norm_addr(&e.value)));
+        }
+    }
+    for f in sent {
+        for e in store.list_envelopes(*f, 0, 2_000).unwrap_or_default() {
+            for m in e.to.iter().chain(e.cc.iter()) {
+                s.replied.insert(iuredesk_rules::norm_addr(&m.addr));
+            }
+        }
+    }
+    s
 }

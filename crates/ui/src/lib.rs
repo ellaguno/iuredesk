@@ -26,6 +26,7 @@ mod iure;
 mod mail;
 mod meeting;
 mod onboarding;
+mod opened;
 mod pim;
 mod reminders;
 mod rich_edit;
@@ -37,7 +38,7 @@ mod suite_ui;
 mod today;
 mod widgets;
 
-pub use app::{DeskApp, Notifier, Options};
+pub use app::{DeskApp, Incoming, Notifier, Options};
 pub use diagnostics::FrameSummary;
 pub use header::{ButtonLayout, ControlStyle, WindowButton, WindowChrome};
 pub use iurefficient_ui;
