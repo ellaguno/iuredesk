@@ -11,8 +11,8 @@ Uso / Usage
   ./iuredesk mailto:ana@ej.com  redacta un mensaje / composes a message
 
 Instaladores / Installers: .deb y AppImage (Linux), instalador .exe (Windows), .dmg (macOS).
-Registran IureDesk como gestor de enlaces mailto: y de archivos .eml, .ics y .vcf.
-They register IureDesk as a handler for mailto: links and .eml, .ics and .vcf files.
+Registran IureDesk como gestor de enlaces mailto: e iuredesk: y de archivos .eml, .ics y .vcf.
+They register IureDesk as a handler for mailto: and iuredesk: links and .eml, .ics and .vcf files.
 
 Requisitos / Requirements: Linux x86_64 con Wayland o X11 y Vulkan (o GL).
 

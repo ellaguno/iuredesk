@@ -20,6 +20,7 @@ base64 = { workspace = true }
 
 [dev-dependencies]
 minisign-verify = { workspace = true }
+plist = { workspace = true }
 
 [lints]
 workspace = true
