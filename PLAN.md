@@ -3,7 +3,7 @@
 > Gestor de información personal (PIM) de escritorio, 100 % Rust, para Linux, macOS y Windows.
 > Correo · Calendario · Contactos · Notas · Tareas · Colaboración · IA de Iurefficient.
 >
-> Estado: **v0.2 (2026-10-26)** — decisiones de §13 tomadas; F0 en curso.
+> Estado: **v0.3 (2026-10-29)** — F0–F7 con primera versión; Apache-2.0 y repos públicos; alpha 0.1 en preparación.
 
 ---
 
@@ -271,14 +271,29 @@ se muestra qué datos salen del equipo; se puede desactivar por cuenta.
 
 ## 11. Hoja de ruta
 
+Estado al 2026-10-29. El detalle de cada tarea (qué incluye, qué falta) vive en
+[`docs/gaps.md`](docs/gaps.md); esta tabla es el resumen. ☑ hecho · ◐ hecho con pendientes · ☐ por hacer.
+
+| Fase | Contenido | Criterio de salida | Estado |
+|------|-----------|--------------------|--------|
+| **F0 · Cimientos** | Workspace y xtask, ui-kit `iurefficient-ui` (y migración de IureProject), modelo, almacén, cuentas y llavero, prototipo Blitz, ventana con riel + 3 paneles | Ventana arranca < 1 s; Blitz pinta un boletín real | ☑ |
+| **F1 · Correo** | IMAP/POP3/SMTP, sincronización offline, lector HTML, redactor enriquecido, bandeja de salida con deshacer y envío programado | Uso diario real con Gmail, iCloud e IMAP genérico | ◐ (falta prueba amplia con cuentas reales) |
+| **F2 · OAuth, calendario y contactos** | OAuth Google/Microsoft, CalDAV/CardDAV, Graph, edición de calendario, invitaciones, Gmail y M365 nativos | Reemplaza Outlook para una cuenta M365 | ◐ |
+| **F3 · Iurefficient** | Inventario de la API y connect v0.8.0, contexto y vínculos en la app, asistente de IA multi-proveedor | Correo de cliente → lead + respuesta redactada en 3 clics | ◐ (falta probar contra la instancia real) |
+| **F4 · Suite y asistentes** | Apps hermanas (IureEditor, IureTranscribe, IureVoz, IureOCR, IureDav, IureProject), `iuredesk --mcp`, asistente e importación en la UI | Reunión → minuta → correo + tareas sin salir de IureDesk | ☑ |
+| **F5 · Paridad y pulido** | Importadores (Outlook, Thunderbird, Apple Mail, Takeout), instaladores y CI de 3 SO, reglas/Sieve/posponer/categorías/etiquetas, OpenPGP/S/MIME e impresión | Alpha pública | ◐ |
+| **F6 · Productividad diaria** | Pantalla «Mi día» y abrir donde lo dejé | El usuario sabe qué atender al abrir | ☑ |
+| **F7 · Huecos del uso diario** | Google Tasks, reabrir borradores, notas editables, carpetas, Auto-Submitted, distintivos de Iurefficient en segundo plano | Sin «no se puede» en tareas cotidianas | ☑ (F7.1) |
+| **UI · Interfaz transversal** | Barra de título integrada, tipografía (Inter y opciones), contactos, cuentas, alta manual, mensajes de error | Lo que reporta el dueño al usar la app | ☑ (UI-HEADER, UX-1, UX-2) |
+
+### Hacia la beta (siguiente)
+
 | Fase | Contenido | Criterio de salida |
 |------|-----------|--------------------|
-| **F0 · Cimientos** (3–4 sem) | Workspace, xtask (ci/purity/layers), `ui-kit` extraído de IureProject, *shell* con riel + 3 paneles, `model`, `store`, cuentas y llavero vía connect, prototipo Blitz-en-egui | Ventana arranca < 1 s; Blitz pinta un boletín real dentro de egui |
-| **F1 · Correo MVP** (8–10 sem) | IMAP (IDLE, QRESYNC), SMTP, POP3, autoconfig, sync offline, lista virtual, conversaciones, lector HTML, redactor básico, adjuntos, búsqueda tantivy, bandeja unificada, notificaciones | Uso diario real con Gmail (contraseña de app), iCloud y un IMAP genérico |
-| **F2 · OAuth + Calendario + Contactos** (8–10 sem) | OAuth Google/Microsoft, Graph, CalDAV/CardDAV, vistas de calendario, invitaciones iMIP, free/busy, contactos unificados | Reemplaza Outlook para una cuenta M365 |
-| **F3 · Iurefficient** (6 sem) | Sesión compartida, agenda/contactos de la instancia, vincular correo ↔ caso/lead/ticket, guardar adjuntos, comentarios de colaboración, asistente ✦ | Flujo "correo de cliente → lead + respuesta redactada" en 3 clics |
-| **F4 · Notas, tareas y ecosistema** (6 sem) | Notas Markdown (local/WebDAV), tareas (VTODO/To Do/Iurefficient), IureTranscribe → minutas, IureVoz, IureEditor, IureOCR, `--mcp` | Reunión → minuta → correo + tareas sin salir de IureDesk |
-| **F5 · Paridad y pulido** (8 sem) | Importadores PST/mbox/emlx, reglas, plantillas, envío programado, Sieve, impresión/PDF, S/MIME/PGP, empaquetado 3 SO, accesibilidad | Beta pública |
+| **R1 · Alpha 0.1** | Licencia Apache-2.0 y repos públicos (hecho), CI verde en Linux/Windows/macOS, etiqueta `v0.1.0-alpha.1`, instaladores como borrador | Instalable en los 3 SO desde Releases |
+| **R2 · Endurecer con cuentas reales** | Ronda de pruebas del dueño (Gmail/Workspace, Outlook.com/M365, IMAP genérico, Iurefficient), rendimiento con buzones grandes, corrección de lo que aparezca | Una semana de uso diario sin bloqueos |
+| **R3 · Firma y verificación** | Firma de código macOS/Windows, verificación de la app en Google (CASA) y de editor en Microsoft, actualizaciones automáticas | Instalar sin avisos de «app no verificada» |
+| **R4 · Beta 0.x** | Accesibilidad completa, documentación de usuario, sitio de descargas | Beta pública |
 
 ---
 
