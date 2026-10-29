@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Claves de Info.plist de IureDesk (R1.3). cargo-packager arma el Info.plist del .app (nombre,
+  ejecutable, versión, icono .icns, LSMinimumSystemVersion) y le mezcla este archivo
+  (`macos.infoPlistPath`); lo de aquí manda. Es la única fuente de los esquemas y tipos de
+  documento en macOS (la configuración no declara `deepLinkProtocols` ni `fileAssociations`).
+  - iuredesk: enlaces de las notificaciones y de otras apps de la suite.
+  - mailto: IureDesk aparece como lector de correo en Mail → Ajustes → General.
+  - .eml, .ics, .vcf: «Abrir con»; rango Alternate (no se apropia del tipo).
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.iurefficient.IureDesk</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.productivity</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.iurefficient.IureDesk.link</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>iuredesk</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>E-mail address</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>mailto</string>
+      </array>
+    </dict>
+  </array>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>E-mail message</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.apple.mail.email</string>
+      </array>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>eml</string>
+      </array>
+      <key>CFBundleTypeMIMETypes</key>
+      <array>
+        <string>message/rfc822</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>iCalendar file</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.apple.ical.ics</string>
+      </array>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>ics</string>
+      </array>
+      <key>CFBundleTypeMIMETypes</key>
+      <array>
+        <string>text/calendar</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>vCard contact</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.vcard</string>
+      </array>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>vcf</string>
+      </array>
+      <key>CFBundleTypeMIMETypes</key>
+      <array>
+        <string>text/vcard</string>
+        <string>text/x-vcard</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>

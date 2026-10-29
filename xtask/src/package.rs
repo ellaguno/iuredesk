@@ -6,9 +6,12 @@
 //!
 //! - linux: el `.tar.gz` de `cargo xtask dist` + `.deb` + `.AppImage` (con `.desktop`, metainfo
 //!   AppStream e iconos hicolor).
-//! - windows: instalador NSIS `.exe` por usuario (sin UAC) que registra `mailto:`, `.eml`, `.ics` y
-//!   `.vcf` en «Aplicaciones predeterminadas» (`packaging/windows/default-apps.nsh`).
-//! - macos: `.app` (Info.plist con el esquema `mailto` y los tipos de documento) y `.dmg`.
+//! - windows: instalador NSIS `.exe` por usuario (sin UAC) que registra el protocolo `iuredesk:`, el
+//!   AUMID de los avisos y `mailto:`, `.eml`, `.ics` y `.vcf` en «Aplicaciones predeterminadas»
+//!   (`packaging/windows/default-apps.nsh`); accesos directos con el AUMID (plantilla de
+//!   cargo-packager).
+//! - macos: `.app` (claves de `packaging/macos/Info.plist`: esquemas `iuredesk` y `mailto`, tipos de
+//!   documento) y `.dmg`.
 //!
 //! Los instaladores se renombran al esquema de iureapps, el lanzador de la suite:
 //! `IureDesk_<versión>-linux-x64.AppImage`, `-linux-x64.deb`, `-windows-x64.exe`,
@@ -283,8 +286,14 @@ fn config(os: Os, version: &str, target: &str, stage: &Path, dist: &Path) -> Res
         }
         Os::Windows => {
             obj.insert("icons".into(), json!([p(icons.join("iuredesk.ico"))]));
-            obj.insert("fileAssociations".into(), file_associations(true));
-            obj.insert("resources".into(), resources(stage));
+            // Sin `fileAssociations` ni `deepLinkProtocols`: protocolos, tipos de archivo, AUMID y
+            // «Aplicaciones predeterminadas» los registra (y los borra) `default-apps.nsh`.
+            // El .ico junto al .exe es el `IconUri` del AUMID (icono de los avisos).
+            let mut res = resources(stage);
+            if let Some(list) = res.as_array_mut() {
+                list.push(json!(p(icons.join("iuredesk.ico"))));
+            }
+            obj.insert("resources".into(), res);
             let section = std::fs::read_to_string(packaging.join("windows/default-apps.nsh"))
                 .map_err(|e| format!("packaging/windows/default-apps.nsh: {e}"))?;
             obj.insert(
@@ -301,13 +310,13 @@ fn config(os: Os, version: &str, target: &str, stage: &Path, dist: &Path) -> Res
         }
         Os::Mac => {
             obj.insert("icons".into(), json!([p(icons.join("iuredesk.icns"))]));
-            obj.insert("fileAssociations".into(), file_associations(false));
-            obj.insert(
-                "deepLinkProtocols".into(),
-                json!([{ "schemes": ["mailto"], "name": "E-mail address", "role": "viewer" }]),
-            );
             obj.insert("resources".into(), resources(stage));
-            let mut macos = json!({ "minimumSystemVersion": "11.0" });
+            // Esquemas (`iuredesk`, `mailto`) y tipos de documento: `packaging/macos/Info.plist`,
+            // que cargo-packager mezcla sobre el que genera.
+            let mut macos = json!({
+                "minimumSystemVersion": "11.0",
+                "infoPlistPath": p(packaging.join("macos/Info.plist")),
+            });
             if let Some(identity) = env("APPLE_SIGNING_IDENTITY") {
                 macos["signingIdentity"] = json!(identity);
             } else {
@@ -317,19 +326,6 @@ fn config(os: Os, version: &str, target: &str, stage: &Path, dist: &Path) -> Res
         }
     }
     Ok(cfg)
-}
-
-/// Archivos que abre IureDesk. En Windows el nombre es el ProgID que usa `default-apps.nsh`.
-fn file_associations(windows: bool) -> Value {
-    let item = |ext: &str, mime: &str, desc: &str| {
-        let name = if windows { format!("IureDesk.{ext}") } else { desc.to_string() };
-        json!({ "extensions": [ext], "mimeType": mime, "description": desc, "name": name, "role": "viewer" })
-    };
-    json!([
-        item("eml", "message/rfc822", "E-mail message"),
-        item("ics", "text/calendar", "iCalendar file"),
-        item("vcf", "text/vcard", "vCard contact"),
-    ])
 }
 
 fn resources(stage: &Path) -> Value {
@@ -479,10 +475,270 @@ mod tests {
         assert_eq!(linux["formats"], json!(["deb", "appimage"]));
         assert!(linux["deb"]["desktopTemplate"].as_str().is_some_and(|p| p.ends_with("iuredesk.desktop")));
         let mac = config(Os::Mac, "1.2.3", "aarch64-apple-darwin", stage, dist).unwrap_or_default();
-        assert_eq!(mac["deepLinkProtocols"][0]["schemes"], json!(["mailto"]));
+        assert!(mac["macos"]["infoPlistPath"].as_str().is_some_and(|p| Path::new(p).is_file()));
+        assert_eq!(mac["category"], json!("Productivity"));
+        assert!(mac["icons"][0].as_str().is_some_and(|p| p.ends_with("iuredesk.icns")));
         let win = config(Os::Windows, "1.2.3", "x86_64-pc-windows-msvc", stage, dist).unwrap_or_default();
-        assert_eq!(win["fileAssociations"][0]["name"], json!("IureDesk.eml"));
         assert!(win["nsis"]["preinstallSection"].as_str().is_some_and(|s| s.contains("RegisteredApplications")));
+        assert_eq!(win["nsis"]["installMode"], json!("currentUser"));
+        // El .ico va junto al .exe (IconUri del AUMID).
+        let res = win["resources"].as_array().cloned().unwrap_or_default();
+        assert!(res.iter().any(|r| r.as_str().is_some_and(|p| p.ends_with("iuredesk.ico"))), "{res:?}");
+        // Las asociaciones las hace default-apps.nsh (la macro de cargo-packager no pone comillas).
+        for cfg in [&linux, &mac, &win] {
+            assert!(cfg.get("fileAssociations").is_none() && cfg.get("deepLinkProtocols").is_none());
+            assert_eq!(cfg["identifier"], json!(IDENTIFIER));
+        }
+    }
+
+    /// El identificador del paquete es el AUMID y el `CFBundleIdentifier` que usa la app.
+    #[test]
+    fn identifier_matches_app() {
+        let lib = std::fs::read_to_string(root().join("crates/desktop/src/lib.rs")).unwrap_or_default();
+        assert!(lib.contains(&format!("APP_ID: &str = \"{IDENTIFIER}\"")), "APP_ID distinto de {IDENTIFIER}");
+    }
+
+    /// Divide una línea de NSIS en palabras (comillas dobles; `$\"` es una comilla literal).
+    fn nsis_words(line: &str) -> Vec<String> {
+        let (mut out, mut cur, mut quoted, mut any) = (Vec::new(), String::new(), false, false);
+        let mut it = line.chars().peekable();
+        while let Some(c) = it.next() {
+            match c {
+                '$' if it.peek() == Some(&'\\') => {
+                    it.next();
+                    if let Some(n) = it.next() {
+                        cur.push(n);
+                    }
+                }
+                '"' => {
+                    quoted = !quoted;
+                    any = true;
+                }
+                c if c.is_whitespace() && !quoted => {
+                    if any || !cur.is_empty() {
+                        out.push(std::mem::take(&mut cur));
+                    }
+                    any = false;
+                }
+                c => cur.push(c),
+            }
+        }
+        if any || !cur.is_empty() {
+            out.push(cur);
+        }
+        out
+    }
+
+    type Macros = std::collections::BTreeMap<String, (Vec<String>, Vec<String>)>;
+
+    fn expand_macros(line: &str, macros: &Macros, out: &mut Vec<String>, depth: u32) {
+        let w = nsis_words(line.trim());
+        if w.first().map(String::as_str) == Some("!insertmacro")
+            && depth < 4
+            && let Some((params, body)) = w.get(1).and_then(|n| macros.get(n))
+        {
+            for b in body {
+                let mut l = b.clone();
+                for (p, a) in params.iter().zip(w.iter().skip(2)) {
+                    l = l.replace(&format!("${{{p}}}"), a);
+                }
+                expand_macros(&l, macros, out, depth + 1);
+            }
+        } else {
+            out.push(line.to_string());
+        }
+    }
+
+    /// Expande `!define`/`!insertmacro` de `default-apps.nsh` (y los `!define` de la plantilla de
+    /// cargo-packager con los valores de la configuración) y devuelve las órdenes de cada sección.
+    fn nsis_sections(text: &str) -> std::collections::BTreeMap<String, Vec<Vec<String>>> {
+        use std::collections::BTreeMap;
+        let mut defines: BTreeMap<String, String> = BTreeMap::from([
+            ("IDENTIFIER".into(), IDENTIFIER.into()),
+            ("PRODUCTNAME".into(), PRODUCT.into()),
+            ("MAINBINARYNAME".into(), "iuredesk".into()),
+        ]);
+        let mut macros = Macros::new();
+        let mut sections: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let (mut in_macro, mut in_section): (Option<String>, Option<String>) = (None, None);
+        for raw in text.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with(';') {
+                continue;
+            }
+            let w = nsis_words(line);
+            let head = w.first().map(String::as_str).unwrap_or("");
+            if let Some(m) = &in_macro {
+                if head == "!macroend" {
+                    in_macro = None;
+                } else if let Some(entry) = macros.get_mut(m) {
+                    entry.1.push(raw.to_string());
+                }
+                continue;
+            }
+            if let Some(sec) = &in_section {
+                if head == "SectionEnd" {
+                    in_section = None;
+                } else {
+                    sections.entry(sec.clone()).or_default().push(raw.to_string());
+                }
+                continue;
+            }
+            match head {
+                "!define" => {
+                    // El valor tal cual (con sus `$\"`): se expande dentro de la línea que lo usa.
+                    if let (Some(k), Some(a), Some(b)) = (w.get(1), line.find('"'), line.rfind('"'))
+                        && b > a
+                    {
+                        defines.insert(k.clone(), line[a + 1..b].to_string());
+                    }
+                }
+                "!macro" => {
+                    let name = w.get(1).cloned().unwrap_or_default();
+                    macros.insert(name.clone(), (w.iter().skip(2).cloned().collect(), Vec::new()));
+                    in_macro = Some(name);
+                }
+                "Section" => in_section = Some(w.get(1).cloned().unwrap_or_default()),
+                _ => {}
+            }
+        }
+        let expand_defines = |mut line: String| {
+            for _ in 0..8 {
+                let before = line.clone();
+                for (k, v) in &defines {
+                    line = line.replace(&format!("${{{k}}}"), v);
+                }
+                if line == before {
+                    break;
+                }
+            }
+            line
+        };
+        sections
+            .into_iter()
+            .map(|(name, lines)| {
+                let mut flat = Vec::new();
+                for l in &lines {
+                    expand_macros(l, &macros, &mut flat, 0);
+                }
+                (name, flat.into_iter().map(|l| nsis_words(expand_defines(l).trim())).collect())
+            })
+            .collect()
+    }
+
+    /// R1.3: el instalador de Windows registra lo que pide R1.2 (protocolo `iuredesk`, AUMID,
+    /// `mailto:` y archivos en «Aplicaciones predeterminadas») y el desinstalador lo borra todo.
+    #[test]
+    fn windows_registration() {
+        let text = std::fs::read_to_string(root().join("packaging/windows/default-apps.nsh")).unwrap_or_default();
+        let sections = nsis_sections(&text);
+        let install = sections.get("IureDeskDefaultApps").cloned().unwrap_or_default();
+        let uninstall = sections.get("un.IureDeskDefaultApps").cloned().unwrap_or_default();
+        assert!(!install.is_empty() && !uninstall.is_empty(), "faltan las secciones: {:?}", sections.keys());
+
+        // (clave, valor, dato) de cada WriteRegStr; todo por usuario (SHCTX = HKCU con currentUser).
+        let mut writes = Vec::new();
+        for w in &install {
+            if w.first().map(String::as_str) == Some("WriteRegStr") {
+                assert_eq!(w.get(1).map(String::as_str), Some("SHCTX"), "{w:?}");
+                let at = |i: usize| w.get(i).cloned().unwrap_or_default();
+                writes.push((at(2), at(3), at(4)));
+            }
+        }
+        let has = |k: &str, v: &str, d: &str| writes.iter().any(|(a, b, c)| a == k && b == v && c == d);
+        let open = r#""$INSTDIR\iuredesk.exe" "%1""#;
+        let caps = r"Software\Iurefficient\IureDesk\Capabilities";
+        let aumid = format!(r"Software\Classes\AppUserModelId\{IDENTIFIER}");
+        let want: Vec<(String, &str, &str)> = vec![
+            (r"Software\Classes\iuredesk".into(), "URL Protocol", ""),
+            (r"Software\Classes\iuredesk\shell\open\command".into(), "", open),
+            (r"Software\Classes\IureDesk.mailto".into(), "URL Protocol", ""),
+            (r"Software\Classes\IureDesk.mailto\shell\open\command".into(), "", open),
+            (format!(r"{caps}\URLAssociations"), "mailto", "IureDesk.mailto"),
+            (r"Software\RegisteredApplications".into(), "IureDesk", caps),
+            (aumid.clone(), "DisplayName", PRODUCT),
+            (aumid.clone(), "IconUri", r"$INSTDIR\iuredesk.ico"),
+        ];
+        for (k, v, d) in &want {
+            assert!(has(k, v, d), "falta {k} [{v}] = {d}\n{writes:#?}");
+        }
+        for ext in ["eml", "ics", "vcf"] {
+            let progid = format!("IureDesk.{ext}");
+            assert!(has(&format!(r"Software\Classes\{progid}\shell\open\command"), "", open), "{ext}");
+            assert!(has(&format!(r"Software\Classes\.{ext}\OpenWithProgids"), &progid, ""), "{ext}");
+            assert!(has(&format!(r"{caps}\FileAssociations"), &format!(".{ext}"), &progid), "{ext}");
+        }
+        // Cada orden de abrir lleva la ruta entre comillas (rutas con espacios).
+        for (k, _, d) in &writes {
+            if k.ends_with(r"\command") {
+                assert_eq!(d, open, "{k}");
+            }
+        }
+        // No se toca el predeterminado de otras apps ni HKLM/HKCR; nada interactivo (vale /S).
+        assert!(!writes.iter().any(|(k, v, _)| k.starts_with(r"Software\Classes\.") && v.is_empty()));
+        let code: Vec<&str> = text.lines().filter(|l| !l.trim_start().starts_with(';')).collect();
+        for bad in ["HKLM", "HKCR", "MessageBox", "HKEY_"] {
+            assert!(!code.iter().any(|l| l.contains(bad)), "default-apps.nsh no debe usar {bad}");
+        }
+
+        // El desinstalador borra cada valor escrito (su clave, una clave madre o el valor).
+        let mut del_keys = Vec::new();
+        let mut del_values = Vec::new();
+        for w in &uninstall {
+            let rest: Vec<String> = w.iter().skip(1).filter(|a| !a.starts_with('/')).cloned().collect();
+            let at = |i: usize| rest.get(i).cloned().unwrap_or_default();
+            match w.first().map(String::as_str) {
+                Some("DeleteRegKey") => {
+                    assert_ne!(at(1), r"Software\Classes", "{w:?}");
+                    // .eml/.ics/.vcf son de todos: solo si quedaron vacías.
+                    if at(1).starts_with(r"Software\Classes\.") {
+                        assert!(w.iter().any(|a| a == "/ifempty"), "{w:?}");
+                    } else {
+                        del_keys.push(at(1));
+                    }
+                }
+                Some("DeleteRegValue") => del_values.push((at(1), at(2))),
+                _ => {}
+            }
+        }
+        for (k, v, _) in &writes {
+            let by_key = del_keys.iter().any(|d| k == d || k.starts_with(&format!(r"{d}\")));
+            let by_value = del_values.iter().any(|(dk, dv)| dk == k && dv == v);
+            assert!(by_key || by_value, "el desinstalador no borra {k} [{v}]");
+        }
+    }
+
+    /// R1.3: claves de Info.plist que mezcla cargo-packager (esquemas y tipos de documento).
+    #[test]
+    fn macos_info_plist() {
+        let value = plist::Value::from_file(root().join("packaging/macos/Info.plist"));
+        let dict = value.ok().and_then(plist::Value::into_dictionary).unwrap_or_default();
+        let text = |k: &str| dict.get(k).and_then(plist::Value::as_string).unwrap_or("").to_string();
+        assert_eq!(text("CFBundleIdentifier"), IDENTIFIER);
+        assert_eq!(text("LSApplicationCategoryType"), "public.app-category.productivity");
+        let strings = |v: Option<&plist::Value>| -> Vec<String> {
+            v.and_then(plist::Value::as_array)
+                .map(|a| a.iter().filter_map(plist::Value::as_string).map(str::to_string).collect())
+                .unwrap_or_default()
+        };
+        let items = |k: &str| -> Vec<plist::Dictionary> {
+            dict.get(k)
+                .and_then(plist::Value::as_array)
+                .map(|a| a.iter().filter_map(|v| v.as_dictionary().cloned()).collect())
+                .unwrap_or_default()
+        };
+        let schemes: Vec<String> =
+            items("CFBundleURLTypes").iter().flat_map(|d| strings(d.get("CFBundleURLSchemes"))).collect();
+        assert_eq!(schemes, ["iuredesk", "mailto"]);
+        let docs = items("CFBundleDocumentTypes");
+        for (ext, uti) in [("eml", "com.apple.mail.email"), ("ics", "com.apple.ical.ics"), ("vcf", "public.vcard")] {
+            let d =
+                docs.iter().find(|d| strings(d.get("CFBundleTypeExtensions")) == [ext]).cloned().unwrap_or_default();
+            assert_eq!(strings(d.get("LSItemContentTypes")), [uti], "{ext}");
+            assert_eq!(d.get("CFBundleTypeRole").and_then(plist::Value::as_string), Some("Viewer"), "{ext}");
+            // No se apropia del tipo (Mail, Calendario y Contactos siguen siendo los dueños).
+            assert_eq!(d.get("LSHandlerRank").and_then(plist::Value::as_string), Some("Alternate"), "{ext}");
+        }
     }
 
     /// Cada archivo que la configuración referencia existe en el repositorio.
@@ -493,6 +749,7 @@ mod tests {
             "packaging/linux/iuredesk.desktop",
             "packaging/linux/com.iurefficient.IureDesk.metainfo.xml",
             "packaging/windows/default-apps.nsh",
+            "packaging/macos/Info.plist",
             "assets/icons/iuredesk.ico",
             "assets/icons/iuredesk.icns",
             "assets/icons/iuredesk.svg",
@@ -511,6 +768,7 @@ mod tests {
         for want in [
             "MimeType=x-scheme-handler/mailto;text/calendar;text/vcard;",
             "message/rfc822;",
+            "x-scheme-handler/iuredesk;",
             "Categories=Office;Email;Calendar;ContactManagement;",
             "Exec=iuredesk %U",
             "Icon=iuredesk",

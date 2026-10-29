@@ -23,8 +23,9 @@ genera (en Fedora/openSUSE iureapps usa el AppImage). iureapps instala el AppIma
 `/usr/bin/iuredesk`, el `linux_bins` del catálogo), el `.exe` con `/S` (clave `Uninstall\IureDesk`
 de HKCU) y el `.app.tar.gz` en `/Applications/IureDesk.app`.
 
-Tamaños de referencia (0.1.0-alpha.0, Linux x86_64, 2026-10-26): `.tar.gz` 20,3 MB, `.deb` 20,5 MB
-(51,8 MB instalado), AppImage 19,5 MB.
+Tamaños de referencia (0.1.0-alpha.3, Linux x86_64, 2026-10-29): `.tar.gz` 29,7 MB, `.deb` 29,9 MB,
+AppImage 28,0 MB (0.1.0-alpha.0: 20,3 / 20,5 / 19,5 MB). Revisados por dentro: `.desktop` válido
+(`desktop-file-validate`), metainfo válido (`appstreamcli validate`), iconos hicolor 16–512 + SVG.
 
 Opciones comunes: `--tag vX.Y.Z` (falla si no coincide con la versión del workspace) y
 `--target <triple>`. Cada orden compila con el perfil `dist` (release sin símbolos), genera los
@@ -37,17 +38,52 @@ criterio del dueño; nada de ella entra en el binario): `cargo install cargo-pac
 en la primera ejecución sus propias herramientas (linuxdeploy/AppRun en Linux, NSIS en Windows).
 
 ### Integración con el escritorio
-- **Linux**: `packaging/linux/iuredesk.desktop` (`MimeType=x-scheme-handler/mailto;text/calendar;
-  text/vcard;text/x-vcard;message/rfc822;`, `Categories=Office;Email;Calendar;ContactManagement;`,
-  acción «Mensaje nuevo»), metainfo AppStream `com.iurefficient.IureDesk.metainfo.xml` en
-  `/usr/share/metainfo/`, iconos hicolor 16–512 + SVG escalable, documentos en
-  `/usr/share/doc/iuredesk/`.
-- **Windows**: el instalador crea los ProgID `IureDesk.eml/.ics/.vcf` y `IureDesk.mailto` y declara
-  las capacidades en `RegisteredApplications` (`packaging/windows/default-apps.nsh`): IureDesk
-  aparece en *Configuración → Aplicaciones → Aplicaciones predeterminadas*; Windows no permite que un
-  instalador se imponga como predeterminado, lo elige el usuario. El desinstalador lo borra.
-- **macOS**: `Info.plist` con `CFBundleURLTypes` (`mailto`) y `CFBundleDocumentTypes` (`.eml`,
-  `.ics`, `.vcf`), identificador `com.iurefficient.IureDesk`, macOS 11 o posterior.
+El identificador es el mismo en todo: `com.iurefficient.IureDesk` (id de AppStream,
+`CFBundleIdentifier`, AUMID de Windows y `APP_ID` de `iuredesk-desktop`; lo comprueba
+`xtask package::tests::identifier_matches_app`). La app recibe por argumento rutas, `file://`,
+`mailto:` e `iuredesk://…` (una segunda instancia se los pasa a la ventana abierta, R1.2).
+
+- **Linux**: `packaging/linux/iuredesk.desktop` (`Exec=iuredesk %U`,
+  `MimeType=x-scheme-handler/mailto;text/calendar;text/vcard;text/x-vcard;message/rfc822;x-scheme-handler/iuredesk;`,
+  `Categories=Office;Email;Calendar;ContactManagement;`, acción «Mensaje nuevo»), metainfo AppStream
+  `com.iurefficient.IureDesk.metainfo.xml` en `/usr/share/metainfo/`, iconos hicolor 16–512 + SVG
+  escalable, documentos en `/usr/share/doc/iuredesk/`. El `.deb` y el AppImage llevan lo mismo
+  (el AppImage trae el `.desktop` en su raíz para la integración de AppImageLauncher/iureapps).
+- **Windows** (`packaging/windows/default-apps.nsh`, que xtask pasa como `preinstallSection` de la
+  plantilla NSIS de cargo-packager; todo en HKCU, sin diálogos, así que `/S` sigue valiendo):
+  - protocolo `iuredesk` (`HKCU\Software\Classes\iuredesk`, `URL Protocol`,
+    `shell\open\command` = `"…\iuredesk.exe" "%1"`): el clic en un aviso lo usa;
+  - AUMID `HKCU\Software\Classes\AppUserModelId\com.iurefficient.IureDesk` con `DisplayName` e
+    `IconUri` (`iuredesk.ico` junto al `.exe`): los avisos salen aunque falte el acceso directo
+    (la app también lo registra al arrancar). Los accesos directos del menú Inicio y del escritorio
+    llevan el mismo AUMID por la plantilla de cargo-packager (`ApplicationID::Set`; el complemento
+    lo descarga cargo-packager al compilar, como el propio NSIS);
+  - ProgID `IureDesk.mailto` y `IureDesk.eml/.ics/.vcf` (orden con comillas), `OpenWithProgids`
+    de cada extensión («Abrir con»), `Applications\iuredesk.exe` y las capacidades en
+    `RegisteredApplications`: IureDesk aparece en *Configuración → Aplicaciones → Aplicaciones
+    predeterminadas*. Windows no permite que un instalador se imponga como predeterminado; lo elige
+    el usuario.
+  - El desinstalador lo borra todo (el protocolo solo si apunta a esta instalación; las claves
+    `.eml`/`.ics`/`.vcf` solo si quedan vacías).
+  - No se usan `fileAssociations` ni `deepLinkProtocols` de cargo-packager 0.11.8 en Windows: su
+    macro escribe la orden sin comillas en la ruta del `.exe`, se apropia del valor por omisión de
+    `.eml` y su desinstalador no borra ni asociaciones ni protocolos.
+- **macOS**: `packaging/macos/Info.plist` (va en `macos.infoPlistPath` y cargo-packager lo mezcla
+  sobre el que genera, que pone nombre, ejecutable, versión, icono `.icns` y macOS 11 como mínimo):
+  `CFBundleIdentifier`, `CFBundleURLTypes` (`iuredesk` y `mailto`), `CFBundleDocumentTypes`
+  (`.eml` `com.apple.mail.email`, `.ics` `com.apple.ical.ics`, `.vcf` `public.vcard`; rol
+  *Viewer*, rango *Alternate*) y `LSApplicationCategoryType` productividad. No hace falta
+  `NSUserNotificationAlertStyle` (los avisos usan `UNUserNotificationCenter`).
+  **Pendiente**: macOS entrega los enlaces y archivos como Apple Events
+  (`application:openURLs:`), no por argumento; winit 0.30 no los expone y un delegado propio con
+  objc2 necesita `unsafe` (decisión del dueño). Hasta entonces `mailto:`, `.eml` o `iuredesk://`
+  traen la app pero no abren el destino.
+
+Pruebas (`cargo test -p xtask package`): `windows_registration` expande los `!define` e
+`!insertmacro` de `default-apps.nsh` y comprueba cada clave, que las órdenes llevan comillas, que no
+toca HKLM/HKCR ni muestra diálogos y que el desinstalador borra cada valor que escribe;
+`macos_info_plist` lee el `Info.plist` con el crate `plist` (el mismo que usa cargo-packager);
+`desktop_entry` revisa el `.desktop`.
 
 ### Icono
 `assets/icons/iuredesk.svg` (y `iuredesk-small.svg` para 16–32 px) son originales del proyecto.
@@ -150,9 +186,9 @@ Una de dos:
 Sin firma, SmartScreen avisará al instalar.
 
 ## Pendiente
-- Icono incrustado en el `.exe` de Windows y en la ventana (necesita `build.rs`/`with_icon` en
-  `apps/iuredesk`); hoy el instalador y los accesos usan el icono del `.exe`.
-- La app abre `mailto:`; falta que abra rutas `.eml`/`.ics`/`.vcf` (y `file://…` que pasa `%U`).
+- macOS: recibir los Apple Events de abrir URL/archivo (ver «Integración con el escritorio»).
+- Probar los instaladores de Windows y macOS en equipos reales (avisos, «Aplicaciones
+  predeterminadas», desinstalación).
 - Flatpak; `.msi` (WiX) si algún cliente lo exige; binario universal de macOS.
 - Autoactualización dentro de la app vía el módulo `releases` de connect (hoy la actualiza iureapps).
 - `.rpm` (cargo-packager no lo genera; haría falta otra herramienta).

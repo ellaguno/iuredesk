@@ -3504,7 +3504,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "iuredesk"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "dirs",
  "eframe",
@@ -3525,7 +3525,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-accounts"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3548,7 +3548,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-assistant"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -3569,12 +3569,12 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-autoconfig"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "hickory-resolver",
  "iuredesk-model",
  "proptest",
- "quick-xml",
+ "quick-xml 0.41.0",
  "reqwest",
  "serde",
  "serde_json",
@@ -3584,7 +3584,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-compose"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3609,7 +3609,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-crypto"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -3643,13 +3643,13 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-dav"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "proptest",
- "quick-xml",
+ "quick-xml 0.41.0",
  "reqwest",
  "rrule",
  "thiserror 2.0.21",
@@ -3658,7 +3658,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-desktop"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.3"
 dependencies = [
  "block2 0.6.2",
  "dirs",
@@ -3675,7 +3675,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-engine"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3710,7 +3710,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-graph"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "iuredesk-compose",
@@ -3725,7 +3725,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-html-view"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -3747,7 +3747,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-imap"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3762,7 +3762,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-import"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3778,7 +3778,7 @@ dependencies = [
  "outlook-pst",
  "outlook-pst-rw",
  "proptest",
- "quick-xml",
+ "quick-xml 0.41.0",
  "serde",
  "serde_json",
  "sha2",
@@ -3788,7 +3788,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-integrations"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "anyhow",
  "dirs",
@@ -3803,7 +3803,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-mcp"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3825,7 +3825,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-model"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -3837,7 +3837,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-net"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "rustls",
  "thiserror 2.0.21",
@@ -3848,7 +3848,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-oauth"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3869,7 +3869,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-pim-sync"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3892,7 +3892,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-pop3"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "iuredesk-model",
@@ -3906,7 +3906,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-rules"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3929,7 +3929,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-store"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "chrono",
  "iuredesk-model",
@@ -3946,7 +3946,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-sync"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3969,7 +3969,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-ui"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "chrono",
  "egui",
@@ -5742,6 +5742,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
+name = "plist"
+version = "1.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "327a4cb2ad49dc48adfdc9da89e22c64d488b508c67a044d71ba729e4521a285"
+dependencies = [
+ "base64 0.23.1",
+ "indexmap",
+ "quick-xml 0.42.0",
+ "time",
+]
+
+[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5990,6 +6002,15 @@ name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
 dependencies = [
  "memchr",
 ]
@@ -8701,7 +8722,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "338e30461b3a2b67d70eb30a6d89f8e0c93a833e07d2ae89085cd070c4a00ac0"
 dependencies = [
  "proc-macro2",
- "quick-xml",
+ "quick-xml 0.41.0",
  "quote",
 ]
 
@@ -9534,7 +9555,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -9542,6 +9563,7 @@ dependencies = [
  "image",
  "minisign",
  "minisign-verify",
+ "plist",
  "resvg",
  "serde_json",
  "sha2",
