@@ -1,8 +1,11 @@
-# Publicación de PRUEBA: al subir una etiqueta vX.Y.Z compila los instaladores de los tres SO con
-# `cargo xtask package <so>` (cargo-packager) y crea un *borrador* de Release, marcado como
-# preliminar, en este mismo repositorio (público desde 2026-10-28, Apache-2.0).
-# Secretos: SUITE_REPOS_TOKEN (obligatorio) y los de firma (opcionales; sin ellos los paquetes
-# salen sin firmar). Ver docs/publicacion.md.
+# Publicación: al subir una etiqueta vX.Y.Z compila los instaladores de los tres SO con
+# `cargo xtask package <so>` (cargo-packager, nombres del esquema de iureapps), los firma con
+# minisign (`cargo xtask sign`) y publica el Release en este mismo repositorio (público desde
+# 2026-10-28, Apache-2.0) como «último» release: iureapps lo busca con /releases/latest, que
+# ignora borradores y preliminares; la alfa se indica en el título y en el catálogo de iureapps.
+# Secretos (todos opcionales): IUREDESK_MINISIGN_KEY (+ IUREDESK_MINISIGN_PASSWORD) para las
+# firmas que verifica iureapps, los de firma de código de macOS/Windows y SUITE_REPOS_TOKEN.
+# Ver docs/publicacion.md.
 name: Publicación
 
 on:
@@ -120,6 +123,18 @@ jobs:
           else
             cargo xtask package ${{ matrix.os }} --target ${{ matrix.target }}
           fi
+      - name: Firmas minisign (las verifica iureapps)
+        shell: bash
+        env:
+          IUREDESK_MINISIGN_KEY: ${{ secrets.IUREDESK_MINISIGN_KEY }}
+          IUREDESK_MINISIGN_PASSWORD: ${{ secrets.IUREDESK_MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$IUREDESK_MINISIGN_KEY" ]; then
+            echo "::warning::Sin el secreto IUREDESK_MINISIGN_KEY: los paquetes salen sin .sig y iureapps los instalará sin verificar."
+            exit 0
+          fi
+          shopt -s nullglob
+          cargo xtask sign dist/*.tar.gz dist/*.deb dist/*.AppImage dist/*.exe dist/*.msi dist/*.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: iuredesk-${{ matrix.target }}
@@ -131,9 +146,10 @@ jobs:
             dist/*.exe
             dist/*.msi
             dist/*.dmg
+            dist/*.sig
 
   release:
-    name: Borrador de Release
+    name: Release
     needs: package
     runs-on: ubuntu-22.04
     timeout-minutes: 15
@@ -145,12 +161,34 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: latest.json (alternativa de iureapps cuando la API de GitHub limita las consultas)
+        if: github.ref_type == 'tag'
+        working-directory: dist
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          entry() {
+            f="IureDesk_${VER}-$2"
+            [ -f "$f" ] || return 0
+            sig=""
+            if [ -f "$f.sig" ]; then sig="$(cat "$f.sig")"; fi
+            jq -n --arg k "$1" --arg u "$BASE/$f" --arg s "$sig" '{($k): {url: $u, signature: $s}}'
+          }
+          {
+            entry linux-x86_64 linux-x64.AppImage
+            entry linux-x86_64-deb linux-x64.deb
+            entry windows-x86_64 windows-x64.exe
+            entry darwin-aarch64 macos-arm64.app.tar.gz
+            entry darwin-x86_64 macos-x64.app.tar.gz
+          } | jq -s --arg v "$VER" --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg n "IureDesk $VER" \
+                '{version: $v, notes: $n, pub_date: $d, platforms: (add // {})}' > latest.json
+          cat latest.json
       - name: SHA256SUMS
         working-directory: dist
         run: |
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
-      - name: Borrador preliminar en este repositorio
+      - name: Release en este repositorio
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -158,11 +196,12 @@ jobs:
           NOTES="docs/notas/$GITHUB_REF_NAME.md"
           if [ ! -f "$NOTES" ]; then
             NOTES="$RUNNER_TEMP/notas.md"
-            printf 'IureDesk %s: versión de PRUEBA para Linux, Windows y macOS.\n\nVerifica la descarga con `sha256sum -c SHA256SUMS`.\n' "${GITHUB_REF_NAME#v}" > "$NOTES"
+            printf 'IureDesk %s: versión alfa para Linux, Windows y macOS.\n\nSe instala y actualiza desde iureapps (verifica las firmas minisign `.sig` con la clave de `docs/minisign.pub`). Verifica una descarga manual con `sha256sum -c SHA256SUMS`.\n' "${GITHUB_REF_NAME#v}" > "$NOTES"
           fi
+          # Ni --draft ni --prerelease: /releases/latest (lo que consulta iureapps) los ignora.
           gh release create "$GITHUB_REF_NAME" dist/* \
-            --repo "$GITHUB_REPOSITORY" --draft --prerelease \
-            --title "IureDesk ${GITHUB_REF_NAME#v} (prueba)" --notes-file "$NOTES"
+            --repo "$GITHUB_REPOSITORY" --latest \
+            --title "IureDesk ${GITHUB_REF_NAME#v} (alfa)" --notes-file "$NOTES"
       - uses: actions/upload-artifact@v4
         if: github.ref_type != 'tag'
         with:

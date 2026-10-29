@@ -10,6 +10,11 @@
 //!   `.vcf` en «Aplicaciones predeterminadas» (`packaging/windows/default-apps.nsh`).
 //! - macos: `.app` (Info.plist con el esquema `mailto` y los tipos de documento) y `.dmg`.
 //!
+//! Los instaladores se renombran al esquema de iureapps, el lanzador de la suite:
+//! `IureDesk_<versión>-linux-x64.AppImage`, `-linux-x64.deb`, `-windows-x64.exe`,
+//! `-macos-arm64.app.tar.gz`/`-macos-x64.app.tar.gz` (el `.app` en tar.gz) y `-macos-<arq>.dmg`.
+//! `cargo xtask sign` les agrega la firma minisign `.sig` que verifica iureapps.
+//!
 //! Todo queda en `dist/` con `SHA256SUMS`. Firma (opcional; sin las variables sale sin firmar):
 //! - macOS: `APPLE_SIGNING_IDENTITY` (+ `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD` en CI) y
 //!   notarización con `APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID` o `APPLE_API_KEY`/
@@ -142,7 +147,76 @@ pub fn package(raw: Vec<String>) -> Res {
     std::fs::write(&config_path, text).map_err(|e| format!("{}: {e}", config_path.display()))?;
 
     run_packager(&config_path, &target)?;
+    rename_for_iureapps(args.os, &version, &target, &dist)?;
     write_sums(&dist)
+}
+
+/// Plataforma en el esquema de nombres de iureapps (`select_asset` de su `catalog.rs`).
+fn platform(os: Os, target: &str) -> String {
+    let arch = if target.starts_with("aarch64") { "arm64" } else { "x64" };
+    let os = match os {
+        Os::Linux => "linux",
+        Os::Windows => "windows",
+        Os::Mac => "macos",
+    };
+    format!("{os}-{arch}")
+}
+
+/// Nombre publicado: `IureDesk_<versión>-<plataforma><ext>`. iureapps busca el instalador por el
+/// final del nombre (`-linux-x64.AppImage`, `-windows-x64.exe`, `-macos-arm64.app.tar.gz`…).
+fn asset_name(version: &str, platform: &str, ext: &str) -> String {
+    format!("{PRODUCT}_{version}-{platform}{ext}")
+}
+
+/// Renombra lo que deja cargo-packager al esquema de iureapps y, en macOS, empaqueta el `.app`
+/// como `.app.tar.gz` (lo que instala iureapps en /Applications).
+fn rename_for_iureapps(os: Os, version: &str, target: &str, dist: &Path) -> Res {
+    let plat = platform(os, target);
+    let exts: &[&str] = match os {
+        Os::Linux => &[".deb", ".AppImage"],
+        Os::Windows => &[".exe"],
+        Os::Mac => &[".dmg"],
+    };
+    let files: Vec<PathBuf> = std::fs::read_dir(dist)
+        .map_err(|e| format!("{}: {e}", dist.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .collect();
+    for ext in exts {
+        let found: Vec<&PathBuf> =
+            files.iter().filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().ends_with(ext))).collect();
+        let [from] = found.as_slice() else {
+            return Err(format!(
+                "esperaba un solo {ext} de cargo-packager en {} y hay {}",
+                dist.display(),
+                found.len()
+            ));
+        };
+        let to = dist.join(asset_name(version, &plat, ext));
+        std::fs::rename(from, &to).map_err(|e| format!("{} → {}: {e}", from.display(), to.display()))?;
+    }
+    if os == Os::Mac {
+        let app = dist.join(format!("{PRODUCT}.app"));
+        if !app.is_dir() {
+            return Err(format!("cargo-packager no dejó {}", app.display()));
+        }
+        tar_app(&app, &dist.join(asset_name(version, &plat, ".app.tar.gz")))?;
+    }
+    Ok(())
+}
+
+/// `IureDesk.app` → `.app.tar.gz` con la carpeta en la raíz, permisos y enlaces simbólicos tal cual.
+fn tar_app(app: &Path, out: &Path) -> Res {
+    let name = app.file_name().ok_or("ruta del .app sin nombre")?;
+    let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let gz = flate2::write::GzEncoder::new(file, flate2::Compression::best());
+    let mut tar = tar::Builder::new(gz);
+    tar.follow_symlinks(false);
+    tar.append_dir_all(name, app).map_err(|e| format!("{}: {e}", app.display()))?;
+    let gz = tar.into_inner().map_err(|e| e.to_string())?;
+    gz.finish().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Configuración de cargo-packager (esquema: `cargo_packager::Config`, camelCase).
@@ -305,7 +379,7 @@ fn run_packager(config: &Path, target: &str) -> Res {
 }
 
 /// Extensiones de los archivos publicables de `dist/`.
-const ARTIFACTS: &[&str] = &[".tar.gz", ".deb", ".AppImage", ".exe", ".msi", ".dmg"];
+const ARTIFACTS: &[&str] = &[".tar.gz", ".deb", ".AppImage", ".exe", ".msi", ".dmg", ".sig"];
 
 /// `SHA256SUMS` con todos los paquetes de `dist/` (formato de `sha256sum -c`).
 fn write_sums(dist: &Path) -> Res {
@@ -347,6 +421,54 @@ mod tests {
         assert!(parse_args(&strings(&["haiku"])).is_err());
         assert!(parse_args(&strings(&["linux", "--tag"])).is_err());
         assert!(parse_args(&strings(&["linux", "--foo", "x"])).is_err());
+    }
+
+    /// Los nombres terminan como los busca iureapps (`-{plataforma}{ext}`).
+    #[test]
+    fn iureapps_names() {
+        let n = |os, target, ext| asset_name("0.1.0-alpha.1", &platform(os, target), ext);
+        assert_eq!(n(Os::Linux, crate::DIST_TARGET, ".AppImage"), "IureDesk_0.1.0-alpha.1-linux-x64.AppImage");
+        assert_eq!(n(Os::Linux, crate::DIST_TARGET, ".deb"), "IureDesk_0.1.0-alpha.1-linux-x64.deb");
+        assert_eq!(n(Os::Windows, "x86_64-pc-windows-msvc", ".exe"), "IureDesk_0.1.0-alpha.1-windows-x64.exe");
+        assert_eq!(n(Os::Mac, "aarch64-apple-darwin", ".app.tar.gz"), "IureDesk_0.1.0-alpha.1-macos-arm64.app.tar.gz");
+        assert_eq!(n(Os::Mac, "x86_64-apple-darwin", ".app.tar.gz"), "IureDesk_0.1.0-alpha.1-macos-x64.app.tar.gz");
+    }
+
+    #[test]
+    fn renames_packager_output() -> Res {
+        let dist = std::env::temp_dir().join(format!("iuredesk-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dist);
+        std::fs::create_dir_all(&dist).map_err(|e| e.to_string())?;
+        for f in ["iuredesk_1.0.0_amd64.deb", "iuredesk_1.0.0_x86_64.AppImage", "iuredesk-1.0.0-x86_64-linux.tar.gz"] {
+            std::fs::write(dist.join(f), b"x").map_err(|e| e.to_string())?;
+        }
+        rename_for_iureapps(Os::Linux, "1.0.0", crate::DIST_TARGET, &dist)?;
+        for f in
+            ["IureDesk_1.0.0-linux-x64.deb", "IureDesk_1.0.0-linux-x64.AppImage", "iuredesk-1.0.0-x86_64-linux.tar.gz"]
+        {
+            assert!(dist.join(f).is_file(), "falta {f}");
+        }
+        // Sin el paquete esperado es un error, no un release a medias.
+        assert!(rename_for_iureapps(Os::Windows, "1.0.0", "x86_64-pc-windows-msvc", &dist).is_err());
+
+        // macOS: el .app se empaqueta con la carpeta en la raíz.
+        let app = dist.join("IureDesk.app/Contents/MacOS");
+        std::fs::create_dir_all(&app).map_err(|e| e.to_string())?;
+        std::fs::write(app.join("iuredesk"), b"bin").map_err(|e| e.to_string())?;
+        std::fs::write(dist.join("IureDesk_1.0.0_aarch64.dmg"), b"x").map_err(|e| e.to_string())?;
+        rename_for_iureapps(Os::Mac, "1.0.0", "aarch64-apple-darwin", &dist)?;
+        assert!(dist.join("IureDesk_1.0.0-macos-arm64.dmg").is_file());
+        let tgz = std::fs::File::open(dist.join("IureDesk_1.0.0-macos-arm64.app.tar.gz")).map_err(|e| e.to_string())?;
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(tgz));
+        let names: Vec<String> = archive
+            .entries()
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .filter_map(|e| e.path().ok().map(|p| p.to_string_lossy().into_owned()))
+            .collect();
+        assert!(names.iter().any(|n| n == "IureDesk.app/Contents/MacOS/iuredesk"), "{names:?}");
+        let _ = std::fs::remove_dir_all(&dist);
+        Ok(())
     }
 
     #[test]
