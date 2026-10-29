@@ -153,8 +153,14 @@ mod tests {
 
     #[test]
     fn enlaces() {
-        let l = editor_link(&EditorTarget::File(PathBuf::from("/tmp/a b.md"))).unwrap();
-        assert_eq!(l, "iureditor://open?path=%2Ftmp%2Fa%20b.md");
+        // Ruta absoluta según el sistema (en Windows «/tmp/…» no es absoluta).
+        let (path, encoded) = if cfg!(windows) {
+            (r"C:\tmp\a b.md", "C%3A%5Ctmp%5Ca%20b.md")
+        } else {
+            ("/tmp/a b.md", "%2Ftmp%2Fa%20b.md")
+        };
+        let l = editor_link(&EditorTarget::File(PathBuf::from(path))).unwrap();
+        assert_eq!(l, format!("iureditor://open?path={encoded}"));
         let l = editor_link(&EditorTarget::Insert { text: "Hola, mundo.\n".into(), path: None }).unwrap();
         assert_eq!(l, "iureditor://insert?text=Hola%2C%20mundo.%0A");
         let l = editor_link(&EditorTarget::IurefficientDoc {
