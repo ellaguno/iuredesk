@@ -312,3 +312,29 @@ proptest::proptest! {
         });
     }
 }
+
+/// F7.1: CREATE / RENAME / DELETE (con nombres no ASCII en UTF-7 modificado); crear lo que ya
+/// existe o borrar lo que ya no está no es un error.
+#[tokio::test]
+async fn create_rename_delete_mailboxes() {
+    let s = server(FakeCaps::default(), 0).await;
+    let mut c = login(&s).await;
+    let name = iuredesk_imap::mutf7::encode("Pospuestos");
+    c.create(&name).await.unwrap();
+    c.create(&name).await.unwrap();
+    assert!(s.mailbox_names().contains(&"Pospuestos".to_string()));
+    let utf = iuredesk_imap::mutf7::encode("Clientes/Año 2026");
+    c.create(&utf).await.unwrap();
+    assert!(s.mailbox_names().contains(&utf));
+    assert!(c.list().await.unwrap().iter().any(|m| m.leaf == "Año 2026" || m.path == utf));
+    c.select(&name, &SelectOptions::default()).await.unwrap();
+    c.rename(&name, "Snoozed").await.unwrap();
+    assert!(s.mailbox_names().contains(&"Snoozed".to_string()));
+    assert!(!s.mailbox_names().contains(&name));
+    c.delete_mailbox("Snoozed").await.unwrap();
+    c.delete_mailbox("Snoozed").await.unwrap();
+    assert!(!s.mailbox_names().contains(&"Snoozed".to_string()));
+    assert!(matches!(c.delete_mailbox("INBOX").await, Err(ImapError::InvalidInput(_))));
+    assert!(matches!(c.create("a\r\nb").await, Err(ImapError::InvalidInput(_))));
+    assert!(matches!(c.create("*").await, Err(ImapError::InvalidInput(_))));
+}

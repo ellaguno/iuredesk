@@ -50,6 +50,9 @@ pub struct PimAccount {
     pub account: Account,
     /// De dónde salen sus calendarios y contactos.
     pub source: PimSource,
+    /// Raíz de la API de Google Tasks (cuentas de Google: su CalDAV no tiene tareas). `None` =
+    /// las tareas van con `source` (CalDAV `VTODO`, Graph To Do).
+    pub tasks_api: Option<String>,
 }
 
 impl PimAccount {
@@ -61,6 +64,7 @@ impl PimAccount {
             || matches!(a.outgoing.auth, AuthMethod::OAuth2 { .. });
         let username =
             if a.incoming.username.trim().is_empty() { a.email.clone() } else { a.incoming.username.clone() };
+        let google = a.kind == AccountKind::Gmail && oauth;
         let source = match a.kind {
             AccountKind::Iurefficient => return None,
             AccountKind::Microsoft365 if oauth => PimSource::Graph { base_url: GRAPH_BASE.into() },
@@ -97,7 +101,8 @@ impl PimAccount {
                 }
             }
         };
-        Some(Self { account: a.clone(), source })
+        let tasks_api = google.then(|| crate::gtasks::GOOGLE_TASKS_BASE.to_string());
+        Some(Self { account: a.clone(), source, tasks_api })
     }
 
     /// Nuestras direcciones (la de la cuenta y las de sus identidades), en minúsculas.
@@ -208,6 +213,9 @@ mod tests {
             PimAccount::from_account(&acct(AccountKind::Gmail, AuthMethod::OAuth2 { provider: OAuthProvider::Google }))
                 .unwrap();
         assert!(matches!(g.source, PimSource::Dav { auth: DavAuth::OAuth, .. }));
+        // Google: las tareas van por la API de Tasks (su CalDAV no tiene VTODO).
+        assert_eq!(g.tasks_api.as_deref(), Some(crate::GOOGLE_TASKS_BASE));
+        assert_eq!(p.tasks_api, None);
         // BUG-GCAL: la raíz genérica que guarda el autodescubrimiento da 404; se usa la libreta
         // del usuario. La raíz CalDAV genérica sí descubre y se respeta.
         let mut gs = acct(AccountKind::Gmail, AuthMethod::OAuth2 { provider: OAuthProvider::Google });

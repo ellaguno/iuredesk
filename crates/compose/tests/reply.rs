@@ -326,3 +326,48 @@ fn garbage_original_does_not_panic() {
     }
     assert!(reply(ORIGINAL.as_bytes(), &[], ReplyMode::All, &ReplyOptions::default()).is_err());
 }
+
+/// F7.1: un borrador guardado se reabre con todo: identidad del «De:», Para/CC/CCO, asunto,
+/// cuerpo enriquecido, adjuntos, `In-Reply-To`/`References`, prioridad y acuse.
+#[test]
+fn saved_draft_reopens_with_everything() {
+    let mut d = iuredesk_compose::Draft::new(id("Yo Ventas", "ventas@mia.mx"));
+    d.set_to("Ana <ana@acme.mx>").unwrap();
+    d.set_cc("carla@otra.mx").unwrap();
+    d.set_bcc("oculto@mia.mx").unwrap();
+    d.subject = "Re: Propuesta Q4 — ajustes".into();
+    d.body = RichBody::from_markdown("Hola **Ana**,\n\n- uno\n- dos\n\nSaludos");
+    d.in_reply_to = Some("<orig-2@acme.mx>".into());
+    d.references = vec!["<orig-1@acme.mx>".into(), "<orig-2@acme.mx>".into()];
+    d.priority = iuredesk_compose::Priority::High;
+    d.request_read_receipt = true;
+    d.attachments.push(iuredesk_compose::Attachment::bytes(
+        "cotizacion.pdf",
+        "application/pdf",
+        b"%PDF-1.4 x".to_vec(),
+    ));
+    let opts = iuredesk_compose::BuildOptions { keep_bcc: true, ..iuredesk_compose::BuildOptions::now() };
+    let built = build_message(&d, &FsResolver, &opts).unwrap();
+
+    let back = iuredesk_compose::reopen_draft(&built.raw, &me()).unwrap();
+    assert_eq!(back.identity.email, "ventas@mia.mx");
+    assert_eq!(addrs(&back.to), vec!["ana@acme.mx"]);
+    assert_eq!(addrs(&back.cc), vec!["carla@otra.mx"]);
+    assert_eq!(addrs(&back.bcc), vec!["oculto@mia.mx"]);
+    assert_eq!(back.subject, "Re: Propuesta Q4 — ajustes");
+    assert_eq!(back.in_reply_to.as_deref(), Some("<orig-2@acme.mx>"));
+    assert_eq!(back.references, vec!["<orig-1@acme.mx>".to_string(), "<orig-2@acme.mx>".to_string()]);
+    assert_eq!(back.priority, iuredesk_compose::Priority::High);
+    assert!(back.request_read_receipt);
+    assert_eq!(back.attachments.len(), 1);
+    assert_eq!(back.attachments[0].filename, "cotizacion.pdf");
+    let md = back.body.to_markdown();
+    assert!(md.contains("**Ana**"), "{md}");
+    assert!(md.contains("- uno"), "{md}");
+
+    // Identidad desconocida: la primera; basura: error, no pánico.
+    let other = iuredesk_compose::reopen_draft(&built.raw, &[id("Otra", "otra@x.mx")]).unwrap();
+    assert_eq!(other.identity.email, "otra@x.mx");
+    let _ = iuredesk_compose::reopen_draft(b"\x00\xff garbage", &me());
+    assert!(iuredesk_compose::reopen_draft(&built.raw, &[]).is_err());
+}

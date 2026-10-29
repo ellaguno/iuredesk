@@ -46,8 +46,8 @@ pub mod transport;
 
 pub use address::{AddressError, needs_smtputf8, parse_address, parse_address_list};
 pub use draft::{
-    Attachment, AttachmentKind, AttachmentSource, CalendarMethod, CalendarPart, Draft, ForwardMode, Forwarded,
-    OriginalKind, OriginalRef, Priority,
+    Attachment, AttachmentKind, AttachmentSource, AutoSubmitted, CalendarMethod, CalendarPart, Draft, ForwardMode,
+    Forwarded, OriginalKind, OriginalRef, Priority,
 };
 pub use error::{ComposeError, Result};
 pub use lang::Lang;
@@ -60,7 +60,7 @@ pub use outbox::{
     Clock, ManualClock, Outbox, OutboxConfig, OutboxEntry, OutboxId, OutboxState, SendOutcome, SystemClock,
     TransportSource,
 };
-pub use reply::{ReplyMode, ReplyOptions, SubjectStyle, forward, forward_subject, reply, reply_subject};
+pub use reply::{ReplyMode, ReplyOptions, SubjectStyle, forward, forward_subject, reopen_draft, reply, reply_subject};
 pub use rich::{Block, Image, Inline, RichBody, Span, Style};
 pub use signature::{Signature, SignatureBook, SignaturePlacement};
 pub use template::TemplateStore;

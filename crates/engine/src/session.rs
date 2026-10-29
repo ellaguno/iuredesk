@@ -10,12 +10,15 @@ mod accounts;
 mod assist_glue;
 mod cal;
 mod contacts;
+mod folders;
 mod iure;
 mod live;
 mod mailops;
+mod notes;
 mod outbox;
 mod pim;
 mod rules_glue;
+mod tasks;
 mod today;
 
 pub use accounts::{ConnectionTest, kind_label, servers_editable, validate_account};
@@ -24,6 +27,7 @@ pub use contacts::{contact_display_name, contact_is_empty};
 pub use iure::{IURE_CALENDAR_PATH, IURE_TASKS_PATH, IurePanel, IureSetup, LeadSuggestions, LoginState};
 pub use live::{AccountSync, SyncStatus};
 pub use mailops::AccountRow;
+pub use notes::{note_matches, note_title};
 pub use outbox::OfflineTransport;
 pub use rules_glue::{IureBadge, IureKind, RulePlace, SieveRow};
 pub use today::{folder_from_key, folder_key};
@@ -290,6 +294,11 @@ enum Inverse {
     Contacts(Vec<contacts::ContactSnap>),
     /// Reglas, posponer, seguimientos (F5.3).
     Rules(Box<rules_glue::RulesUndo>),
+    /// Notas (F7.1).
+    Note(Box<notes::NoteUndo>),
+    /// Tarea agregada (se borra) o borrada (vuelve) (F7.1).
+    TaskAdded(TaskId),
+    TaskDeleted(Box<Task>),
 }
 
 #[derive(Clone, Debug)]
@@ -368,6 +377,8 @@ pub struct Session {
     contacts_cache: Option<Vec<Contact>>,
     /// Contactos seleccionados en la lista.
     contact_selection: Vec<iuredesk_model::ContactId>,
+    /// Nota enfocada (F7.1).
+    note_focus: Option<iuredesk_model::NoteId>,
     /// Última «Probar conexión» del editor de cuentas (id de la cuenta y estado).
     connection_test: Option<(String, accounts::ConnectionTest)>,
     calendars: Vec<Calendar>,
@@ -446,6 +457,7 @@ impl Session {
             wizard: None,
             contacts_cache: None,
             contact_selection: Vec::new(),
+            note_focus: None,
             connection_test: None,
             calendars: Vec::new(),
             events_cache: None,
@@ -1059,6 +1071,8 @@ impl Session {
         let base = id.split_once(':').map_or(id, |(b, _)| b);
         match base {
             "mail.reply" | "mail.reply_all" | "mail.forward" => self.focused.is_some(),
+            "mail.edit_draft" => self.focused.is_some_and(|m| self.is_draft(m)),
+            "notes.delete" | "notes.open_editor" => self.note_focus.is_some(),
             "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
                 !self.contact_selection.is_empty()
             }
@@ -1106,6 +1120,8 @@ impl Session {
             b if b.starts_with("print.") || b.starts_with("security.") => Ok(Outcome::Assist(b.to_string())),
             b if b.starts_with("ai.") || b.starts_with("suite.") || b == "app.import" => self.run_assist(b),
             b if rules_glue::handles(b) => self.run_rules(b, arg),
+            // «Nuevo» en Notas es una nota.
+            "mail.new" | "notes.new" if self.module == Module::Notes || base == "notes.new" => self.new_note(),
             "mail.new" => {
                 let account = match self.folder {
                     FolderSel::Folder(f) => self.folder(f).map(|f| f.account),
@@ -1118,6 +1134,10 @@ impl Session {
                 self.run_delete_contacts(arg)
             }
             "mail.reply" | "mail.reply_all" | "mail.forward" => self.reply_like(base),
+            "mail.edit_draft" => self.edit_draft_focused(),
+            "mail.new_folder" | "mail.rename_folder" | "mail.delete_folder" => self.run_folder_command(base, arg),
+            "notes.delete" => self.run_delete_note(arg),
+            "notes.open_editor" => Ok(Outcome::Assist("notes.open_editor".into())),
             "mail.archive" => self.archive(),
             "mail.delete" => self.delete(),
             "mail.toggle_read" => self.toggle_read(),
@@ -1415,8 +1435,11 @@ impl Session {
                 Inverse::Calendar(u) => self.undo_calendar(*u)?,
                 Inverse::Contacts(s) => self.undo_contacts(s)?,
                 Inverse::Rules(u) => self.undo_rules(*u)?,
+                Inverse::Note(u) => self.undo_note(*u)?,
+                Inverse::TaskAdded(id) => self.undo_task_added(id)?,
+                Inverse::TaskDeleted(t) => self.undo_task_deleted(*t)?,
                 Inverse::Task(t) => {
-                    self.store.put_task(&t).map_err(store_err)?;
+                    self.restore_task(&t)?;
                     self.data_gen = self.data_gen.wrapping_add(1);
                 }
             }
@@ -1702,7 +1725,7 @@ impl Session {
             new.completed = Some(self.now());
             new.percent_complete = 100;
         }
-        self.store.put_task(&new).map_err(store_err)?;
+        self.write_task(&new)?;
         self.data_gen = self.data_gen.wrapping_add(1);
         self.iure_task_toggled(&new);
         let text = if new.is_done() {

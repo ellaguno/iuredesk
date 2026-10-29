@@ -402,3 +402,41 @@ fn quoted_history_is_collapsed_in_the_reading_pane() {
     settle(&mut h);
     assert!(h.query_by_label("Ocultar texto citado").is_some());
 }
+
+/// F7.1: un borrador guardado se reabre en el redactor desde «Borradores» con «Editar borrador».
+#[test]
+fn saved_draft_reopens_in_the_composer() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = sample_app(dir.path(), false);
+    app.demo_reopen_draft();
+    assert_eq!(app.composer_count(), 1);
+    assert_eq!(app.composer_subject().as_deref(), Some("Propuesta de honorarios — caso 241/2026"));
+    let mut h = harness(app, vec2(1440.0, 900.0));
+    settle(&mut h);
+    assert!(h.query_all_by_label_contains("Editar borrador").next().is_some(), "botón en la barra");
+}
+
+/// F7.1: «Nueva nota» abre el editor con título y texto (Markdown) y se guarda sola.
+#[test]
+fn new_note_is_edited_and_autosaved() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(sample_app(dir.path(), true), vec2(1280.0, 800.0));
+    settle(&mut h);
+    h.query_all_by_label_contains("Notas").next().unwrap().click();
+    settle(&mut h);
+    let before = h.state().session.notes().len();
+    h.query_by_label("Nueva nota").expect("botón Nueva nota").click();
+    settle(&mut h);
+    assert_eq!(h.state().session.notes().len(), before + 1);
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Título de la nota").focus();
+    h.run();
+    h.event(egui::Event::Text("Minuta".into()));
+    settle(&mut h);
+    assert!(h.query_by_label("Texto de la nota").is_some());
+    // Al salir de Notas se guarda lo escrito (y antes, tras una breve pausa).
+    h.query_all_by_label_contains("Correo (").next().unwrap().click();
+    settle(&mut h);
+    assert!(h.state().session.notes().iter().any(|n| n.title == "Minuta"), "se guardó");
+}

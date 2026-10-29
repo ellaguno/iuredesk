@@ -170,6 +170,8 @@ pub fn reply_draft(
         d.subject = subject.trim().to_string();
     }
     d.body = crate::apply::plain(body);
+    // RFC 3834 §5: así ningún otro contestador nos responde (ni hay bucles).
+    d.auto_submitted = Some(iuredesk_compose::AutoSubmitted::AutoReplied);
     Some(d)
 }
 
@@ -207,6 +209,9 @@ mod tests {
         for (h, v) in [
             ("Auto-Submitted", "auto-replied"),
             ("Precedence", "bulk"),
+            ("Precedence", "list"),
+            ("Precedence", "junk"),
+            ("Auto-Submitted", "auto-generated"),
             ("List-Id", "<x.example>"),
             ("X-Loop", "yo"),
             ("Return-Path", "<>"),
@@ -230,6 +235,20 @@ mod tests {
             busy.record_reply("z@z.example", now);
         }
         assert!(!may_auto_reply(&facts("b@c.example", vec![]), &mine, &busy, now, 7));
+    }
+
+    /// F7.1: la respuesta automática sale con `Auto-Submitted: auto-replied` (RFC 3834 §5).
+    #[test]
+    fn auto_reply_is_marked_auto_submitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let ident =
+            Identity { name: "Yo".into(), email: "yo@despacho.example".into(), signature: None, reply_to: None };
+        let f = facts("ana@cliente.example", vec![]);
+        let d = reply_draft(&store, &f, &[ident], "Fuera de la oficina", "Vuelvo el lunes.", &ReplyOptions::default())
+            .unwrap();
+        assert_eq!(d.auto_submitted, Some(iuredesk_compose::AutoSubmitted::AutoReplied));
+        assert_eq!(d.to.first().map(|m| m.addr.as_str()), Some("ana@cliente.example"));
     }
 
     #[test]

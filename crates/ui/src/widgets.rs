@@ -194,6 +194,12 @@ pub fn secret_field(ui: &mut Ui, value: &mut String, id_salt: &str, hint: &str, 
     inner.inner
 }
 
+/// Nombre accesible de un campo de texto (conserva el papel de campo editable; F7.1).
+pub fn text_label(resp: &Response, text: &str) {
+    let (enabled, text) = (resp.enabled(), text.to_string());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, enabled, text.clone()));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

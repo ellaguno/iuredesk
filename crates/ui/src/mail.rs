@@ -35,6 +35,30 @@ pub struct MailState {
     card: Option<(MessageId, u64, ContextCard)>,
     /// Mensajes con la historia citada desplegada.
     show_quoted: HashSet<MessageId>,
+    /// F7.1: «Nueva carpeta…» / «Renombrar…» abierto.
+    pub(crate) folder_dialog: Option<FolderDialog>,
+}
+
+/// Qué pide el diálogo de carpeta.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FolderDialogKind {
+    New { account: AccountId, parent: Option<iuredesk_model::FolderId> },
+    Rename { folder: iuredesk_model::FolderId },
+}
+
+/// Diálogo de nombre de carpeta.
+#[derive(Clone, Debug)]
+pub(crate) struct FolderDialog {
+    pub kind: FolderDialogKind,
+    pub name: String,
+    pub error: Option<String>,
+}
+
+/// Lo que se eligió en el menú de una carpeta.
+enum FolderAct {
+    New(AccountId, Option<iuredesk_model::FolderId>),
+    Rename(iuredesk_model::FolderId, String),
+    Delete(iuredesk_model::FolderId),
 }
 
 impl Default for MailState {
@@ -49,6 +73,7 @@ impl Default for MailState {
                 Column::new(pick("Received", "Recibido"), 92.0).right().min_width(64.0).not_sortable(),
             ],
             list_for: None,
+            folder_dialog: None,
             search: String::new(),
             focus_search: false,
             expanded_accounts: HashSet::new(),
@@ -77,6 +102,8 @@ pub fn folder_icon(r: FolderRole) -> Icon {
 /// La vista de correo completa.
 pub fn show(app: &mut DeskApp, ui: &mut Ui) {
     split::left(ui, "folders", PaneKind::Sidebar, 244.0, 190.0..=380.0, |ui| folders(app, ui));
+    let ctx = ui.ctx().clone();
+    folder_dialog(app, &ctx);
 
     let focused = app.session.focused();
     let card = focused.map(|id| context_card(app, id)).unwrap_or_default();
@@ -219,7 +246,14 @@ fn folders(app: &mut DeskApp, ui: &mut Ui) {
             // Clic derecho: configurar o quitar la cuenta (Ajustes → Cuentas).
             let key = rows.iter().find(|r| r.aid == Some(l.id)).map(|r| r.id.clone()).unwrap_or_default();
             let mut action: Option<bool> = None;
+            let manage = app.session.can_manage_folders(l.id);
+            let mut folder_act: Option<FolderAct> = None;
             egui::Popup::context_menu(&head).show(|ui| {
+                if manage && icons::menu_item(ui, Some(Icon::Folder), pick("New folder…", "Nueva carpeta…")).clicked()
+                {
+                    folder_act = Some(FolderAct::New(l.id, None));
+                    ui.close();
+                }
                 if icons::menu_item(ui, Some(Icon::Settings), pick("Account settings…", "Configurar cuenta…")).clicked()
                 {
                     action = Some(false);
@@ -249,23 +283,76 @@ fn folders(app: &mut DeskApp, ui: &mut Ui) {
                     } else {
                         app.session.count(fid).unread
                     };
+                    let custom = manage && role == FolderRole::Custom;
                     ui.horizontal(|ui| {
                         ui.add_space(14.0);
                         let on = !searching && current == FolderSel::Folder(fid);
-                        if sidebar_item(
+                        let r = sidebar_item(
                             ui,
                             Some(folder_icon(role)),
                             &name,
                             u32::try_from(unread).unwrap_or(u32::MAX),
                             on,
-                        )
-                        .clicked()
-                        {
+                        );
+                        if r.clicked() {
                             app.session.select_folder(FolderSel::Folder(fid));
                             app.mail.search.clear();
                         }
+                        // F7.1: clic derecho → nueva (sub)carpeta, renombrar, eliminar.
+                        if manage {
+                            egui::Popup::context_menu(&r).show(|ui| {
+                                if icons::menu_item(ui, Some(Icon::Folder), pick("New folder…", "Nueva carpeta…"))
+                                    .clicked()
+                                {
+                                    folder_act = Some(FolderAct::New(l.id, None));
+                                    ui.close();
+                                }
+                                if custom {
+                                    if icons::menu_item(
+                                        ui,
+                                        Some(Icon::Plus),
+                                        pick("New subfolder…", "Nueva subcarpeta…"),
+                                    )
+                                    .clicked()
+                                    {
+                                        folder_act = Some(FolderAct::New(l.id, Some(fid)));
+                                        ui.close();
+                                    }
+                                    if icons::menu_item(ui, Some(Icon::Rename), pick("Rename…", "Renombrar…")).clicked()
+                                    {
+                                        folder_act = Some(FolderAct::Rename(fid, name.clone()));
+                                        ui.close();
+                                    }
+                                    if icons::menu_item(
+                                        ui,
+                                        Some(Icon::Trash),
+                                        pick("Delete folder…", "Eliminar carpeta…"),
+                                    )
+                                    .clicked()
+                                    {
+                                        folder_act = Some(FolderAct::Delete(fid));
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        }
                     });
                 }
+            }
+            match folder_act {
+                Some(FolderAct::New(account, parent)) => {
+                    app.mail.folder_dialog = Some(FolderDialog {
+                        kind: FolderDialogKind::New { account, parent },
+                        name: String::new(),
+                        error: None,
+                    });
+                }
+                Some(FolderAct::Rename(folder, name)) => {
+                    app.mail.folder_dialog =
+                        Some(FolderDialog { kind: FolderDialogKind::Rename { folder }, name, error: None });
+                }
+                Some(FolderAct::Delete(f)) => app.run(&ctx, &format!("mail.delete_folder:{}", f.get())),
+                None => {}
             }
             ui.add_space(2.0);
         }
@@ -796,15 +883,100 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         session.set_selection(ids, cursor);
         mail.expanded.clear();
     }
+    let mut edit_draft = false;
     if let Some(i) = out.activated
         && let Some(r) = rows.get(i)
     {
         session.set_selection(vec![r.id], Some(r.id));
+        // F7.1: doble clic / Intro en un borrador lo reabre en el redactor.
+        edit_draft = session.is_draft(r.id);
     }
     if let Some(i) = out.context {
         let _ = i;
         let resp = out.response.clone();
         message_menu(app, &resp);
+    }
+    if edit_draft {
+        app.run(&ctx, "mail.edit_draft");
+    }
+}
+
+/// F7.1: diálogo «Nueva carpeta» / «Renombrar carpeta».
+pub(crate) fn folder_dialog(app: &mut DeskApp, ctx: &egui::Context) {
+    let Some(mut d) = app.mail.folder_dialog.clone() else { return };
+    let (title, ok_label) = match d.kind {
+        FolderDialogKind::New { parent: Some(_), .. } => {
+            (pick("New subfolder", "Nueva subcarpeta"), pick("Create", "Crear"))
+        }
+        FolderDialogKind::New { .. } => (pick("New folder", "Nueva carpeta"), pick("Create", "Crear")),
+        FolderDialogKind::Rename { .. } => (pick("Rename folder", "Renombrar carpeta"), pick("Rename", "Renombrar")),
+    };
+    let mut answer: Option<bool> = None;
+    let modal = egui::Modal::new(egui::Id::unique("folder-dialog")).show(ctx, |ui| {
+        ui.set_width(340.0);
+        let c = theme::colors(ui);
+        ui.label(RichText::new(title).font(theme::bold_font(ui.ctx(), 16.0)).color(c.text));
+        ui.add_space(8.0);
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut d.name)
+                .hint_text(pick("Folder name", "Nombre de la carpeta"))
+                .desired_width(f32::INFINITY),
+        );
+        crate::widgets::text_label(&r, pick("Folder name", "Nombre de la carpeta"));
+        if !r.has_focus() && d.error.is_none() && d.name.is_empty() {
+            r.request_focus();
+        }
+        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            answer = Some(true);
+        }
+        if let Some(e) = &d.error {
+            ui.add_space(4.0);
+            ui.add(egui::Label::new(RichText::new(e).color(c.danger)).wrap());
+        }
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            let ok = ui.add_enabled(
+                !d.name.trim().is_empty(),
+                egui::Button::new(RichText::new(ok_label).color(c.on_accent)).fill(c.accent),
+            );
+            if ok.clicked() {
+                answer = Some(true);
+            }
+            if ui.button(pick("Cancel", "Cancelar")).clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    match answer {
+        Some(true) => {
+            let r = match d.kind {
+                FolderDialogKind::New { account, parent } => {
+                    app.session.create_folder(account, parent, &d.name).map(|f| {
+                        app.session.select_folder(FolderSel::Folder(f));
+                        iuredesk_engine::Outcome::Notice(iuredesk_engine::Notice::success(
+                            format!("Folder \"{}\" created", d.name.trim()),
+                            format!("Carpeta «{}» creada", d.name.trim()),
+                        ))
+                    })
+                }
+                FolderDialogKind::Rename { folder } => app.session.rename_folder(folder, &d.name),
+            };
+            match r {
+                Ok(out) => {
+                    app.mail.folder_dialog = None;
+                    app.outcome(ctx, out);
+                }
+                Err(e) => {
+                    d.error = Some(e.text().get().to_string());
+                    app.mail.folder_dialog = Some(d);
+                }
+            }
+        }
+        Some(false) => app.mail.folder_dialog = None,
+        None => app.mail.folder_dialog = Some(d),
     }
 }
 
@@ -952,10 +1124,19 @@ fn action_bar(app: &mut DeskApp, ui: &mut Ui) {
     let mut fire: Option<&'static str> = None;
     let snooze = app.session.snooze_menu();
     let snoozed = app.session.focused().is_some_and(|m| app.session.is_snoozed(m));
+    let draft = app.session.focused().is_some_and(|m| app.session.is_draft(m));
     let mut extra: Option<String> = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         let narrow = ui.available_width() < 520.0;
+        // F7.1: un borrador se reabre en el redactor (también con doble clic o Intro).
+        if draft {
+            let label = pick("Edit draft", "Editar borrador");
+            if tool_button(ui, Icon::Rename, label, &tip(label, "mail.edit_draft"), true).clicked() {
+                fire = Some("mail.edit_draft");
+            }
+            ui.add_space(6.0);
+        }
         for (id, ic, en, es) in [
             ("mail.reply", Icon::Reply, "Reply", "Responder"),
             ("mail.reply_all", Icon::ReplyAll, "Reply all", "Responder a todos"),

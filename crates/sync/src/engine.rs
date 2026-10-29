@@ -56,6 +56,7 @@ pub(crate) enum Cmd {
 struct AccountSlot {
     id: String,
     acct: AccountId,
+    kind: BackendKind,
     tx: mpsc::Sender<Cmd>,
     worker: Arc<dyn MailBackend>,
 }
@@ -211,7 +212,7 @@ impl SyncEngine {
                 }
             };
             tasks.push(rt.spawn(run_worker(Arc::clone(&worker), rx, inner.shutdown.subscribe())));
-            inner.slots.push(AccountSlot { id: account.id.clone(), acct, tx, worker });
+            inner.slots.push(AccountSlot { id: account.id.clone(), acct, kind, tx, worker });
         }
         inner.rt = Some(rt);
         inner.tasks = Mutex::new(tasks);
@@ -476,6 +477,43 @@ impl SyncHandle {
     /// ¿La cuenta usa etiquetas de Gmail (las carpetas son etiquetas)?
     pub fn uses_labels(&self, acct: AccountId) -> bool {
         state::is_gmail_labels(&self.inner.store, acct)
+    }
+
+    /// Cómo nombra carpetas el servidor de la cuenta (`None`: POP3 o cuenta que no está aquí).
+    pub fn folder_style(&self, acct: AccountId) -> Option<crate::ops::FolderStyle> {
+        match self.slot_by_acct(acct)?.kind {
+            BackendKind::Imap => {
+                Some(crate::ops::FolderStyle::Imap { delimiter: crate::ops::imap_delimiter(&self.inner.store, acct) })
+            }
+            BackendKind::Graph => Some(crate::ops::FolderStyle::Graph),
+            BackendKind::Pop3 => None,
+        }
+    }
+
+    /// Crea una carpeta (etiqueta en Gmail) en local al instante y en el servidor en segundo plano.
+    pub fn create_folder(&self, acct: AccountId, parent: Option<FolderId>, name: &str) -> Result<FolderId> {
+        let style = self.folder_style(acct).ok_or(SyncError::NoFolders)?;
+        let id = ops::create_folder(&self.inner.store, acct, parent, name, style)?;
+        self.kick(acct);
+        Ok(id)
+    }
+
+    /// Cambia el nombre de una carpeta propia.
+    pub fn rename_folder(&self, folder: FolderId, name: &str) -> Result<()> {
+        let f = self.inner.store.get_folder(folder)?.ok_or_else(|| SyncError::MessageNotFound(folder.to_string()))?;
+        let style = self.folder_style(f.account).ok_or(SyncError::NoFolders)?;
+        ops::rename_folder(&self.inner.store, folder, name, style)?;
+        self.kick(f.account);
+        Ok(())
+    }
+
+    /// Borra una carpeta propia y su contenido.
+    pub fn delete_folder(&self, folder: FolderId) -> Result<()> {
+        let f = self.inner.store.get_folder(folder)?.ok_or_else(|| SyncError::MessageNotFound(folder.to_string()))?;
+        self.folder_style(f.account).ok_or(SyncError::NoFolders)?;
+        ops::delete_folder(&self.inner.store, folder)?;
+        self.kick(f.account);
+        Ok(())
     }
 
     /// Borra definitivamente (local al instante; se replica en segundo plano).

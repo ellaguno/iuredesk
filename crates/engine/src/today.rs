@@ -402,8 +402,12 @@ pub fn build(i: &DayInput) -> DaySummary {
             },
             None => TaskSource::Local,
         };
+        let google = list.is_some_and(|l| l.remote_path.starts_with(iuredesk_pim_sync::GOOGLE_TASKS_LIST_PREFIX));
         let badge = match &source {
             TaskSource::Iurefficient => "Iurefficient".to_string(),
+            // F7.1: Google Tasks (la lista suele llamarse «Mis tareas», como las demás).
+            _ if google && !list_name.is_empty() => format!("Google · {list_name}"),
+            _ if google => "Google".to_string(),
             _ if !list_name.is_empty() => list_name.clone(),
             _ => pick("Tasks", "Tareas").to_string(),
         };
@@ -825,6 +829,7 @@ mod tests {
             list(1, "Despacho", Some(1), "/caldav/despacho/"),
             list(2, "Iurefficient", Some(99), IURE_TASKS_PATH),
             list(3, "Personal", None, ""),
+            list(4, "Mis tareas", Some(1), "gtasks:MDk"),
         ];
         let mut done = task(9, 1, "Ya hecha", Some(d(2026, 10, 27)), 1);
         done.status = TaskStatus::Completed;
@@ -835,6 +840,7 @@ mod tests {
             task(4, 1, "Lejana", Some(d(2026, 12, 1)), 1),
             task(5, 3, "Sin fecha", None, 1),
             task(6, 2, "Urgente hoy", Some(d(2026, 10, 27)), 1),
+            task(7, 4, "Pagar renta", Some(d(2026, 10, 29)), 0),
             done,
         ];
         let s = build(&i);
@@ -846,8 +852,10 @@ mod tests {
         let today: Vec<_> = s.tasks.today.iter().map(|t| (t.task.id, t.badge.as_str())).collect();
         assert_eq!(today, vec![(TaskId(6), "Iurefficient"), (TaskId(1), "Despacho")]);
         assert_eq!(s.tasks.today[1].source, TaskSource::Account { email: "yo@despacho.mx".into() });
-        assert_eq!(s.tasks.upcoming.len(), 1, "las de más de una semana y sin fecha no entran");
-        assert_eq!(s.tasks.upcoming[0].source, TaskSource::Local);
+        assert_eq!(s.tasks.upcoming.len(), 2, "las de más de una semana y sin fecha no entran");
+        assert_eq!(s.tasks.upcoming[0].source, TaskSource::Account { email: "yo@despacho.mx".into() });
+        assert_eq!(s.tasks.upcoming[0].badge, "Google · Mis tareas", "F7.1: insignia de Google Tasks");
+        assert_eq!(s.tasks.upcoming[1].source, TaskSource::Local);
         assert!(!s.tasks.is_empty());
     }
 

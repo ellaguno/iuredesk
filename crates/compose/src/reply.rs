@@ -468,6 +468,46 @@ fn original_attachments(msg: &Message<'_>) -> Vec<Attachment> {
     out
 }
 
+/// F7.1: reabre un borrador guardado (crudo RFC 5322 de «Borradores») para seguir editándolo:
+/// identidad del «De:», Para/CC/CCO, asunto, cuerpo enriquecido (HTML → [`RichBody`], o el texto
+/// plano), adjuntos (también las imágenes en línea), `In-Reply-To`/`References`, prioridad y
+/// acuse de lectura. Si ninguna identidad coincide con el «De:» se usa la primera.
+pub fn reopen_draft(raw: &[u8], identities: &[Identity]) -> Result<Draft> {
+    let msg = parse(raw)?;
+    let orig = headers_of(&msg);
+    let from_key = orig.from.first().map(|m| address_key(&m.addr));
+    let identity = identities
+        .iter()
+        .find(|i| Some(address_key(&i.email)) == from_key)
+        .or(identities.first())
+        .cloned()
+        .ok_or_else(|| ComposeError::Identity(String::new()))?;
+    let mut d = Draft::new(identity);
+    d.to = orig.to.clone();
+    d.cc = orig.cc.clone();
+    d.bcc = mailboxes(msg.bcc());
+    // `undisclosed-recipients:;` (solo CCO) no deja direcciones: nada que quitar.
+    d.subject = orig.subject.clone();
+    d.in_reply_to = orig.in_reply_to.clone();
+    d.references = trim_references(&orig.references);
+    let body = if let Some(html) = msg.body_html(0) {
+        RichBody::from_html(&html)
+    } else if let Some(text) = msg.body_text(0) {
+        RichBody::from_plain(&text)
+    } else {
+        RichBody::default()
+    };
+    d.body = body;
+    d.attachments = original_attachments(&msg);
+    d.priority = match msg.header_raw("X-Priority").map(str::trim).and_then(|v| v.chars().next()) {
+        Some('1' | '2') => crate::draft::Priority::High,
+        Some('4' | '5') => crate::draft::Priority::Low,
+        _ => crate::draft::Priority::Normal,
+    };
+    d.request_read_receipt = msg.header_raw("Disposition-Notification-To").is_some();
+    Ok(d)
+}
+
 /// Borrador de reenvío.
 pub fn forward(raw: &[u8], identities: &[Identity], mode: ForwardMode, opts: &ReplyOptions) -> Result<Draft> {
     let msg = parse(raw)?;

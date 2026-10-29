@@ -196,11 +196,21 @@ impl GraphAccount {
                 }
             }
         }
+        // F7.1: lo creado o borrado en local que aún no llegó al servidor no se toca.
+        let pending = crate::ops::pending_folders(&ctx.store, ctx.acct);
         let local = ctx.store.folders(ctx.acct)?;
         let mut by_path: HashMap<String, Folder> = local.into_iter().map(|f| (f.remote_path.clone(), f)).collect();
         let mut out: Vec<(Folder, Option<String>)> = Vec::new();
         for r in &remote {
             let Some(id) = s(r, "id") else { continue };
+            if pending.remote.contains(id) && !by_path.contains_key(id) {
+                continue;
+            }
+            if let Some(f) = by_path.get(id).filter(|f| pending.local.contains(&f.id)).cloned() {
+                by_path.remove(id);
+                out.push((f, s(r, "parentFolderId").map(str::to_string)));
+                continue;
+            }
             let name: String = s(r, "displayName").unwrap_or("?").chars().take(255).collect();
             let role = roles.get(id).copied().unwrap_or(FolderRole::Custom);
             let parent_remote = s(r, "parentFolderId").map(str::to_string);
@@ -233,7 +243,7 @@ impl GraphAccount {
         }
         // Solo se borra lo local si la lista es creíble (trae la bandeja de entrada).
         if out.iter().any(|(f, _)| f.role == FolderRole::Inbox) {
-            for (_, gone) in by_path {
+            for (_, gone) in by_path.into_iter().filter(|(_, f)| !pending.local.contains(&f.id)) {
                 ctx.store.delete_folder(gone.id)?;
                 let _ = ctx.store.delete_sync_state(&graph_key(ctx.acct, gone.id));
                 ctx.emit(SyncEvent::FolderUpdated { account: ctx.acct, folder: gone.id });
@@ -656,6 +666,15 @@ impl GraphAccount {
                 Ok(())
             }
             MailOp::RemoteMove { msg, remote, to, to_folder } => {
+                // Destino recién creado en local: su id real ya está en la carpeta.
+                let to = if to.starts_with(crate::ops::LOCAL_FOLDER_PREFIX) {
+                    match self.ctx.store.get_folder(*to_folder)? {
+                        Some(f) if !f.remote_path.starts_with(crate::ops::LOCAL_FOLDER_PREFIX) => f.remote_path,
+                        _ => return Err(SyncError::MessageNotFound(to.clone())),
+                    }
+                } else {
+                    to.clone()
+                };
                 let r = self
                     .call(
                         Method::POST,
@@ -714,6 +733,57 @@ impl GraphAccount {
                         .store
                         .set_provider_meta(&[(*msg, ProviderMeta { provider_id: Some(id), thread_hint: None })])?;
                 }
+                Ok(())
+            }
+            MailOp::CreateFolder { folder_id, name, parent, .. } => {
+                let path = match parent.as_deref().filter(|p| !p.starts_with(crate::ops::LOCAL_FOLDER_PREFIX)) {
+                    Some(p) => format!("/me/mailFolders/{}/childFolders", enc(p)),
+                    None => "/me/mailFolders".to_string(),
+                };
+                let r = self
+                    .client
+                    .request(
+                        Method::POST,
+                        &self.client.url(&path),
+                        Some(Body::Json(&json!({ "displayName": name }))),
+                        &[],
+                    )
+                    .await?;
+                // 409: ya existe con ese nombre; se adopta en la próxima lista.
+                if r.status == 409 {
+                    if let Some(f) = self.ctx.store.get_folder(*folder_id)? {
+                        self.ctx.store.delete_folder(f.id)?;
+                    }
+                    return Ok(());
+                }
+                if !r.is_success() {
+                    return Err(r.error().into());
+                }
+                if let (Some(id), Some(mut f)) = (s(&r.body, "id"), self.ctx.store.get_folder(*folder_id)?) {
+                    f.remote_path = id.to_string();
+                    self.ctx.store.put_folder(&f)?;
+                    self.ctx.emit(SyncEvent::FolderUpdated { account: self.ctx.acct, folder: f.id });
+                }
+                Ok(())
+            }
+            MailOp::RenameFolder { folder_id, name, .. } => {
+                let Some(f) = self.ctx.store.get_folder(*folder_id)? else { return Ok(()) };
+                if f.remote_path.starts_with(crate::ops::LOCAL_FOLDER_PREFIX) {
+                    return Ok(());
+                }
+                self.call(
+                    Method::PATCH,
+                    &format!("/me/mailFolders/{}", enc(&f.remote_path)),
+                    Some(&json!({ "displayName": name })),
+                )
+                .await?;
+                Ok(())
+            }
+            MailOp::DeleteFolder { remote } => {
+                if remote.starts_with(crate::ops::LOCAL_FOLDER_PREFIX) {
+                    return Ok(());
+                }
+                self.call(Method::DELETE, &format!("/me/mailFolders/{}", enc(remote)), None).await?;
                 Ok(())
             }
             // Operaciones de IMAP (UIDs, etiquetas de Gmail): no aplican a Graph.

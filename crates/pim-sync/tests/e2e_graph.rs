@@ -258,7 +258,11 @@ async fn graph_delta_edits_conflicts_rsvp() {
 
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(Store::open(dir.path()).unwrap());
-    let pim = PimAccount { account: account(), source: PimSource::Graph { base_url: format!("{base}/v1.0") } };
+    let pim = PimAccount {
+        account: account(),
+        source: PimSource::Graph { base_url: format!("{base}/v1.0") },
+        tasks_api: None,
+    };
     assert!(PimAccount::from_account(&account()).is_some_and(|p| matches!(p.source, PimSource::Graph { .. })));
     let opts = PimSyncOptions { poll_interval: Duration::from_secs(3600), sync_on_start: false, ..Default::default() };
     let tokens: Arc<dyn TokenProvider> = Arc::new(FakeTokens);

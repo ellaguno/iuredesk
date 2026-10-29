@@ -1073,6 +1073,15 @@ impl Session {
             return Ok(Outcome::Notice(Notice::info("Pick a later time.", "Elige una hora posterior.")));
         };
         let ids = self.targets();
+        // F7.1: «Pospuestos» en el servidor (se crea si falta) para que se vea en otros equipos.
+        let mut seen = HashSet::new();
+        for id in ids.iter().copied().take(super::MAX_BATCH) {
+            if let Some(a) = self.store.get_envelope(id).ok().flatten().map(|e| e.account)
+                && seen.insert(a)
+            {
+                self.ensure_snooze_folder(a);
+            }
+        }
         let mut done = Vec::new();
         let mut accounts = HashSet::new();
         for id in ids.iter().copied().take(super::MAX_BATCH) {

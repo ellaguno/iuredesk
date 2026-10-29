@@ -172,13 +172,26 @@ impl ImapAccount {
             .filter(|m| m.selectable() && (!m.is_virtual() || (gmail && m.is_all_mail())))
             .take(MAX_FOLDERS)
             .collect();
+        if let Some(d) = list.iter().find_map(|m| m.delimiter) {
+            let key = crate::ops::delimiter_key(ctx.acct);
+            let bytes = d.to_string().into_bytes();
+            if ctx.store.sync_state(&key)?.as_deref() != Some(bytes.as_slice()) {
+                ctx.store.put_sync_state(&key, &bytes)?;
+            }
+        }
+        // F7.1: lo creado, renombrado o borrado en local que aún no llegó al servidor no se toca.
+        let pending = crate::ops::pending_folders(&ctx.store, ctx.acct);
         let local = ctx.store.folders(ctx.acct)?;
         let mut by_path: HashMap<String, Folder> = local.into_iter().map(|f| (f.remote_path.clone(), f)).collect();
         let mut out: Vec<Folder> = Vec::new();
         let has_archive = list.iter().any(|m| m.role() == FolderRole::Archive);
         for m in &list {
             let role = if gmail && m.is_all_mail() && !has_archive { FolderRole::Archive } else { m.role() };
+            if pending.remote.contains(&m.path) && !by_path.contains_key(&m.path) {
+                continue;
+            }
             match by_path.remove(&m.path) {
+                Some(f) if pending.local.contains(&f.id) => out.push(f),
                 Some(mut f) => {
                     if f.name != m.leaf || f.role != role {
                         f.name = m.leaf.clone();
@@ -215,7 +228,7 @@ impl ImapAccount {
         }
         // Solo se borra lo local si el servidor devolvió una lista creíble (con INBOX).
         if list.iter().any(|m| m.path.eq_ignore_ascii_case("INBOX")) {
-            for (_, gone) in by_path {
+            for (_, gone) in by_path.into_iter().filter(|(_, f)| !pending.local.contains(&f.id)) {
                 ctx.store.delete_folder(gone.id)?;
                 let _ = ctx.store.delete_sync_state(&folder_key(ctx.acct, gone.id));
                 let _ = ctx.store.delete_sync_state(&backfill_key(ctx.acct, gone.id));
@@ -974,6 +987,27 @@ impl ImapAccount {
             }
             // Ids opacos (Graph): no corresponden a una cuenta IMAP.
             MailOp::RemoteFlags { .. } | MailOp::RemoteMove { .. } | MailOp::RemoteDelete { .. } => Ok(()),
+            MailOp::CreateFolder { folder_id, path, .. } => {
+                conn.c.create(path).await?;
+                // Que aparezca en otros clientes.
+                let _ = conn.c.subscribe(path).await;
+                self.ctx.emit(SyncEvent::FolderUpdated { account: self.ctx.acct, folder: *folder_id });
+                Ok(())
+            }
+            MailOp::RenameFolder { folder_id, from, to, .. } => {
+                conn.c.rename(from, to).await?;
+                let _ = conn.c.subscribe(to).await;
+                if let Some(mut f) = self.ctx.store.get_folder(*folder_id)? {
+                    f.remote_path = to.clone();
+                    self.ctx.store.put_folder(&f)?;
+                }
+                self.ctx.emit(SyncEvent::FolderUpdated { account: self.ctx.acct, folder: *folder_id });
+                Ok(())
+            }
+            MailOp::DeleteFolder { remote } => {
+                conn.c.delete_mailbox(remote).await?;
+                Ok(())
+            }
             MailOp::Append { msg, folder, folder_id, flags } => {
                 let Ok(raw) = self.ctx.store.get_raw(*msg) else {
                     // Se borró en local antes de subirlo: nada que hacer.

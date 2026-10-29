@@ -18,9 +18,14 @@ pub struct PimState {
     pub(crate) contact_filter: String,
     contact_list: ListState,
     contact_cols: Vec<Column>,
-    note: Option<NoteId>,
+    pub(crate) note_search: String,
+    pub(crate) note_edit: Option<NoteEdit>,
+    pub(crate) note_preview: bool,
+    note_focus_editor: bool,
     pub(crate) task_list: Option<TaskListId>,
     show_done: bool,
+    /// F7.1: tarea nueva que se está escribiendo.
+    new_task: String,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -338,24 +343,98 @@ fn label_kind(l: &str) -> String {
 // ---------------------------------------------------------------------------------------------
 // Notas
 
+/// Nota abierta en el editor (F7.1).
+#[derive(Clone, Debug)]
+pub(crate) struct NoteEdit {
+    id: NoteId,
+    title: String,
+    body: String,
+    /// Momento (reloj de egui) del último cambio sin guardar.
+    dirty_at: Option<f64>,
+}
+
+/// Espera tras la última tecla antes del guardado automático.
+const NOTE_AUTOSAVE_SECS: f64 = 0.7;
+
+/// Guarda la nota abierta si tiene cambios (al cambiar de nota o de módulo, o al cumplirse la
+/// espera).
+pub(crate) fn flush_note(app: &mut DeskApp) {
+    let Some(e) = app.pim.note_edit.as_mut() else { return };
+    if e.dirty_at.take().is_none() {
+        return;
+    }
+    let (id, title, body) = (e.id, e.title.clone(), e.body.clone());
+    if let Err(err) = app.session.save_note(id, &title, &body) {
+        app.notice(iuredesk_engine::Notice::error(err.text()));
+    }
+}
+
+/// «Abrir en IureEditor»: la nota como documento Markdown nuevo.
+pub(crate) fn open_note_in_editor(app: &mut DeskApp) {
+    flush_note(app);
+    let Some(id) = app.session.note_focus() else { return };
+    let Some(n) = app.session.notes().into_iter().find(|n| n.id == id) else { return };
+    let title = iuredesk_engine::session::note_title(&n);
+    let name: String = title.chars().filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_')).take(60).collect();
+    let name = if name.trim().is_empty() { "nota".to_string() } else { name.trim().to_string() };
+    let markdown =
+        if n.title.trim().is_empty() { n.body.clone() } else { format!("# {}\n\n{}", n.title.trim(), n.body) };
+    app.suite.hub.run(iuredesk_engine::suite::SuiteAction::NewDocument { name: format!("{name}.md"), markdown });
+}
+
 pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
-    let notes = app.session.notes();
+    let ctx = ui.ctx().clone();
+    let notes = app.session.notes_matching(&app.pim.note_search);
+    let total = app.session.notes().len();
     let zone = app.session.zone();
     let now = app.session.now();
+    let focus = app.session.note_focus().filter(|id| notes.iter().any(|n| n.id == *id)).or(notes.first().map(|n| n.id));
+    let mut pick_note: Option<NoteId> = None;
+    let mut fire: Option<&'static str> = None;
     split::left(ui, "notes-list", PaneKind::Sidebar, 300.0, 220.0..=460.0, |ui| {
         let c = theme::colors(ui);
         ui.add_space(4.0);
-        pane_title(ui, pick("Notes", "Notas"), &notes.len().to_string());
+        ui.horizontal(|ui| {
+            pane_title(ui, pick("Notes", "Notas"), &total.to_string());
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                if icons::icon_button(ui, Icon::Plus, pick("New note", "Nueva nota"), true).clicked() {
+                    fire = Some("notes.new");
+                }
+            });
+        });
+        ui.add_space(6.0);
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut app.pim.note_search)
+                .hint_text(pick("Search notes", "Buscar en las notas"))
+                .desired_width(f32::INFINITY),
+        );
+        crate::widgets::text_label(&r, pick("Search notes", "Buscar en las notas"));
         ui.add_space(8.0);
         if notes.is_empty() {
-            EmptyState::new(Icon::Notes, pick("No notes yet", "Aún no hay notas"))
-                .body(pick("Write down ideas, minutes and checklists.", "Apunta ideas, minutas y listas."))
-                .show(ui);
+            let (title, body) = if app.pim.note_search.trim().is_empty() {
+                (
+                    pick("No notes yet", "Aún no hay notas"),
+                    pick("Write down ideas, minutes and checklists.", "Apunta ideas, minutas y listas."),
+                )
+            } else {
+                (pick("Nothing found", "Sin resultados"), pick("Try other words.", "Prueba con otras palabras."))
+            };
+            EmptyState::new(Icon::Notes, title).body(body).show(ui);
+            if app.pim.note_search.trim().is_empty() && ui.button(pick("New note", "Nueva nota")).clicked() {
+                fire = Some("notes.new");
+            }
             return;
         }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             for n in &notes {
-                let selected = app.pim.note.or(notes.first().map(|n| n.id)) == Some(n.id);
+                let selected = focus == Some(n.id);
+                // Lo que se está escribiendo se ve ya en la lista.
+                let shown = match &app.pim.note_edit {
+                    Some(e) if e.id == n.id => {
+                        iuredesk_model::Note { title: e.title.clone(), body: e.body.clone(), ..n.clone() }
+                    }
+                    _ => n.clone(),
+                };
                 let h = 64.0;
                 let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
                 if selected {
@@ -369,18 +448,19 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                 let gd = ui.painter().layout_no_wrap(date, theme::small_font(ui.ctx()), c.text_muted);
                 let dw = gd.size().x;
                 ui.painter().galley(pos2(inner.right() - dw, inner.top() + 1.0), gd, c.text_muted);
-                let mut title = n.title.clone();
+                let mut title = iuredesk_engine::session::note_title(&shown);
                 if n.pinned {
                     title = format!("{title}  ·  {}", pick("pinned", "fijada"));
                 }
                 let gt =
                     iurefficient_ui::widgets::text::elided(ui, &title, title_font, c.text, inner.width() - dw - 8.0);
                 ui.painter().galley(inner.min, gt, c.text);
-                let snippet: String = n
+                let snippet: String = shown
                     .body
                     .lines()
                     .map(|l| l.trim_start_matches(['#', '-', '*', ' ', '>']).replace('*', ""))
                     .filter(|l| !l.is_empty())
+                    .take(6)
                     .collect::<Vec<_>>()
                     .join(" ");
                 let gs = iurefficient_ui::widgets::text::elided(
@@ -391,42 +471,144 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                     inner.width(),
                 );
                 ui.painter().galley(pos2(inner.left(), inner.top() + 24.0), gs, c.text_muted);
-                iurefficient_ui::a11y::toggle(&resp, &n.title, selected);
+                iurefficient_ui::a11y::toggle(&resp, &title, selected);
                 if resp.clicked() {
-                    app.pim.note = Some(n.id);
+                    pick_note = Some(n.id);
                 }
+                egui::Popup::context_menu(&resp).show(|ui| {
+                    let pin = if n.pinned { pick("Unpin", "Soltar") } else { pick("Pin to top", "Fijar arriba") };
+                    if icons::menu_item(ui, Some(Icon::Pin), pin).clicked() {
+                        let _ = app.session.toggle_note_pin(n.id);
+                        ui.close();
+                    }
+                    if icons::menu_item(ui, Some(Icon::Trash), pick("Delete note", "Eliminar nota")).clicked() {
+                        pick_note = Some(n.id);
+                        fire = Some("notes.delete");
+                        ui.close();
+                    }
+                });
                 ui.add_space(2.0);
             }
         });
     });
-    let current = app.pim.note.and_then(|id| notes.iter().find(|n| n.id == id)).or(notes.first());
+    if let Some(id) = pick_note.or(focus)
+        && app.pim.note_edit.as_ref().is_none_or(|e| e.id != id)
+    {
+        flush_note(app);
+        app.session.set_note_focus(Some(id));
+        app.pim.note_edit = notes.iter().find(|n| n.id == id).map(|n| NoteEdit {
+            id,
+            title: n.title.clone(),
+            body: n.body.clone(),
+            dirty_at: None,
+        });
+        // Nota nueva (vacía): se escribe enseguida.
+        app.pim.note_focus_editor = notes.iter().any(|n| n.id == id && n.title.is_empty() && n.body.is_empty());
+    }
+    if focus.is_none() && pick_note.is_none() {
+        flush_note(app);
+        app.pim.note_edit = None;
+    }
+    if let Some(id) = fire {
+        flush_note(app);
+        app.run(&ctx, id);
+        return;
+    }
+    let editor_installed = app.suite.hub.installed(iuredesk_engine::iuredesk_integrations::SisterApp::Editor);
+    let updated = app.pim.note_edit.as_ref().and_then(|e| notes.iter().find(|n| n.id == e.id)).map(|n| n.updated);
     split::center(ui, PaneKind::Detail, |ui| {
-        let Some(n) = current else {
+        let c = theme::colors(ui);
+        let Some(edit) = app.pim.note_edit.as_mut() else {
             EmptyState::new(Icon::Notes, pick("Select a note", "Selecciona una nota")).show(ui);
             return;
         };
-        let c = theme::colors(ui);
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            ui.set_max_width(720.0);
+        let mut act: Option<&'static str> = None;
+        ui.set_max_width(820.0);
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let preview = app.pim.note_preview;
+            if ui.selectable_label(!preview, pick("Edit", "Editar")).clicked() {
+                app.pim.note_preview = false;
+            }
+            if ui.selectable_label(preview, pick("Preview", "Vista previa")).clicked() {
+                app.pim.note_preview = true;
+            }
             ui.add_space(8.0);
-            ui.label(RichText::new(&n.title).font(theme::bold_font(ui.ctx(), 24.0)).color(c.text));
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "{} {}",
-                        pick("Edited", "Editada"),
-                        iuredesk_engine::time::long_date(n.updated, zone)
-                    ))
-                    .color(c.text_muted)
-                    .size(theme::density(ui.ctx()).small_size()),
-                );
-                for t in &n.tags {
-                    badge(ui, t, BadgeKind::Neutral);
+            let state = match (edit.dirty_at.is_some(), updated) {
+                (true, _) => pick("Saving…", "Guardando…").to_string(),
+                (false, Some(u)) => {
+                    format!("{} {}", pick("Saved", "Guardada"), iuredesk_engine::time::list_date(u, now, zone))
+                }
+                (false, None) => String::new(),
+            };
+            ui.label(RichText::new(state).color(c.text_muted).size(theme::density(ui.ctx()).small_size()));
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                if icons::icon_button(ui, Icon::Trash, pick("Delete note", "Eliminar nota"), true).clicked() {
+                    act = Some("notes.delete");
+                }
+                if editor_installed
+                    && icons::icon_button(ui, Icon::Open, pick("Open in IureEditor", "Abrir en IureEditor"), true)
+                        .clicked()
+                {
+                    act = Some("notes.open_editor");
                 }
             });
-            ui.add_space(12.0);
-            markdown(ui, &n.body);
         });
+        ui.add_space(6.0);
+        hairline(ui);
+        ui.add_space(8.0);
+        let mut changed = false;
+        let title = ui.add(
+            egui::TextEdit::singleline(&mut edit.title)
+                .font(theme::bold_font(ui.ctx(), 24.0))
+                .hint_text(pick("Title", "Título"))
+                .frame(egui::Frame::NONE)
+                .desired_width(f32::INFINITY),
+        );
+        crate::widgets::text_label(&title, pick("Note title", "Título de la nota"));
+        changed |= title.changed();
+        ui.add_space(8.0);
+        if app.pim.note_preview {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-preview").show(ui, |ui| {
+                markdown(ui, &edit.body);
+            });
+        } else {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-body").show(ui, |ui| {
+                let body = ui.add(
+                    egui::TextEdit::multiline(&mut edit.body)
+                        .hint_text(pick(
+                            "Write in Markdown: # heading, - list, - [ ] checkbox, **bold**…",
+                            "Escribe en Markdown: # título, - lista, - [ ] casilla, **negrita**…",
+                        ))
+                        .font(theme::body_font(ui.ctx()))
+                        .frame(egui::Frame::NONE)
+                        .lock_focus(true)
+                        .desired_rows(24)
+                        .desired_width(f32::INFINITY),
+                );
+                crate::widgets::text_label(&body, pick("Note text", "Texto de la nota"));
+                if app.pim.note_focus_editor {
+                    app.pim.note_focus_editor = false;
+                    title.request_focus();
+                }
+                changed |= body.changed();
+            });
+        }
+        let t = ui.input(|i| i.time);
+        if changed {
+            edit.dirty_at = Some(t);
+        }
+        if let Some(at) = edit.dirty_at {
+            if t - at >= NOTE_AUTOSAVE_SECS {
+                flush_note(app);
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(NOTE_AUTOSAVE_SECS));
+            }
+        }
+        if let Some(id) = act {
+            flush_note(app);
+            app.run(&ctx, id);
+        }
     });
 }
 
@@ -508,10 +690,19 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 1.0;
         for l in &lists {
             let open = app.session.tasks(l.id).iter().filter(|t| !t.is_done()).count();
-            if sidebar_item(ui, Some(Icon::Tasks), &l.name, u32::try_from(open).unwrap_or(0), selected == Some(l.id))
-                .clicked()
-            {
+            let r =
+                sidebar_item(ui, Some(Icon::Tasks), &l.name, u32::try_from(open).unwrap_or(0), selected == Some(l.id));
+            if r.clicked() {
                 app.pim.task_list = Some(l.id);
+            }
+            // F7.1: de qué cuenta es (Google Tasks, To Do, CalDAV, Iurefficient).
+            if let Some(b) = app.session.task_list_badge(l.id) {
+                r.on_hover_text(&b);
+                ui.horizontal(|ui| {
+                    ui.add_space(34.0);
+                    let c = theme::colors(ui);
+                    ui.label(RichText::new(b).color(c.text_muted).size(theme::density(ui.ctx()).small_size()));
+                });
             }
         }
     });
@@ -527,8 +718,33 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
         let all = app.session.tasks(list_id);
         let (done, open): (Vec<Task>, Vec<Task>) = all.into_iter().partition(|t| t.is_done());
         pane_title(ui, &name, &format!("{} {}", open.len(), pick("pending", "pendientes")));
+        if let Some(b) = app.session.task_list_badge(list_id) {
+            badge(ui, &b, BadgeKind::Neutral);
+        }
         ui.add_space(8.0);
         let mut toggle: Option<iuredesk_model::TaskId> = None;
+        let mut remove: Option<iuredesk_model::TaskId> = None;
+        // F7.1: alta rápida (Intro); se sube a la cuenta de la lista en segundo plano.
+        if app.session.iure_can_write() || !app.session.is_iure_task(list_id) {
+            ui.horizontal(|ui| {
+                ui.set_max_width(760.0);
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut app.pim.new_task)
+                        .hint_text(pick("Add a task and press Enter", "Agrega una tarea y pulsa Intro"))
+                        .desired_width(f32::INFINITY),
+                );
+                crate::widgets::text_label(&r, pick("New task", "Tarea nueva"));
+                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    let text = std::mem::take(&mut app.pim.new_task);
+                    match app.session.add_task(list_id, &text) {
+                        Ok(out) => app.outcome(&ctx, out),
+                        Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
+                    }
+                    r.request_focus();
+                }
+            });
+            ui.add_space(6.0);
+        }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_max_width(760.0);
             if open.is_empty() {
@@ -538,8 +754,10 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
                     .show(ui);
             }
             for t in &open {
-                if task_row(app, ui, t) {
-                    toggle = Some(t.id);
+                match task_row(app, ui, t) {
+                    Some(true) => toggle = Some(t.id),
+                    Some(false) => remove = Some(t.id),
+                    None => {}
                 }
             }
             if !done.is_empty() {
@@ -551,8 +769,10 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
                 }
                 if app.pim.show_done {
                     for t in &done {
-                        if task_row(app, ui, t) {
-                            toggle = Some(t.id);
+                        match task_row(app, ui, t) {
+                            Some(true) => toggle = Some(t.id),
+                            Some(false) => remove = Some(t.id),
+                            None => {}
                         }
                     }
                 }
@@ -564,17 +784,33 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
                 Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
             }
         }
+        if let Some(id) = remove {
+            match app.session.delete_task(id) {
+                Ok(out) => app.outcome(&ctx, out),
+                Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
+            }
+        }
     });
 }
 
-/// Una tarea con su casilla. Devuelve `true` si se pulsó la casilla.
-fn task_row(app: &DeskApp, ui: &mut Ui, t: &Task) -> bool {
+/// Una tarea con su casilla. `Some(true)` si se pulsó la casilla, `Some(false)` si se eligió
+/// «Eliminar» en su menú.
+fn task_row(app: &DeskApp, ui: &mut Ui, t: &Task) -> Option<bool> {
     let c = theme::colors(ui);
     let zone = app.session.zone();
     let today = app.session.today();
     let d = theme::density(ui.ctx());
     let h = d.row_height().max(30.0) + 6.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
+    let (rect, row) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
+    let mut delete = false;
+    if !app.session.is_iure_task(t.list) || app.session.iure_can_write() {
+        egui::Popup::context_menu(&row).show(|ui| {
+            if icons::menu_item(ui, Some(Icon::Trash), pick("Delete task", "Eliminar tarea")).clicked() {
+                delete = true;
+                ui.close();
+            }
+        });
+    }
     let box_r = Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), vec2(18.0, 18.0));
     let resp = ui.interact(box_r.expand(4.0), ui.scope_id().with(("task", t.id.get())), Sense::click());
     let done = t.is_done();
@@ -621,7 +857,13 @@ fn task_row(app: &DeskApp, ui: &mut Ui, t: &Task) -> bool {
         ui.painter().hline(x..=(x + gw), rect.center().y, Stroke::new(1.0, c.text_muted));
     }
     ui.painter().hline((rect.left() + 34.0)..=rect.right(), rect.bottom() - 0.5, Stroke::new(1.0, c.separator));
-    resp.clicked()
+    if resp.clicked() {
+        Some(true)
+    } else if delete {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

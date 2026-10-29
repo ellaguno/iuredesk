@@ -18,6 +18,7 @@ use crate::account::{Creds, PimAccount, PimSource};
 use crate::caldav::{CalDav, server_schedules};
 use crate::error::{PimError, Result};
 use crate::graph::Graph;
+use crate::gtasks::{GoogleTasks, WithTasks};
 
 mod freebusy;
 use crate::ops::{self, ImipReply, PimOp};
@@ -177,12 +178,18 @@ impl PimSyncEngine {
 
 /// Proveedor de la cuenta con credenciales frescas (la contraseña pudo cambiar).
 async fn provider(ctx: &Ctx) -> Result<Box<dyn Provider>> {
-    Ok(match &ctx.account.source {
+    let main: Option<Box<dyn Provider>> = match &ctx.account.source {
+        PimSource::Dav { caldav: None, carddav: None, .. } => None,
         PimSource::Dav { caldav, carddav, auth } => {
-            Box::new(CalDav::connect(ctx, caldav.clone(), carddav.clone(), auth).await?)
+            Some(Box::new(CalDav::connect(ctx, caldav.clone(), carddav.clone(), auth).await?))
         }
-        PimSource::Graph { base_url } => Box::new(Graph::new(ctx, base_url)?),
-    })
+        PimSource::Graph { base_url } => Some(Box::new(Graph::new(ctx, base_url)?)),
+    };
+    match (&ctx.account.tasks_api, main) {
+        (Some(base), dav) => Ok(Box::new(WithTasks { dav, tasks: GoogleTasks::new(ctx, base)? })),
+        (None, Some(p)) => Ok(p),
+        (None, None) => Err(PimError::Invalid("la cuenta no tiene calendario, contactos ni tareas".into())),
+    }
 }
 
 /// Espera tras fallos seguidos: 30 s, 1 min, 2 min… hasta el intervalo (30 min si faltan

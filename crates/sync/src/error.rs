@@ -46,6 +46,18 @@ pub enum SyncError {
     /// La carpeta no es una etiqueta (Gmail) o la cuenta no usa etiquetas.
     #[error("no es una etiqueta: {0}")]
     NotALabel(String),
+    /// Nombre de carpeta vacío, demasiado largo o con caracteres que el servidor no admite.
+    #[error("nombre de carpeta no válido: {0}")]
+    InvalidFolderName(String),
+    /// Ya hay una carpeta con ese nombre en el mismo sitio.
+    #[error("ya existe la carpeta {0}")]
+    FolderExists(String),
+    /// Las carpetas del sistema (Entrada, Enviados…) no se renombran ni se borran.
+    #[error("carpeta del sistema")]
+    SystemFolder,
+    /// La cuenta no tiene carpetas en el servidor (POP3).
+    #[error("la cuenta no admite carpetas")]
+    NoFolders,
 }
 
 impl From<iuredesk_store::StoreError> for SyncError {
@@ -176,6 +188,25 @@ impl SyncError {
                     format!("Microsoft 365 refused the operation ({e}).")
                 }
             }
+            SyncError::InvalidFolderName(_) => pick(
+                "That folder name can't be used. Avoid empty names, '/', '*' and '%'.",
+                "Ese nombre de carpeta no se puede usar. Evita nombres vacíos, «/», «*» y «%».",
+            ),
+            SyncError::FolderExists(n) => {
+                if spanish {
+                    format!("Ya hay una carpeta llamada «{}».", clip(n))
+                } else {
+                    format!("There is already a folder called \"{}\".", clip(n))
+                }
+            }
+            SyncError::SystemFolder => pick(
+                "System folders (Inbox, Sent, Trash…) can't be renamed or deleted.",
+                "Las carpetas del sistema (Entrada, Enviados, Papelera…) no se pueden renombrar ni borrar.",
+            ),
+            SyncError::NoFolders => pick(
+                "This account (POP3) has no folders on the server.",
+                "Esta cuenta (POP3) no tiene carpetas en el servidor.",
+            ),
             SyncError::NotALabel(_) => {
                 pick("That folder is not a Gmail label.", "Esa carpeta no es una etiqueta de Gmail.")
             }
