@@ -303,7 +303,9 @@ fn mark_read_waits_for_the_delay() {
     assert!(!s.store().get_envelope(id).unwrap().unwrap().flags.seen, "aún no");
     assert!(s.next_deadline().is_some(), "la UI sabe cuándo volver");
     wait_for(&mut s, "leído tras el retraso", |s| s.store().get_envelope(id).unwrap().unwrap().flags.seen);
-    // Pasar de largo no marca nada.
+    // Pasar de largo no marca nada. Retraso largo: en Windows de la CI, ir y volver entre dos
+    // correos podía tardar más de 150 ms y marcarlo «de verdad».
+    s.prefs.mark_read_delay_ms = 3_000;
     let other = s
         .rows()
         .iter()
