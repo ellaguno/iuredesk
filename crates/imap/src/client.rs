@@ -301,6 +301,16 @@ fn check_text(what: &str, s: &str) -> Result<()> {
     Ok(())
 }
 
+/// Nombre de buzón aceptable para `CREATE`/`RENAME`/`DELETE`: no vacío, acotado, sin saltos de
+/// línea ni comodines de `LIST`.
+fn check_mailbox_name(s: &str) -> Result<()> {
+    check_text("buzón", s)?;
+    if s.trim().is_empty() || s.len() > 1_000 || s.contains(['*', '%']) {
+        return Err(ImapError::InvalidInput(format!("nombre de buzón no válido: {s}")));
+    }
+    Ok(())
+}
+
 /// `astring` de IMAP: entrecomillado si es ASCII imprimible; literal si no.
 fn astring(s: &str) -> Part {
     if s.bytes().all(|b| (0x20..0x7f).contains(&b)) {
@@ -881,6 +891,56 @@ impl ImapClient {
         }
         self.selected = None;
         Ok(())
+    }
+
+    // ------------------------------------------------------------------ buzones (F7.1)
+
+    /// `CREATE` (nombre ya en UTF-7 modificado: [`crate::mutf7::encode`]). Un buzón que ya
+    /// existe (`[ALREADYEXISTS]`) no es un error: lo que se quería ya está.
+    pub async fn create(&mut self, mailbox: &str) -> Result<()> {
+        check_mailbox_name(mailbox)?;
+        match self.exec("CREATE", vec![Part::Text("CREATE ".into()), astring(mailbox)]).await {
+            Ok(_) => Ok(()),
+            Err(ImapError::No { code: Some(Code::Other(c, _)), .. }) if c.eq_ignore_ascii_case("ALREADYEXISTS") => {
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// `SUBSCRIBE` (para que otros clientes que solo muestran lo suscrito vean el buzón).
+    pub async fn subscribe(&mut self, mailbox: &str) -> Result<()> {
+        check_mailbox_name(mailbox)?;
+        self.exec("SUBSCRIBE", vec![Part::Text("SUBSCRIBE ".into()), astring(mailbox)]).await?;
+        Ok(())
+    }
+
+    /// `RENAME viejo nuevo`.
+    pub async fn rename(&mut self, from: &str, to: &str) -> Result<()> {
+        check_mailbox_name(from)?;
+        check_mailbox_name(to)?;
+        if self.selected.as_ref().is_some_and(|s| s.name == from) {
+            self.unselect().await?;
+        }
+        self.exec("RENAME", vec![Part::Text("RENAME ".into()), astring(from), Part::Text(" ".into()), astring(to)])
+            .await?;
+        Ok(())
+    }
+
+    /// `DELETE`. Un buzón que ya no existe (`[NONEXISTENT]`) no es un error.
+    pub async fn delete_mailbox(&mut self, mailbox: &str) -> Result<()> {
+        check_mailbox_name(mailbox)?;
+        if mailbox.eq_ignore_ascii_case("INBOX") {
+            return Err(ImapError::InvalidInput("no se puede borrar INBOX".into()));
+        }
+        if self.selected.as_ref().is_some_and(|s| s.name == mailbox) {
+            self.unselect().await?;
+        }
+        match self.exec("DELETE", vec![Part::Text("DELETE ".into()), astring(mailbox)]).await {
+            Ok(_) => Ok(()),
+            Err(ImapError::No { code: Some(Code::Other(c, _)), .. }) if c.eq_ignore_ascii_case("NONEXISTENT") => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     fn require_selected(&self) -> Result<()> {

@@ -509,3 +509,58 @@ async fn gmail_all_mail_is_the_archive() {
     assert!(!folders.iter().any(|f| f.remote_path == "[Gmail]/Starred"), "las demás virtuales no se bajan");
     handle.shutdown().await;
 }
+
+/// F7.1: crear, renombrar y borrar carpetas en local primero (CREATE/RENAME/DELETE por la cola);
+/// un mensaje movido a la carpeta recién creada llega al servidor detrás del CREATE, y la lista
+/// de carpetas no borra lo que aún no se creó allí.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn folders_create_rename_delete() {
+    let s = FakeImap::start(FakeCaps::default()).await.unwrap();
+    for i in 0..2 {
+        s.deliver("INBOX", &msg(i, 1), &[], None);
+    }
+    let e = start(s.port(), Protocol::Imap, opts(), PASSWORD);
+    e.handle.sync_now_wait("t1").await.unwrap();
+    let acct = e.store.account_labels().unwrap()[0].id;
+    let ib = inbox(&e.store);
+    assert!(matches!(e.handle.folder_style(acct), Some(iuredesk_sync::ops::FolderStyle::Imap { delimiter: '/' })));
+
+    let f = e.handle.create_folder(acct, None, "Pospuestos").unwrap();
+    assert!(matches!(e.handle.create_folder(acct, None, "pospuestos"), Err(iuredesk_sync::SyncError::FolderExists(_))));
+    assert!(e.handle.create_folder(acct, None, "a/b").is_err());
+    let m = by_uid(&e.store, ib, 1).unwrap();
+    e.handle.move_message(m, f).unwrap();
+    until("carpeta y mensaje en el servidor", 10, || s.messages("Pospuestos").len() == 1).await;
+    e.handle.sync_now_wait("t1").await.unwrap();
+    assert_eq!(e.store.count(f).unwrap().total, 1);
+    assert_eq!(e.store.get_envelope(m).unwrap().unwrap().folder, f);
+
+    // Subcarpeta con nombre no ASCII (UTF-7 modificado en el servidor).
+    let sub = e.handle.create_folder(acct, Some(f), "Año").unwrap();
+    until("subcarpeta", 10, || s.mailbox_names().iter().any(|n| n.starts_with("Pospuestos/") && n.contains('&'))).await;
+    e.handle.sync_now_wait("t1").await.unwrap();
+    let subf = e.store.get_folder(sub).unwrap().unwrap();
+    assert_eq!((subf.name.as_str(), subf.parent), ("Año", Some(f)));
+
+    e.handle.rename_folder(f, "Snoozed").unwrap();
+    assert_eq!(e.store.get_folder(f).unwrap().unwrap().name, "Snoozed");
+    until("renombrada", 10, || s.mailbox_names().contains(&"Snoozed".to_string())).await;
+    e.handle.sync_now_wait("t1").await.unwrap();
+    let renamed = e.store.get_folder(f).unwrap().unwrap();
+    assert_eq!((renamed.name.as_str(), renamed.remote_path.as_str()), ("Snoozed", "Snoozed"));
+    assert_eq!(e.store.count(f).unwrap().total, 1, "el contenido sigue ahí");
+
+    // Las del sistema no se tocan; borrar la propia la quita también del servidor.
+    assert!(matches!(e.handle.delete_folder(ib), Err(iuredesk_sync::SyncError::SystemFolder)));
+    e.handle.delete_folder(f).unwrap();
+    assert!(e.store.get_folder(f).unwrap().is_none());
+    until("borrada", 10, || !s.mailbox_names().contains(&"Snoozed".to_string())).await;
+    // Crear y borrar enseguida: haya salido o no el CREATE, el servidor acaba sin ella.
+    let tmp = e.handle.create_folder(acct, None, "Efímera").unwrap();
+    e.handle.delete_folder(tmp).unwrap();
+    e.handle.sync_now_wait("t1").await.unwrap();
+    until("sin la efímera", 10, || !s.mailbox_names().iter().any(|n| n.starts_with("Ef"))).await;
+    assert!(e.store.folders(acct).unwrap().iter().all(|x| !x.name.starts_with("Ef")));
+    assert_eq!(e.store.ops_len().unwrap(), 0);
+    e.handle.shutdown().await;
+}

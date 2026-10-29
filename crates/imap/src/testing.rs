@@ -282,6 +282,11 @@ impl FakeImap {
         });
     }
 
+    /// Nombres de los buzones (UTF-7 modificado).
+    pub fn mailbox_names(&self) -> Vec<String> {
+        self.shared.lock().mailboxes.keys().cloned().collect()
+    }
+
     /// Quita un buzón (p. ej. para imitar a Gmail, que no tiene «Archive»).
     pub fn remove_mailbox(&self, name: &str) {
         self.shared.lock().mailboxes.remove(name);
@@ -1030,6 +1035,67 @@ async fn serve(sock: TcpStream, sh: &Shared) -> Result<()> {
                     out.extend(format!("{tag} NO [NONEXISTENT] no existe\r\n").into_bytes());
                 }
                 send(&mut t, &out).await?;
+            }
+            "CREATE" => {
+                let mbox = text(0);
+                let created = {
+                    let mut st = sh.lock();
+                    if st.mailboxes.contains_key(&mbox) {
+                        false
+                    } else {
+                        let v = 2000u32.saturating_add(u32::try_from(st.mailboxes.len()).unwrap_or(0));
+                        st.mailboxes.insert(
+                            mbox.clone(),
+                            FakeMailbox {
+                                special_use: None,
+                                uid_validity: v,
+                                uid_next: 1,
+                                messages: Vec::new(),
+                                expunged: Vec::new(),
+                            },
+                        );
+                        true
+                    }
+                };
+                let line = if created {
+                    format!("{tag} OK CREATE hecho\r\n")
+                } else {
+                    format!("{tag} NO [ALREADYEXISTS] ya existe\r\n")
+                };
+                send(&mut t, line.as_bytes()).await?;
+            }
+            "RENAME" => {
+                let (from, to) = (text(0), text(1));
+                let ok = {
+                    let mut st = sh.lock();
+                    match st.mailboxes.remove(&from) {
+                        Some(mb) if !st.mailboxes.contains_key(&to) => {
+                            st.mailboxes.insert(to.clone(), mb);
+                            true
+                        }
+                        Some(mb) => {
+                            st.mailboxes.insert(from.clone(), mb);
+                            false
+                        }
+                        None => false,
+                    }
+                };
+                let line = if ok {
+                    format!("{tag} OK RENAME hecho\r\n")
+                } else {
+                    format!("{tag} NO [NONEXISTENT] no se pudo\r\n")
+                };
+                send(&mut t, line.as_bytes()).await?;
+            }
+            "DELETE" => {
+                let mbox = text(0);
+                let ok = sh.lock().mailboxes.remove(&mbox).is_some();
+                let line = if ok {
+                    format!("{tag} OK DELETE hecho\r\n")
+                } else {
+                    format!("{tag} NO [NONEXISTENT] no existe\r\n")
+                };
+                send(&mut t, line.as_bytes()).await?;
             }
             "UNSELECT" | "CLOSE" => {
                 sess.selected = None;

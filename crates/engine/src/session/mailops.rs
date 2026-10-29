@@ -242,7 +242,9 @@ impl Session {
             d.attachments.clear();
         }
         let mid = iuredesk_compose::generate_message_id(&d.identity.email);
-        let opts = BuildOptions { message_id: Some(mid.clone()), ..BuildOptions::now() };
+        // Los borradores guardan el CCO para reabrirse con él (nunca sale así: al enviar se
+        // construye de nuevo sin `Bcc:`).
+        let opts = BuildOptions { message_id: Some(mid.clone()), keep_bcc: true, ..BuildOptions::now() };
         match iuredesk_compose::build_message(&d, &iuredesk_compose::FsResolver, &opts) {
             Ok(b) => b.raw,
             Err(_) => crate::compose::plain_rfc822(&d, Utc::now(), &mid),
@@ -288,6 +290,41 @@ impl Session {
             self.rebuild_rows();
         }
         Ok(id)
+    }
+
+    /// F7.1: ¿es un borrador? (bandera `\Draft` o está en «Borradores»).
+    pub fn is_draft(&self, id: MessageId) -> bool {
+        let Some(env) = self.store.get_envelope(id).ok().flatten() else { return false };
+        env.flags.draft || self.folder(env.folder).is_some_and(|f| f.role == FolderRole::Drafts)
+    }
+
+    /// F7.1: reabre el borrador enfocado en el redactor.
+    pub(crate) fn edit_draft_focused(&mut self) -> Result<Outcome> {
+        let id = self.focused.ok_or(EngineError::NoSelection)?;
+        Ok(Outcome::Compose(Box::new(self.edit_draft(id)?)))
+    }
+
+    /// F7.1: un borrador guardado como redacción: destinatarios (con CCO), asunto, cuerpo
+    /// enriquecido, adjuntos e `In-Reply-To`. Al guardarlo de nuevo reemplaza a este (se borra en
+    /// local y en el servidor y se sube el nuevo).
+    pub fn edit_draft(&mut self, id: MessageId) -> Result<ComposeDraft> {
+        if !self.is_draft(id) {
+            return Err(EngineError::Invalid(
+                crate::lang::pick("that message is not a draft", "ese mensaje no es un borrador").to_string(),
+            ));
+        }
+        let env = self.store.get_envelope(id).map_err(store_err)?.ok_or(EngineError::NoSelection)?;
+        let raw = self.raw_for_reply(id).ok_or(EngineError::NoSelection)?;
+        let identities: Vec<Identity> = {
+            let mut all = self.identities();
+            all.sort_by_key(|(a, _)| *a != env.account);
+            all.into_iter().map(|(_, i)| i).collect()
+        };
+        let draft = iuredesk_compose::reopen_draft(&raw, &identities)
+            .map_err(|e| EngineError::Invalid(e.message(compose_lang())))?;
+        let account = self.account_of_identity(&draft.identity.email).or(Some(env.account));
+        let kind = if draft.in_reply_to.is_some() { ComposeKind::Reply } else { ComposeKind::New };
+        Ok(ComposeDraft { kind, account, draft, saved: Some(id) })
     }
 
     /// Borra un mensaje (borrador reemplazado o enviado): en local y, si ya estaba en el servidor,

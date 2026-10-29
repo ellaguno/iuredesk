@@ -101,7 +101,13 @@ async fn main() -> anyhow_like::Result {
         poll_interval: Duration::from_secs(3600),
         ..Default::default()
     };
-    let handle = PimSyncEngine::start(Arc::clone(&store), vec![PimAccount { account, source }], tokens, secrets, opts);
+    let handle = PimSyncEngine::start(
+        Arc::clone(&store),
+        vec![PimAccount { account, source, tasks_api: None }],
+        tokens,
+        secrets,
+        opts,
+    );
     let mut events = handle.events();
     let started = std::time::Instant::now();
     let result = handle.sync_now_wait("pim-sync-once").await;

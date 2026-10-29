@@ -252,6 +252,12 @@ fn main() -> Result<(), String> {
         }
         app.demo_compose();
     }
+    if args.iter().any(|a| a == "--draft") {
+        app.demo_reopen_draft();
+    }
+    if args.iter().any(|a| a == "--note-preview") {
+        app.set_note_preview(true);
+    }
     if module == "provider" {
         app.demo_provider_step("laura.mendez@gmail.com");
     } else if module == "onboarding" {

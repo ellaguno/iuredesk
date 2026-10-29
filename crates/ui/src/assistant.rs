@@ -191,6 +191,7 @@ pub fn command(app: &mut DeskApp, ctx: &Context, id: &str) {
             request(app, AiTask::Document { msgs, purpose });
         }
         "app.import" => app.import.open(),
+        "notes.open_editor" => crate::pim::open_note_in_editor(app),
         "suite.read_aloud" => crate::suite_ui::read_aloud(app),
         "suite.connect_agents" => app.suite.hub.run(iuredesk_engine::suite::SuiteAction::RegisterAgents),
         _ => {}

@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use chrono::Utc;
-use iuredesk_model::{AccountId, Flags, FolderId, MessageId};
+use iuredesk_model::{AccountId, Flags, Folder, FolderId, FolderRole, MessageId};
 use iuredesk_store::{NewMessage, Store};
 use serde::{Deserialize, Serialize};
 
@@ -108,6 +108,35 @@ pub enum MailOp {
         /// Id remoto.
         remote: String,
     },
+    /// Crear una carpeta (F7.1). IMAP: `CREATE path`; Graph: `mailFolders` con `name` dentro de
+    /// `parent` (id remoto) y se adopta el id que da el servidor.
+    CreateFolder {
+        /// Carpeta local (ya creada).
+        folder_id: FolderId,
+        /// Ruta IMAP (UTF-7 modificado, con el separador del servidor).
+        path: String,
+        /// Nombre visible.
+        name: String,
+        /// Carpeta padre remota (Graph), si la hay.
+        #[serde(default)]
+        parent: Option<String>,
+    },
+    /// Cambiar el nombre de una carpeta. IMAP: `RENAME from to`; Graph: `displayName`.
+    RenameFolder {
+        /// Carpeta local.
+        folder_id: FolderId,
+        /// Ruta (IMAP) o id (Graph) actual.
+        from: String,
+        /// Ruta IMAP nueva.
+        to: String,
+        /// Nombre visible nuevo.
+        name: String,
+    },
+    /// Borrar una carpeta en el servidor (ya borrada en local). IMAP: `DELETE`; Graph: `DELETE`.
+    DeleteFolder {
+        /// Ruta (IMAP) o id (Graph).
+        remote: String,
+    },
 }
 
 impl MailOp {
@@ -122,6 +151,9 @@ impl MailOp {
             MailOp::RemoteFlags { .. } => "remote_flags",
             MailOp::RemoteMove { .. } => "remote_move",
             MailOp::RemoteDelete { .. } => "remote_delete",
+            MailOp::CreateFolder { .. } => "create_folder",
+            MailOp::RenameFolder { .. } => "rename_folder",
+            MailOp::DeleteFolder { .. } => "delete_folder",
         }
     }
 
@@ -134,7 +166,11 @@ impl MailOp {
             | MailOp::Labels { msg, .. }
             | MailOp::RemoteFlags { msg, .. }
             | MailOp::RemoteMove { msg, .. } => Some(*msg),
-            MailOp::Expunge { .. } | MailOp::RemoteDelete { .. } => None,
+            MailOp::Expunge { .. }
+            | MailOp::RemoteDelete { .. }
+            | MailOp::CreateFolder { .. }
+            | MailOp::RenameFolder { .. }
+            | MailOp::DeleteFolder { .. } => None,
         }
     }
 
@@ -196,9 +232,8 @@ pub fn classify(kind: &str, payload: &[u8]) -> Option<Option<QueueWork>> {
     match kind {
         OP_SEND => None,
         OP_SYNC => Some(SyncOp::decode(payload).map(QueueWork::Compose)),
-        "flags" | "move" | "expunge" | "append" | "labels" | "remote_flags" | "remote_move" | "remote_delete" => {
-            Some(MailOp::decode(payload).map(QueueWork::Mail))
-        }
+        "flags" | "move" | "expunge" | "append" | "labels" | "remote_flags" | "remote_move" | "remote_delete"
+        | "create_folder" | "rename_folder" | "delete_folder" => Some(MailOp::decode(payload).map(QueueWork::Mail)),
         _ => None,
     }
 }
@@ -329,10 +364,218 @@ pub fn append_message(store: &Store, folder: FolderId, raw: Vec<u8>, flags: Flag
     Ok(id)
 }
 
+// ------------------------------------------------------------------ carpetas (F7.1)
+
+/// Largo máximo del nombre de una carpeta.
+pub const MAX_FOLDER_NAME: usize = 200;
+/// Ruta provisional de una carpeta de Graph que aún no tiene id remoto.
+pub const LOCAL_FOLDER_PREFIX: &str = "local-folder:";
+
+/// Cómo nombra el servidor las carpetas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FolderStyle {
+    /// Rutas IMAP con separador (`Clientes/2026`) en UTF-7 modificado. En Gmail son etiquetas.
+    Imap {
+        /// Separador de jerarquía del servidor.
+        delimiter: char,
+    },
+    /// Ids opacos (Microsoft Graph `mailFolders`).
+    Graph,
+}
+
+/// Clave del separador IMAP de una cuenta (lo guarda la lista de carpetas).
+pub(crate) fn delimiter_key(acct: AccountId) -> String {
+    format!("imap-delim/{}", acct.get())
+}
+
+/// Separador IMAP conocido de la cuenta (`/` si aún no se listó).
+pub fn imap_delimiter(store: &Store, acct: AccountId) -> char {
+    store
+        .sync_state(&delimiter_key(acct))
+        .ok()
+        .flatten()
+        .and_then(|b| String::from_utf8(b).ok())
+        .and_then(|s| s.chars().next())
+        .unwrap_or('/')
+}
+
+fn clean_name(name: &str, delimiter: Option<char>) -> Result<String> {
+    let n: String = name.trim().chars().take(MAX_FOLDER_NAME).collect();
+    let bad = n.is_empty()
+        || n.chars().any(|c| c.is_control() || c == '*' || c == '%')
+        || delimiter.is_some_and(|d| n.contains(d))
+        || n.eq_ignore_ascii_case("INBOX");
+    if bad {
+        return Err(SyncError::InvalidFolderName(n));
+    }
+    Ok(n)
+}
+
+/// Pendientes de carpetas de una cuenta: carpetas locales que aún no existen (o no con su nombre
+/// nuevo) en el servidor y rutas remotas que se están borrando o renombrando. La lista de
+/// carpetas no las toca mientras tanto.
+#[derive(Clone, Debug, Default)]
+pub struct PendingFolders {
+    /// Carpetas locales con `CREATE`/`RENAME` en cola.
+    pub local: HashSet<FolderId>,
+    /// Rutas o ids remotos con `DELETE`/`RENAME` (ruta vieja) en cola.
+    pub remote: HashSet<String>,
+}
+
+/// Ver [`PendingFolders`].
+pub fn pending_folders(store: &Store, account: AccountId) -> PendingFolders {
+    let mut p = PendingFolders::default();
+    for o in store.peek_ops(10_000).unwrap_or_default().into_iter().filter(|o| o.account == account) {
+        match classify(&o.kind, &o.payload) {
+            Some(Some(QueueWork::Mail(MailOp::CreateFolder { folder_id, .. }))) => {
+                p.local.insert(folder_id);
+            }
+            Some(Some(QueueWork::Mail(MailOp::RenameFolder { folder_id, from, .. }))) => {
+                p.local.insert(folder_id);
+                p.remote.insert(from);
+            }
+            Some(Some(QueueWork::Mail(MailOp::DeleteFolder { remote }))) => {
+                p.remote.insert(remote);
+            }
+            _ => {}
+        }
+    }
+    p
+}
+
+/// Crea una carpeta (en local al instante; en el servidor por la cola). En Gmail es una
+/// etiqueta. Devuelve la carpeta local.
+pub fn create_folder(
+    store: &Store,
+    account: AccountId,
+    parent: Option<FolderId>,
+    name: &str,
+    style: FolderStyle,
+) -> Result<FolderId> {
+    let delim = match style {
+        FolderStyle::Imap { delimiter } => Some(delimiter),
+        FolderStyle::Graph => None,
+    };
+    let name = clean_name(name, delim)?;
+    let parent_f = match parent {
+        Some(p) => Some(store.get_folder(p)?.ok_or_else(|| SyncError::MessageNotFound(p.to_string()))?),
+        None => None,
+    };
+    if parent_f.as_ref().is_some_and(|p| p.account != account) {
+        return Err(SyncError::InvalidFolderName(name));
+    }
+    if store.folders(account)?.iter().any(|f| f.parent == parent && f.name.eq_ignore_ascii_case(&name)) {
+        return Err(SyncError::FolderExists(name));
+    }
+    let path = match (style, &parent_f) {
+        (FolderStyle::Imap { delimiter }, Some(p)) => {
+            format!("{}{delimiter}{}", p.remote_path, iuredesk_imap::mutf7::encode(&name))
+        }
+        (FolderStyle::Imap { .. }, None) => iuredesk_imap::mutf7::encode(&name),
+        // Graph: el id llega al crearla; mientras tanto, una ruta local única.
+        (FolderStyle::Graph, _) => String::new(),
+    };
+    let mut f = Folder { account, name: name.clone(), remote_path: path, parent, ..Default::default() };
+    f.id = store.put_folder(&f)?;
+    if style == FolderStyle::Graph {
+        f.remote_path = format!("{LOCAL_FOLDER_PREFIX}{}", f.id.get());
+        store.put_folder(&f)?;
+    }
+    let parent_remote = parent_f.map(|p| p.remote_path).filter(|r| !r.is_empty());
+    let op = MailOp::CreateFolder {
+        folder_id: f.id,
+        path: f.remote_path.clone(),
+        name,
+        parent: if style == FolderStyle::Graph { parent_remote } else { None },
+    };
+    enqueue(store, account, &op)?;
+    Ok(f.id)
+}
+
+/// Cambia el nombre de una carpeta propia (no las de sistema).
+pub fn rename_folder(store: &Store, folder: FolderId, name: &str, style: FolderStyle) -> Result<()> {
+    let mut f = store.get_folder(folder)?.ok_or_else(|| SyncError::MessageNotFound(folder.to_string()))?;
+    if f.role != FolderRole::Custom {
+        return Err(SyncError::SystemFolder);
+    }
+    let delim = match style {
+        FolderStyle::Imap { delimiter } => Some(delimiter),
+        FolderStyle::Graph => None,
+    };
+    let name = clean_name(name, delim)?;
+    if f.name == name {
+        return Ok(());
+    }
+    let from = f.remote_path.clone();
+    let to = match style {
+        FolderStyle::Imap { delimiter } => match from.rsplit_once(delimiter) {
+            Some((p, _)) => format!("{p}{delimiter}{}", iuredesk_imap::mutf7::encode(&name)),
+            None => iuredesk_imap::mutf7::encode(&name),
+        },
+        FolderStyle::Graph => from.clone(),
+    };
+    f.name = name.clone();
+    store.put_folder(&f)?;
+    // Aún sin crear en el servidor: se corrige la creación pendiente en lugar de renombrar.
+    for o in store.peek_ops(10_000)?.into_iter().filter(|o| o.account == f.account) {
+        if let Some(MailOp::CreateFolder { folder_id, parent, .. }) = MailOp::decode(&o.payload)
+            && folder_id == folder
+        {
+            store.ack_op(o.seq)?;
+            if style != FolderStyle::Graph {
+                f.remote_path = to.clone();
+                store.put_folder(&f)?;
+            }
+            let op = MailOp::CreateFolder { folder_id, path: f.remote_path.clone(), name, parent };
+            enqueue(store, f.account, &op)?;
+            return Ok(());
+        }
+    }
+    enqueue(store, f.account, &MailOp::RenameFolder { folder_id: folder, from, to, name })?;
+    Ok(())
+}
+
+/// Borra una carpeta propia y su contenido (en local al instante; en el servidor por la cola),
+/// con sus subcarpetas locales. Si aún no existía en el servidor basta con cancelar su creación.
+pub fn delete_folder(store: &Store, folder: FolderId) -> Result<()> {
+    let f = store.get_folder(folder)?.ok_or_else(|| SyncError::MessageNotFound(folder.to_string()))?;
+    if f.role != FolderRole::Custom {
+        return Err(SyncError::SystemFolder);
+    }
+    let all = store.folders(f.account)?;
+    let mut gone = vec![f.id];
+    let mut i = 0usize;
+    while let Some(id) = gone.get(i).copied() {
+        i = i.saturating_add(1);
+        if gone.len() > 10_000 {
+            break;
+        }
+        let kids: Vec<FolderId> =
+            all.iter().filter(|c| c.parent == Some(id) && !gone.contains(&c.id)).map(|c| c.id).collect();
+        gone.extend(kids);
+    }
+    let queued = store.peek_ops(10_000)?.into_iter().find(|o| {
+        o.account == f.account
+            && matches!(MailOp::decode(&o.payload), Some(MailOp::CreateFolder { folder_id, .. }) if folder_id == folder)
+    });
+    for id in gone.iter().rev() {
+        store.delete_folder(*id)?;
+    }
+    if let Some(op) = queued {
+        store.ack_op(op.seq)?;
+    }
+    // Aunque la creación siguiera en cola pudo estar saliendo ya: borrar lo que no existe no
+    // es un error (salvo en Graph sin id todavía, donde no hay nada que borrar).
+    if !f.remote_path.starts_with(LOCAL_FOLDER_PREFIX) {
+        enqueue(store, f.account, &MailOp::DeleteFolder { remote: f.remote_path })?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iuredesk_model::{Folder, FolderRole, MessageEnvelope};
+    use iuredesk_model::MessageEnvelope;
 
     #[test]
     fn local_first_then_queued() {

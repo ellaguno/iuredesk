@@ -20,8 +20,8 @@ use iuredesk_accounts::iurefficient::{
 };
 use iuredesk_model::account::Identity;
 use iuredesk_model::{
-    AccountId, Calendar, Event as CalEvent, EventId, EventTime, Mailbox, MessageEnvelope, MessageId, Task, TaskId,
-    TaskList, TaskListId, TaskStatus,
+    AccountId, Calendar, Event as CalEvent, EventId, EventTime, FolderRole, Mailbox, MessageEnvelope, MessageId, Task,
+    TaskId, TaskList, TaskListId, TaskStatus,
 };
 use iuredesk_store::EmailLink;
 use iurefficient_connect::Account;
@@ -42,7 +42,15 @@ const CONTEXT_TTL: Duration = Duration::from_secs(300);
 /// Tras un fallo, cuándo se vuelve a consultar el mismo mensaje.
 const CONTEXT_RETRY: Duration = Duration::from_secs(60);
 /// Entradas de caché de contexto.
-const CONTEXT_CACHE: usize = 128;
+const CONTEXT_CACHE: usize = 256;
+/// F7.1: consulta previa de remitentes de la bandeja de entrada: una cada tanto, nunca dos a la
+/// vez, de los mensajes más recientes, y tras un fallo se espera bastante.
+const PREFETCH_EVERY: Duration = Duration::from_secs(4);
+const PREFETCH_AFTER_ERROR: Duration = Duration::from_secs(10 * 60);
+/// Mensajes recientes (de todas las bandejas de entrada) que se miran.
+const PREFETCH_RECENT: usize = 40;
+/// Remitentes distintos consultados como mucho por sesión de Iurefficient.
+const PREFETCH_MAX: usize = 150;
 /// Cada cuánto se copia la agenda de la instancia.
 const AGENDA_EVERY: Duration = Duration::from_secs(15 * 60);
 /// Espera máxima entre consultas de avisos tras fallos seguidos.
@@ -187,6 +195,51 @@ pub(crate) struct Iure {
     pending_totp: Option<(Arc<Remote>, String)>,
     busy: usize,
     pending_compose: Vec<crate::compose::ComposeDraft>,
+    prefetch: Prefetch,
+}
+
+/// F7.1: ritmo de la consulta previa de contexto (sin red; probado aparte).
+#[derive(Debug, Default)]
+pub(crate) struct Prefetch {
+    /// Clave en vuelo.
+    inflight: Option<String>,
+    /// No antes de.
+    next: Option<Instant>,
+    /// Claves ya pedidas (aciertos o fallos) en esta sesión.
+    tried: HashSet<String>,
+}
+
+impl Prefetch {
+    /// ¿Toca pedir otra?
+    fn due(&self, now: Instant) -> bool {
+        self.inflight.is_none() && self.tried.len() < PREFETCH_MAX && self.next.is_none_or(|t| now >= t)
+    }
+
+    /// La primera candidata sin consultar (ni en caché, ni pedida antes).
+    fn pick<'a>(&self, keys: impl IntoIterator<Item = &'a str>, known: impl Fn(&str) -> bool) -> Option<String> {
+        keys.into_iter().find(|k| !k.starts_with('|') && !self.tried.contains(*k) && !known(k)).map(str::to_string)
+    }
+
+    fn start(&mut self, key: String, now: Instant) {
+        self.tried.insert(key.clone());
+        self.inflight = Some(key);
+        self.next = Some(now + PREFETCH_EVERY);
+    }
+
+    /// Terminó la consulta `key`; `true` si era una previa.
+    fn finish(&mut self, key: &str, ok: bool, now: Instant) -> bool {
+        if self.inflight.as_deref() != Some(key) {
+            return false;
+        }
+        self.inflight = None;
+        let wait = if ok { PREFETCH_EVERY } else { PREFETCH_AFTER_ERROR };
+        self.next = Some(now + wait);
+        true
+    }
+
+    fn reset(&mut self) {
+        *self = Prefetch::default();
+    }
 }
 
 impl Default for Iure {
@@ -218,6 +271,7 @@ impl Default for Iure {
             pending_totp: None,
             busy: 0,
             pending_compose: Vec::new(),
+            prefetch: Prefetch::default(),
         }
     }
 }
@@ -437,6 +491,7 @@ impl Session {
         self.iure.agenda_next = Some(Instant::now());
         self.iure.feed_failures = 0;
         self.iure.contexts.retain(|_, e| matches!(e, CtxEntry::Ready(..)));
+        self.iure.prefetch.reset();
     }
 
     // ------------------------------------------------------------------ panel contextual
@@ -555,13 +610,50 @@ impl Session {
         p
     }
 
+    /// F7.1: consulta en segundo plano el contexto del remitente de un mensaje reciente de las
+    /// bandejas de entrada que aún no se conoce, para que la insignia de la lista aparezca sin
+    /// abrir cada correo. Una a la vez, con pausa entre consultas y mucha más tras un fallo (sin
+    /// red, 403 de términos o sesión caducada: el estado deja de estar listo y no se pide nada).
+    fn iure_prefetch(&mut self, now: Instant) {
+        let Some(s) = self.iure_remote() else { return };
+        let inboxes: Vec<_> = self.folders.iter().filter(|f| f.role == FolderRole::Inbox).map(|f| f.id).collect();
+        let mut recent: Vec<MessageEnvelope> = Vec::new();
+        for f in inboxes.into_iter().take(32) {
+            recent.extend(self.store.list_envelopes(f, 0, PREFETCH_RECENT).unwrap_or_default());
+        }
+        recent.sort_by_key(|e| std::cmp::Reverse(e.date));
+        recent.truncate(PREFETCH_RECENT);
+        let queries: Vec<ContextQuery> = recent.iter().map(|e| self.iure_query(e)).collect();
+        let keys: Vec<String> = queries.iter().map(ContextQuery::key).collect();
+        let known = |k: &str| self.iure.contexts.contains_key(k) || self.iure.inflight.contains(k);
+        let Some(key) = self.iure.prefetch.pick(keys.iter().map(String::as_str), known) else {
+            // Nada nuevo: se vuelve a mirar más tarde (llega correo).
+            self.iure.prefetch.next = Some(now + PREFETCH_EVERY.saturating_mul(15));
+            return;
+        };
+        let Some(q) = queries.into_iter().find(|q| q.key() == key) else { return };
+        self.iure.prefetch.start(key.clone(), now);
+        self.iure.inflight.insert(key.clone());
+        self.iure_spawn(async move {
+            let result = iure::lookup(&s, &q).await;
+            Msg::Context { key, result }
+        });
+    }
+
     /// Cuándo hay que volver a llamar a `poll` por Iurefficient (espera del panel, avisos).
     pub(crate) fn iure_deadline(&self) -> Option<Duration> {
         let now = Instant::now();
         let want = self.iure.want.as_ref().map(|(_, _, at)| DEBOUNCE.saturating_sub(at.elapsed()));
         let feed = self.iure.feed_next.filter(|_| !self.iure.feed_busy).map(|t| t.saturating_duration_since(now));
         let agenda = self.iure.agenda_next.filter(|_| !self.iure.agenda_busy).map(|t| t.saturating_duration_since(now));
-        [want, feed, agenda].into_iter().flatten().min()
+        // La consulta previa solo corre con una instancia de verdad (no en el ejemplo).
+        let prefetching = matches!(self.iure.backend, Backend::Live(_))
+            && self.iure.status.is_ready()
+            && self.iure.prefetch.inflight.is_none()
+            && self.iure.prefetch.tried.len() < PREFETCH_MAX;
+        let prefetch =
+            prefetching.then(|| self.iure.prefetch.next.map_or(Duration::ZERO, |t| t.saturating_duration_since(now)));
+        [want, feed, agenda, prefetch].into_iter().flatten().min()
     }
 
     // ------------------------------------------------------------------ avisos
@@ -1001,7 +1093,15 @@ impl Session {
                 });
             }
         }
-        let live = matches!(self.iure.status, IureStatus::Ready { .. } | IureStatus::Offline { .. });
+        if self.iure.status.is_ready() && self.iure.prefetch.due(now) {
+            self.iure_prefetch(now);
+        }
+        // Con los términos pendientes los avisos también sondean: así «Reintentar» (o aceptar los
+        // términos en la web) vuelve a «Listo» aunque no haya consulta del panel pendiente.
+        let live = matches!(
+            self.iure.status,
+            IureStatus::Ready { .. } | IureStatus::Offline { .. } | IureStatus::TermsRequired { .. }
+        );
         if live
             && !self.iure.feed_busy
             && self.iure.feed_next.is_some_and(|t| now >= t)
@@ -1063,6 +1163,7 @@ impl Session {
             }
             Msg::Context { key, result } => {
                 self.iure.inflight.remove(&key);
+                self.iure.prefetch.finish(&key, result.is_ok(), Instant::now());
                 if self.iure.contexts.len() >= CONTEXT_CACHE {
                     self.iure.contexts.retain(|_, e| match e {
                         CtxEntry::Ready(_, at) => at.elapsed() < CONTEXT_TTL,
@@ -1493,6 +1594,36 @@ fn task_from_remote(t: &iurefficient_connect::pim::Task, list: TaskListId) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// F7.1: la consulta previa va de una en una, con pausa, no repite remitentes ni lo ya
+    /// conocido, espera mucho tras un fallo y tiene tope por sesión.
+    #[test]
+    fn prefetch_is_rate_limited_and_cached() {
+        let mut p = Prefetch::default();
+        let t0 = Instant::now();
+        assert!(p.due(t0));
+        let keys = ["|", "ana@x.mx|", "bob@y.mx|", "ana@x.mx|"];
+        let known = |k: &str| k == "bob@y.mx|";
+        let k = p.pick(keys, known).unwrap();
+        assert_eq!(k, "ana@x.mx|", "sin correo no se consulta; lo conocido tampoco");
+        p.start(k.clone(), t0);
+        assert!(!p.due(t0 + PREFETCH_EVERY * 10), "nunca dos a la vez");
+        assert!(!p.finish("otra|", true, t0), "una consulta del panel no es la previa");
+        assert!(p.finish(&k, true, t0));
+        assert!(!p.due(t0), "pausa entre consultas");
+        assert!(p.due(t0 + PREFETCH_EVERY));
+        assert_eq!(p.pick(keys, known), None, "ya pedida en esta sesión");
+        p.start("c@z.mx|".into(), t0);
+        p.finish("c@z.mx|", false, t0);
+        assert!(!p.due(t0 + PREFETCH_EVERY * 2), "tras un fallo se espera mucho más");
+        assert!(p.due(t0 + PREFETCH_AFTER_ERROR));
+        for i in 0..PREFETCH_MAX {
+            p.tried.insert(format!("{i}@x|"));
+        }
+        assert!(!p.due(t0 + PREFETCH_AFTER_ERROR), "tope por sesión");
+        p.reset();
+        assert!(p.due(t0));
+    }
 
     #[test]
     fn remote_dates_are_parsed_without_panicking() {

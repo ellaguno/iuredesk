@@ -279,6 +279,7 @@ impl Outbox {
             date: now.fixed_offset(),
             message_id: Some(message_id.clone()),
             max_size: MAX_MESSAGE_BYTES,
+            keep_bcc: false,
         };
         crate::secure::build_sealed(&d, &StoreResolver { store: &self.store }, &opts, self.sealer.as_ref())?;
 
@@ -454,6 +455,7 @@ impl Outbox {
             date: now.with_timezone(&Local).fixed_offset(),
             message_id: Some(entry.message_id.clone()),
             max_size: MAX_MESSAGE_BYTES,
+            keep_bcc: false,
         };
         let built = match crate::secure::build_sealed(
             &queued.draft,

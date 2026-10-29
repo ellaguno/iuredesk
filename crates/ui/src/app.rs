@@ -187,6 +187,24 @@ impl DeskApp {
         self.open_composer(cd);
     }
 
+    /// F7.1: guarda la redacción de ejemplo en «Borradores», la cierra y la reabre desde allí
+    /// como lo haría el usuario («Editar borrador» / doble clic) (capturas y pruebas).
+    pub fn demo_reopen_draft(&mut self) {
+        self.demo_compose();
+        let Some(mut w) = self.composers.pop() else { return };
+        let Ok(id) = self.session.save_draft(&mut w.cd, true) else { return };
+        self.session.module = Module::Mail;
+        self.session.select_folder(iuredesk_engine::FolderSel::Unified(iuredesk_model::FolderRole::Drafts));
+        self.session.set_selection(vec![id], Some(id));
+        let ctx = egui::Context::default();
+        self.run(&ctx, "mail.edit_draft");
+    }
+
+    /// Notas en «Vista previa» (capturas).
+    pub fn set_note_preview(&mut self, on: bool) {
+        self.pim.note_preview = on;
+    }
+
     /// Ventanas de redacción abiertas (pruebas).
     pub fn composer_count(&self) -> usize {
         self.composers.len()
@@ -238,6 +256,10 @@ impl DeskApp {
 
         crate::header::show(self, ui, true);
         self.rail(ui);
+        // F7.1: lo escrito en una nota se guarda al salir de Notas.
+        if self.session.module != Module::Notes {
+            crate::pim::flush_note(self);
+        }
         match self.session.module {
             Module::Today => crate::today::show(self, ui),
             Module::Mail => crate::mail::show(self, ui),

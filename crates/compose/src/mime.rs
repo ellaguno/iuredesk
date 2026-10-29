@@ -69,17 +69,20 @@ pub struct BuildOptions {
     pub message_id: Option<String>,
     /// Tamaño máximo absoluto.
     pub max_size: u64,
+    /// Conservar `Bcc:` en las cabeceras: solo para guardar borradores (que se reabren con sus
+    /// destinatarios ocultos); nunca para enviar.
+    pub keep_bcc: bool,
 }
 
 impl BuildOptions {
     /// Fecha actual en la zona local y Message-ID nuevo.
     pub fn now() -> Self {
-        Self { date: Local::now().fixed_offset(), message_id: None, max_size: MAX_MESSAGE_BYTES }
+        Self { date: Local::now().fixed_offset(), message_id: None, max_size: MAX_MESSAGE_BYTES, keep_bcc: false }
     }
 
     /// Fecha dada (en UTC) y Message-ID nuevo.
     pub fn at(date: DateTime<Utc>) -> Self {
-        Self { date: date.fixed_offset(), message_id: None, max_size: MAX_MESSAGE_BYTES }
+        Self { date: date.fixed_offset(), message_id: None, max_size: MAX_MESSAGE_BYTES, keep_bcc: false }
     }
 }
 
@@ -267,6 +270,9 @@ pub fn build_message(draft: &Draft, resolver: &dyn ContentResolver, opts: &Build
     if !draft.cc.is_empty() {
         h("Cc", encode::format_mailbox_list(&draft.cc)?);
     }
+    if opts.keep_bcc && !draft.bcc.is_empty() {
+        h("Bcc", encode::format_mailbox_list(&draft.bcc)?);
+    }
     h("Subject", encode::encode_text(&draft.subject));
     h("Message-ID", message_id.clone());
     if let Some(irt) = draft.in_reply_to.as_deref().and_then(clean_msg_id) {
@@ -291,6 +297,13 @@ pub fn build_message(draft: &Draft, resolver: &dyn ContentResolver, opts: &Build
     }
     if draft.request_read_receipt {
         h("Disposition-Notification-To", from_header);
+    }
+    if let Some(a) = draft.auto_submitted {
+        // RFC 3834 §5: que nadie (ni otro contestador) responda a esto.
+        h("Auto-Submitted", a.header_value().to_string());
+        if a == crate::draft::AutoSubmitted::AutoReplied {
+            h("X-Auto-Response-Suppress", "All".to_string());
+        }
     }
 
     // --- Cuerpo ----------------------------------------------------------------------------

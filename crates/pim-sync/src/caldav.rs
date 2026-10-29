@@ -235,7 +235,12 @@ impl CalDav {
             store.delete_calendar(c.id)?;
             changed = true;
         }
-        for l in lists.iter().filter(|l| !l.remote_path.is_empty() && !seen.contains(&l.remote_path)) {
+        // Las listas de Google Tasks (`gtasks:`) no son colecciones CalDAV.
+        for l in lists.iter().filter(|l| {
+            !l.remote_path.is_empty()
+                && !l.remote_path.starts_with(crate::gtasks::PREFIX)
+                && !seen.contains(&l.remote_path)
+        }) {
             store.delete_task_list(l.id)?;
             changed = true;
         }

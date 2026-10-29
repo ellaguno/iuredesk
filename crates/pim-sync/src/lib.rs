@@ -6,7 +6,7 @@
 //! |---|---|---|
 //! | iCloud | CalDAV + CardDAV (`caldav.icloud.com`, `contacts.icloud.com`) | contraseña de app (Basic) |
 //! | Fastmail, Nextcloud, genérico | CalDAV + CardDAV (URL de la cuenta) | contraseña (Basic) |
-//! | Google | CalDAV + CardDAV (`apidata.googleusercontent.com`, `googleapis.com/carddav`) | OAuth Bearer ([`iuredesk_oauth::TokenAudience::Api`]) |
+//! | Google | CalDAV + CardDAV (`apidata.googleusercontent.com`, `googleapis.com/carddav`) + Google Tasks API (`tasks/v1`: Google CalDAV no sirve `VTODO`) | OAuth Bearer ([`iuredesk_oauth::TokenAudience::Api`]) |
 //! | Microsoft 365 | Microsoft Graph: calendarios (delta de `calendarView`), contactos (delta), To Do (delta) | OAuth Bearer ([`iuredesk_oauth::TokenAudience::Api`]) |
 //!
 //! Los dos caminos están detrás del mismo rasgo interno (`provider::Provider`): `sync` (bajar) y
@@ -53,6 +53,7 @@ mod caldav;
 mod engine;
 pub mod error;
 mod graph;
+mod gtasks;
 pub mod map;
 pub mod merge;
 mod occurrences;
@@ -69,6 +70,7 @@ use iuredesk_store::PimRef;
 pub use account::{DavAuth, GRAPH_BASE, PimAccount, PimSource};
 pub use engine::{BusySlot, FreeBusy, PimSyncEngine, PimSyncHandle, account_id};
 pub use error::{PimError, Result};
+pub use gtasks::{GOOGLE_TASKS_BASE, GOOGLE_TASKS_LIST_PREFIX};
 pub use occurrences::{MAX_OCCURRENCES, occurrences_between};
 pub use ops::{ImipReply, OP_IMIP_REPLY, PimOp};
 pub use series::SeriesScope;
