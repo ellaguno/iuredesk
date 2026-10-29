@@ -192,10 +192,13 @@ fn maildir_plus_plus_and_eml_folder() {
     for sub in ["cur", "new", "tmp", ".Enviados/cur", ".Enviados/new", ".Clientes.ACME/cur", ".Clientes.ACME/new"] {
         std::fs::create_dir_all(md.join(sub)).unwrap();
     }
-    write(&md.join("cur/1700000000.M1.host:2,FS"), msg("m1", "Leído", "a"));
+    // En Windows «:» no se permite en nombres de archivo (NTFS lo toma como flujo alterno): los
+    // Maildir de Windows usan «!2,», que el importador también entiende.
+    let sep = if cfg!(windows) { "!2," } else { ":2," };
+    write(&md.join(format!("cur/1700000000.M1.host{sep}FS")), msg("m1", "Leído", "a"));
     write(&md.join("new/1700000001.M2.host"), msg("m2", "Nuevo", "b"));
-    write(&md.join(".Enviados/cur/1700000002.M3.host:2,S"), msg("m3", "Env", "c"));
-    write(&md.join(".Clientes.ACME/cur/1700000003.M4.host:2,RS"), msg("m4", "Cli", "d"));
+    write(&md.join(format!(".Enviados/cur/1700000002.M3.host{sep}S")), msg("m3", "Env", "c"));
+    write(&md.join(format!(".Clientes.ACME/cur/1700000003.M4.host{sep}RS")), msg("m4", "Cli", "d"));
     let emls = dir.path().join("Exportados");
     write(&emls.join("a.eml"), msg("e1", "Eml 1", "x"));
     write(&emls.join("b.eml"), msg("e1", "Eml 1", "x").replace('\n', "\r\n"));
