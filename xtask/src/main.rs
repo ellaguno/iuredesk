@@ -48,7 +48,11 @@ fn main() -> ExitCode {
         "layers" => metadata(None).and_then(|m| layers(&m)),
         "purity" => purity_all(),
         "licenses" => metadata(None).and_then(|m| licenses(&m)),
-        "notices" => notices_file(&root().join("target/THIRD-PARTY-NOTICES.txt")),
+        "notices" => match std::env::args().nth(2) {
+            // `cargo xtask notices <triple>`: comprobar los avisos de otro SO sin compilar.
+            Some(t) => notices_file_for(&root().join(format!("target/THIRD-PARTY-NOTICES-{t}.txt")), &t),
+            None => notices_file(&root().join("target/THIRD-PARTY-NOTICES.txt")),
+        },
         "assets" => assets(),
         "dist" => dist(std::env::args().skip(2).collect()),
         "icons" => icons::icons(),
