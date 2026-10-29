@@ -361,7 +361,7 @@ impl Session {
         self.data_gen = self.data_gen.wrapping_add(1);
         // La selección y el foco se conservan; la lista se recalcula en segundo plano.
         if self.search.trim().is_empty() {
-            self.rebuild_rows();
+            self.refresh_rows();
         }
     }
 }

@@ -862,23 +862,25 @@ impl Session {
             let mut counts = [(0usize, 0usize); 5];
             let tab = self.rules.tab;
             let mut keep = Vec::with_capacity(out.len());
+            // Más allá de este tope no se leen sobres: cuenta como Principal si no se sabe. Lo que
+            // falta clasificar y las banderas se leen en lote (una transacción, no 5 000).
+            let head: Vec<MessageId> = out.iter().take(5_000).copied().collect();
+            let need: Vec<MessageId> =
+                head.iter().filter(|id| !self.rules.focus_cache.contains_key(id)).copied().collect();
+            if !need.is_empty() {
+                for e in self.store.get_envelopes(&need).unwrap_or_default().into_iter().flatten() {
+                    let hint = self.category_hint(e.account, e.id);
+                    let c = category::classify(&e, &Headers::default(), &signals, &overrides, hint.as_deref()).0;
+                    self.rules.focus_cache.insert(e.id, c);
+                }
+            }
+            let flags = self.store.flags_of(&head).unwrap_or_default();
             for (i, id) in out.into_iter().enumerate() {
-                // Más allá de este tope no se leen sobres: cuenta como Principal si no se sabe.
-                let env = if i < 5_000 { self.store.get_envelope(id).ok().flatten() } else { None };
-                let c = match (self.rules.focus_cache.get(&id), &env) {
-                    (Some(c), _) => *c,
-                    (None, Some(e)) => {
-                        let hint = self.category_hint(e.account, id);
-                        let c = category::classify(e, &Headers::default(), &signals, &overrides, hint.as_deref()).0;
-                        self.rules.focus_cache.insert(id, c);
-                        c
-                    }
-                    (None, None) => Category::Primary,
-                };
+                let c = self.rules.focus_cache.get(&id).copied().unwrap_or(Category::Primary);
                 let k = Category::ALL.iter().position(|x| *x == c).unwrap_or(0);
                 if let Some(slot) = counts.get_mut(k) {
                     slot.0 += 1;
-                    if env.as_ref().is_some_and(|e| !e.flags.seen) {
+                    if flags.get(i).copied().flatten().is_some_and(|f| !f.seen) {
                         slot.1 += 1;
                     }
                 }

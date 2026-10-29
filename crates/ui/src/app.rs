@@ -104,6 +104,8 @@ pub struct DeskApp {
     applied_fonts: Option<(String, u32, bool)>,
     /// Confirmación pendiente (`Outcome::Confirm`): texto, botón y comando a ejecutar.
     pub(crate) confirm: Option<(iuredesk_engine::lang::Text, iuredesk_engine::lang::Text, String)>,
+    /// R2.1: tiempo por cuadro, memoria y estado para Ajustes → Avanzado.
+    pub(crate) diag: crate::diagnostics::DiagState,
 }
 
 impl DeskApp {
@@ -143,6 +145,7 @@ impl DeskApp {
             applied: None,
             applied_fonts: None,
             confirm: None,
+            diag: Default::default(),
         };
         if let Some(m) = app.options.mailto.clone()
             && let Some(d) = app.session.compose_mailto(&m)
@@ -217,6 +220,17 @@ impl DeskApp {
 
     /// Un cuadro completo. `ui` ocupa la ventana.
     pub fn ui(&mut self, ui: &mut Ui) {
+        let frame_start = std::time::Instant::now();
+        self.frame(ui);
+        self.diag.frames.record(frame_start, frame_start.elapsed());
+    }
+
+    /// Tiempo de los últimos cuadros (p50, p99, máx., fps) para diagnóstico y bancos de prueba.
+    pub fn frame_summary(&self) -> crate::diagnostics::FrameSummary {
+        self.diag.frames.summary()
+    }
+
+    fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         self.start(&ctx);
         theme::refresh(&ctx);
@@ -464,9 +478,15 @@ impl DeskApp {
             "integrations" => crate::settings::Section::Integrations,
             "rules" => crate::settings::Section::Rules,
             "labels" => crate::settings::Section::Labels,
+            "advanced" => crate::settings::Section::Advanced,
             _ => crate::settings::Section::Accounts,
         };
         self.open_settings(s, edit.map(str::to_string), None);
+    }
+
+    /// Desplaza la lista de correo hasta la fila `row` en el próximo cuadro (banco de pruebas).
+    pub fn demo_scroll_mail(&mut self, row: usize) {
+        self.mail.list.scroll_to(row);
     }
 
     /// Fila del cursor de la lista de correo (pruebas).
@@ -623,6 +643,10 @@ impl DeskApp {
                     } else if value.is::<crate::compose::PickedFiles>() {
                         if let Ok(p) = value.downcast::<crate::compose::PickedFiles>() {
                             crate::compose::on_picked(self, *p);
+                        }
+                    } else if value.is::<crate::diagnostics::StoreReport>() {
+                        if let Ok(r) = value.downcast::<crate::diagnostics::StoreReport>() {
+                            self.diag.on_store(id, *r);
                         }
                     } else if let Ok(done) = value.downcast::<crate::html::HtmlDone>() {
                         self.html.on_done(ctx, id, *done);

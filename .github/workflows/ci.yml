@@ -48,6 +48,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Puerta de calidad
         run: cargo xtask ci
+      - name: Banco de regresión (200 000 mensajes, release, topes generosos)
+        run: cargo xtask bench --quick
 
   build:
     name: Compilación y pruebas (${{ matrix.os }})

@@ -1,6 +1,7 @@
 //! Tareas de mantenimiento. `cargo xtask ci` es la puerta de calidad antes de cada commit.
 //!
 //! - `ci`: fmt, clippy -D warnings, pruebas, layers, purity, licenses, assets.
+//! - `bench [--quick]`: bancos de rendimiento en release (`docs/rendimiento.md`).
 //! - `layers`: ninguna capa depende de una superior; nada bajo la UI depende de egui/eframe/winit/rfd.
 //! - `purity`: política "solo Rust" (PLAN.md D1): ningún crate enlaza bibliotecas en C/C++ salvo
 //!   las excepciones de `docs/excepciones.md`.
@@ -47,6 +48,7 @@ fn main() -> ExitCode {
         "dist" => dist(std::env::args().skip(2).collect()),
         "icons" => icons::icons(),
         "package" => package::package(std::env::args().skip(2).collect()),
+        "bench" => bench(std::env::args().skip(2).collect()),
         other => Err(format!("tarea desconocida: {other}")),
     };
     match r {
@@ -80,6 +82,36 @@ fn ci() -> Res {
     assets()?;
     println!("xtask ci: todo en verde");
     Ok(())
+}
+
+/// Bancos de rendimiento (R2.1, ver `docs/rendimiento.md`), siempre en release:
+/// - la guarda de regresión del almacén a 200 000 mensajes (con topes; falla si se pasan);
+/// - sin `--quick`, además el banco de la app (`iuredesk-ui --example scale`: arranque, memoria,
+///   desplazamiento, búsqueda, carpetas, HTML) y el de la sincronización inicial
+///   (`iuredesk-sync --example sync_bench`). El resto de argumentos pasa al banco de la app
+///   (`--dir RUTA` reutiliza el buzón generado).
+fn bench(args: Vec<String>) -> Res {
+    let quick = args.iter().any(|a| a == "--quick");
+    cargo(&[
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "iuredesk-store",
+        "--test",
+        "scale",
+        "--",
+        "--ignored",
+        "--nocapture",
+    ])?;
+    if quick {
+        return Ok(());
+    }
+    let rest: Vec<&str> = args.iter().map(String::as_str).filter(|a| *a != "--quick").collect();
+    let mut app = vec!["run", "--release", "--locked", "-p", "iuredesk-ui", "--example", "scale", "--"];
+    app.extend(rest);
+    cargo(&app)?;
+    cargo(&["run", "--release", "--locked", "-p", "iuredesk-sync", "--example", "sync_bench"])
 }
 
 fn metadata(platform: Option<&str>) -> Result<Value, String> {

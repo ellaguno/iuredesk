@@ -145,6 +145,54 @@ fn incremental_threading_and_rethread() {
     assert_eq!(s.get_thread(t2).unwrap().unwrap().message_count, 3);
 }
 
+/// R2.1: recalcular los hilos de una cuenta que ya estaban bien no reescribe nada (los ids se
+/// conservan) y la agrupación por conversación sigue a los cambios.
+#[test]
+fn rethread_keeps_correct_threads_and_grouping_follows() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::open(dir.path()).unwrap();
+    let inbox = folder(&s, 1, "INBOX", FolderRole::Inbox);
+    let a = s.put_message(env(inbox, 1, "Plan"), b"").unwrap();
+    let mut reply = env(inbox, 2, "Re: Plan");
+    reply.in_reply_to = Some("m1@test".into());
+    let b = s.put_message(reply, b"").unwrap();
+    let c = s.put_message(env(inbox, 3, "Otro tema"), b"").unwrap();
+    let ta = s.get_envelope(a).unwrap().unwrap().thread;
+    let tc = s.get_envelope(c).unwrap().unwrap().thread;
+    let order = s.list_ids(inbox).unwrap();
+    let rows = s.group_by_thread(&order).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.contains(&(b, 2)) && rows.contains(&(c, 1)));
+
+    // Una respuesta nueva cambia el recuento de su hilo (la caché de recuentos se olvida).
+    let mut reply2 = env(inbox, 5, "Re: Plan");
+    reply2.in_reply_to = Some("m2@test".into());
+    let d = s.put_message(reply2, b"").unwrap();
+    let rows = s.group_by_thread(&s.list_ids(inbox).unwrap()).unwrap();
+    assert!(rows.contains(&(d, 3)), "{rows:?}");
+    s.delete_message(d).unwrap();
+    assert!(s.group_by_thread(&s.list_ids(inbox).unwrap()).unwrap().contains(&(b, 2)));
+
+    assert_eq!(s.rethread_account(AccountId(1)).unwrap(), 2);
+    assert_eq!(s.get_envelope(a).unwrap().unwrap().thread, ta);
+    assert_eq!(s.get_envelope(b).unwrap().unwrap().thread, ta);
+    assert_eq!(s.get_envelope(c).unwrap().unwrap().thread, tc);
+
+    // Un mensaje suelto con el mismo asunto se une al recalcular; la caché de hilos se renueva.
+    let mut loose = env(inbox, 4, "RE: Plan");
+    loose.message_id = Some("suelto@test".into());
+    let l = s.put_message(loose, b"").unwrap();
+    assert_eq!(s.group_by_thread(&s.list_ids(inbox).unwrap()).unwrap().len(), 3);
+    assert_eq!(s.rethread_account(AccountId(1)).unwrap(), 2);
+    let rows = s.group_by_thread(&s.list_ids(inbox).unwrap()).unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(rows.iter().any(|&(id, n)| id == l && n == 3), "{rows:?}");
+    // Borrar un mensaje lo saca de la agrupación.
+    s.delete_message(l).unwrap();
+    let rows = s.group_by_thread(&s.list_ids(inbox).unwrap()).unwrap();
+    assert!(rows.contains(&(b, 2)), "{rows:?}");
+}
+
 #[test]
 fn search_with_filters() {
     let dir = tempfile::tempdir().unwrap();

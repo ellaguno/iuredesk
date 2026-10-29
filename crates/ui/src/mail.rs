@@ -1307,11 +1307,12 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
             remote: app.html.remote_ready(env.id),
             full: full || html_cut.is_none(),
         };
+        app.html.set_max_texture_side(ctx.input(|i| i.max_texture_side));
         let state = app.html.get(&mut app.session, key, html, &body.inline);
         match state {
-            Some(HtmlState::Ready { tex, size_px, links, blocked, scale }) => {
-                let (tex, size_px, links, blocked, scale) =
-                    (tex.clone(), *size_px, links.clone(), blocked.clone(), *scale);
+            Some(HtmlState::Ready { tiles, size_px, links, blocked, scale }) => {
+                let (tiles, size_px, links, blocked, scale) =
+                    (tiles.clone(), *size_px, links.clone(), blocked.clone(), *scale);
                 if !blocked.is_empty() && !app.html.remote_ready(env.id) {
                     let loading = app.html.remote_loading(env.id);
                     let r = Banner::new(
@@ -1337,7 +1338,16 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
                 let size = natural * fit;
                 let scale = scale / fit;
                 let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-                ui.painter().image(tex.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                // Franjas de arriba abajo (un boletín largo no cabe en una sola textura).
+                let full_h = size_px[1].max(1) as f32;
+                let mut y = 0usize;
+                for (tex, h) in &tiles {
+                    let top = rect.top() + rect.height() * (y as f32 / full_h);
+                    let bottom = rect.top() + rect.height() * ((y + h) as f32 / full_h);
+                    let r = Rect::from_min_max(pos2(rect.left(), top), pos2(rect.right(), bottom));
+                    ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    y += h;
+                }
                 iurefficient_ui::a11y::label(&resp, &body.text.chars().take(400).collect::<String>());
                 if let Some(p) = resp.hover_pos() {
                     let px = (p - rect.min) * scale;
