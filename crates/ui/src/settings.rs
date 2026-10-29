@@ -25,10 +25,12 @@ pub enum Section {
     /// Etiquetas y sus colores (F5.3).
     Labels,
     Integrations,
+    /// Rendimiento y diagnóstico (R2.1).
+    Advanced,
 }
 
 impl Section {
-    const ALL: [Section; 7] = [
+    const ALL: [Section; 8] = [
         Section::Accounts,
         Section::General,
         Section::Appearance,
@@ -36,6 +38,7 @@ impl Section {
         Section::Rules,
         Section::Labels,
         Section::Integrations,
+        Section::Advanced,
     ];
 
     fn label(self) -> &'static str {
@@ -47,6 +50,7 @@ impl Section {
             Section::Rules => pick("Rules", "Reglas"),
             Section::Labels => pick("Labels", "Etiquetas"),
             Section::Integrations => pick("Integrations", "Integraciones"),
+            Section::Advanced => pick("Advanced", "Avanzado"),
         }
     }
 
@@ -59,6 +63,7 @@ impl Section {
             Section::Rules => Icon::Filter,
             Section::Labels => Icon::Tag,
             Section::Integrations => Icon::Sparkle,
+            Section::Advanced => Icon::Bolt,
         }
     }
 }
@@ -141,6 +146,7 @@ pub fn show(app: &mut DeskApp, ctx: &Context) {
                             crate::import_ui::settings_section(app, ui);
                             crate::suite_ui::settings_section(app, ui);
                         }
+                        Section::Advanced => crate::diagnostics::section(app, ui),
                     });
                 });
             });

@@ -369,6 +369,11 @@ pub struct Session {
     generation: u64,
     rows_job: Option<JobId>,
     loading: bool,
+    /// Llegaron datos nuevos mientras se calculaban las filas: recalcular al terminar.
+    rows_rerun: bool,
+    /// El recálculo en curso es un refresco de la misma vista: se conservan las filas agrupadas
+    /// hasta que lleguen las nuevas (sin parpadeo a mensajes sueltos).
+    keep_rows: bool,
     envelopes: HashMap<MessageId, MessageEnvelope>,
     bodies: HashMap<MessageId, MessageBody>,
     body_jobs: HashSet<MessageId>,
@@ -450,6 +455,8 @@ impl Session {
             generation: 0,
             rows_job: None,
             loading: false,
+            rows_rerun: false,
+            keep_rows: false,
             envelopes: HashMap::new(),
             bodies: HashMap::new(),
             body_jobs: HashSet::new(),
@@ -682,6 +689,7 @@ impl Session {
 
     /// Recalcula las filas: al instante en plano; conversaciones y búsquedas en segundo plano.
     pub fn rebuild_rows(&mut self) {
+        self.rows_rerun = false;
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
         self.counts.clear();
@@ -715,8 +723,11 @@ impl Session {
         }
         let order = self.merged_order();
         let order = self.rules_filter_order(order);
-        self.rows = Arc::new(order.iter().map(|&id| ListRow { id, count: 1 }).collect());
-        if self.prefs.conversations && !order.is_empty() {
+        let grouping = self.prefs.conversations && !order.is_empty();
+        if !(grouping && self.keep_rows && !self.rows.is_empty()) {
+            self.rows = Arc::new(order.iter().map(|&id| ListRow { id, count: 1 }).collect());
+        }
+        if grouping {
             let store = Arc::clone(&self.store);
             self.loading = true;
             self.rows_job = Some(self.bg.spawn_blocking(move || {
@@ -725,6 +736,30 @@ impl Session {
         } else {
             self.loading = false;
             self.rows_job = None;
+        }
+    }
+
+    /// Recalcula las filas porque cambiaron los datos, no la vista (sincronización): si ya hay un
+    /// cálculo en curso se repite al terminar, en vez de apilar trabajos que recorren todo el
+    /// buzón; mientras tanto la lista conserva las filas agrupadas que tenía.
+    pub(crate) fn refresh_rows(&mut self) {
+        if self.loading && self.rows_job.is_some() {
+            self.rows_rerun = true;
+            return;
+        }
+        self.keep_rows = true;
+        self.rebuild_rows();
+        self.keep_rows = false;
+    }
+
+    /// Terminó el trabajo de filas `id`: si mientras tanto llegaron datos, se recalcula.
+    fn rows_job_done(&mut self, id: JobId) {
+        if self.rows_job == Some(id) {
+            self.rows_job = None;
+            self.loading = false;
+            if self.rows_rerun {
+                self.refresh_rows();
+            }
         }
     }
 
@@ -1551,6 +1586,7 @@ impl Session {
                     self.loading = false;
                     self.fix_focus_request();
                 }
+                self.rows_job_done(id);
                 None
             }
             EngineJob::Search { generation, result } => {
@@ -1596,9 +1632,7 @@ impl Session {
             }
             EngineJob::Failed(t) => {
                 self.day_job_failed(id);
-                if self.rows_job == Some(id) {
-                    self.loading = false;
-                }
+                self.rows_job_done(id);
                 if let Some(w) = self.wizard.as_mut()
                     && w.job == Some(id)
                 {
@@ -2153,26 +2187,12 @@ fn new_account_key(aid: AccountId) -> String {
 
 /// Agrupa por conversación: la primera aparición (la más reciente) de cada hilo representa a la
 /// conversación; `count` es el total de mensajes del hilo.
+/// Si el almacén falla, la lista queda sin agrupar (mejor que vacía).
 pub fn group_conversations(store: &Store, order: &[MessageId]) -> Vec<ListRow> {
-    let mut seen: HashMap<u64, ()> = HashMap::new();
-    let mut counts: HashMap<u64, u32> = HashMap::new();
-    let mut out = Vec::with_capacity(order.len() / 2 + 1);
-    for &id in order {
-        let Ok(Some(env)) = store.get_envelope(id) else { continue };
-        match env.thread {
-            Some(t) => {
-                if seen.insert(t.get(), ()).is_some() {
-                    continue;
-                }
-                let n = *counts
-                    .entry(t.get())
-                    .or_insert_with(|| store.get_thread(t).ok().flatten().map_or(1, |th| th.message_count.max(1)));
-                out.push(ListRow { id, count: n });
-            }
-            None => out.push(ListRow { id, count: 1 }),
-        }
+    match store.group_by_thread(order) {
+        Ok(v) => v.into_iter().map(|(id, count)| ListRow { id, count }).collect(),
+        Err(_) => order.iter().map(|&id| ListRow { id, count: 1 }).collect(),
     }
-    out
 }
 
 /// Orden de las carpetas en la barra lateral.

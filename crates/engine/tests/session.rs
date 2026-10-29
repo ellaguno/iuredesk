@@ -490,3 +490,22 @@ fn pim_events_refresh_views_and_explain_conflicts() {
     let evs = s.poll();
     assert!(evs.iter().any(|e| matches!(e, Event::Notice(n) if n.text.es.contains("«Comité»"))));
 }
+
+/// R2.1: un refresco de la sincronización no cambia la lista agrupada por una de mensajes sueltos
+/// mientras se recalculan las conversaciones (antes parpadeaba y saltaba el desplazamiento).
+#[test]
+fn sync_refresh_keeps_grouped_rows_until_regrouped() {
+    use iuredesk_engine::iuredesk_sync::SyncEvent;
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), true);
+    let grouped = s.rows().to_vec();
+    assert!(grouped.iter().any(|r| r.count > 1), "el ejemplo tiene conversaciones");
+    let account = s.account_labels()[0].id;
+    s.feed_sync_event(SyncEvent::Synced { account, took: Duration::from_millis(5), backfill_pending: false });
+    // Este `poll` relee carpetas y lanza el recálculo en segundo plano.
+    s.poll();
+    assert_eq!(s.rows(), grouped.as_slice());
+    settle(&mut s);
+    assert!(!s.is_loading());
+    assert_eq!(s.rows(), grouped.as_slice());
+}

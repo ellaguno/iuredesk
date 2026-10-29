@@ -52,6 +52,11 @@ pub use search::{ParsedQuery, QueryTerm, TermField, parse_query};
 
 use crate::search::{IndexDoc, SearchIndex};
 
+/// Caché de páginas de redb. La de omisión (1 GiB) hace crecer la memoria residente con cada
+/// lectura hasta tener el archivo entero en RAM (R2.1: +150 MB al recorrer 200 000 mensajes); el
+/// sistema ya guarda el archivo en su caché de páginas, así que basta una caché pequeña.
+pub const REDB_CACHE_BYTES: usize = 32 * 1024 * 1024;
+
 /// Versión actual del esquema de redb.
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -72,6 +77,23 @@ enum CacheOp {
     Insert(u64, (u64, u64)),
     Remove(u64, (u64, u64)),
     Invalidate(u64),
+    /// El hilo del mensaje (y el recuento de ese hilo) pudo cambiar: se olvidan de la caché.
+    ForgetThread(u64, Option<u64>),
+    /// Se recalcularon los hilos: se vacía la caché de hilos.
+    ClearThreads,
+}
+
+/// Hilo de cada mensaje ya visto (`0` = sin hilo), para agrupar conversaciones sin decodificar
+/// sobres. `generation` cambia al recalcular los hilos: una lectura que empezó antes no rellena la
+/// caché con datos viejos.
+#[derive(Default)]
+pub(crate) struct ThreadCache {
+    pub(crate) generation: u64,
+    pub(crate) map: HashMap<u64, u64>,
+    /// Mensajes por hilo.
+    pub(crate) counts: HashMap<u64, u32>,
+    /// Cambia con cada recuento olvidado (igual que `generation`, para `counts`).
+    pub(crate) count_generation: u64,
 }
 
 /// Efectos secundarios de una transacción de escritura.
@@ -95,6 +117,8 @@ pub struct Store {
     /// Caché por carpeta del orden de la lista: da `list_envelopes` con desplazamiento en O(1)
     /// (un recorrido de rango de redb con `offset` sería O(offset)).
     folder_cache: RwLock<HashMap<u64, FolderKeys>>,
+    /// Hilo por mensaje (ver [`ThreadCache`]).
+    thread_cache: RwLock<ThreadCache>,
 }
 
 impl std::fmt::Debug for Store {
@@ -138,11 +162,18 @@ impl Store {
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
         std::fs::create_dir_all(&root)?;
-        let db = Database::create(root.join("meta.redb"))?;
+        let db = Database::builder().set_cache_size(REDB_CACHE_BYTES).create(root.join("meta.redb"))?;
         let blobs = BlobStore::open(root.join("blobs"))?;
         let (search, rebuilt) = SearchIndex::open(&root.join("search"))?;
-        let store =
-            Self { root, db, blobs, search, write_lock: Mutex::new(()), folder_cache: RwLock::new(HashMap::new()) };
+        let store = Self {
+            root,
+            db,
+            blobs,
+            search,
+            write_lock: Mutex::new(()),
+            folder_cache: RwLock::new(HashMap::new()),
+            thread_cache: RwLock::new(ThreadCache::default()),
+        };
         store.migrate()?;
         if rebuilt && store.message_count()? > 0 {
             store.reindex_all(None)?;
@@ -220,6 +251,7 @@ impl Store {
             return;
         }
         let mut cache = self.folder_cache.write().unwrap_or_else(PoisonError::into_inner);
+        let mut threads = self.thread_cache.write().unwrap_or_else(PoisonError::into_inner);
         for op in ops {
             match op {
                 CacheOp::Insert(folder, key) => {
@@ -240,6 +272,21 @@ impl Store {
                 }
                 CacheOp::Invalidate(folder) => {
                     cache.remove(&folder);
+                }
+                CacheOp::ForgetThread(msg, thread) => {
+                    if let Some(t) = thread {
+                        threads.count_generation = threads.count_generation.wrapping_add(1);
+                        threads.counts.remove(&t);
+                    }
+                    // Un mensaje existente solo cambia de hilo al recalcular los hilos
+                    // (`ClearThreads`); olvidarlo basta para que la próxima lectura lo refresque.
+                    threads.map.remove(&msg);
+                }
+                CacheOp::ClearThreads => {
+                    threads.generation = threads.generation.wrapping_add(1);
+                    threads.map.clear();
+                    threads.count_generation = threads.count_generation.wrapping_add(1);
+                    threads.counts.clear();
                 }
             }
         }

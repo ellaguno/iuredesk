@@ -16,6 +16,7 @@ mod app;
 mod assistant;
 mod calendar;
 mod compose;
+mod diagnostics;
 mod event_editor;
 mod header;
 mod html;
@@ -37,6 +38,7 @@ mod today;
 mod widgets;
 
 pub use app::{DeskApp, Notifier, Options};
+pub use diagnostics::FrameSummary;
 pub use header::{ButtonLayout, ControlStyle, WindowButton, WindowChrome};
 pub use iurefficient_ui;
 

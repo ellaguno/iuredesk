@@ -990,12 +990,214 @@ pub fn synthetic_messages(rng: &mut Rng, folders: &[FolderId], count: usize, now
     out
 }
 
+/// Buzón grande para medir rendimiento (R2.1): `accounts` cuentas × `per_account` mensajes.
+#[derive(Clone, Copy, Debug)]
+pub struct ScaleSpec {
+    /// Cuentas.
+    pub accounts: usize,
+    /// Mensajes por cuenta.
+    pub per_account: usize,
+    /// Porcentaje de mensajes con el cuerpo ya descargado (el resto solo trae el sobre, como tras
+    /// una sincronización inicial real).
+    pub body_pct: u64,
+    /// Semilla.
+    pub seed: u64,
+}
+
+impl Default for ScaleSpec {
+    fn default() -> Self {
+        Self { accounts: 4, per_account: 50_000, body_pct: 20, seed: DEFAULT_SEED }
+    }
+}
+
+/// Etiquetas (palabras clave de Gmail / categorías de Outlook) del buzón grande.
+const SCALE_LABELS: &[&str] =
+    &["Clientes", "Facturas", "Juzgados", "Proyectos/Altamira", "Proyectos/Ferro", "Viajes", "Personal", "Recibos"];
+
+/// Llena `store` con un buzón grande y realista: hilos (≈ 35 % respuestas), etiquetas, adjuntos,
+/// boletines HTML y cuerpos para `body_pct` % de los mensajes, repartidos en tres años.
+/// `progress` recibe los mensajes ya escritos (lotes de 2 000).
+pub fn populate_scale(
+    store: &Store,
+    spec: ScaleSpec,
+    now: DateTime<Utc>,
+    mut progress: impl FnMut(usize),
+) -> Result<SampleSummary> {
+    let mut rng = Rng::new(spec.seed);
+    let mut sum = SampleSummary::default();
+    let mut written = 0usize;
+    for ai in 0..spec.accounts {
+        let account = AccountId(u64::try_from(ai).unwrap_or(0).saturating_add(1));
+        let email = format!("usuario{ai}@scale.example.org");
+        store.put_account_label(&AccountLabel {
+            id: account,
+            name: format!("Cuenta {}", ai.saturating_add(1)),
+            email: email.clone(),
+        })?;
+        sum.accounts.push(account);
+        let me = Mailbox::new("Yo", email);
+        let mk = |name: &str, role: FolderRole| Folder {
+            account,
+            name: name.into(),
+            remote_path: name.into(),
+            role,
+            ..Default::default()
+        };
+        let inbox = store.put_folder(&mk("INBOX", FolderRole::Inbox))?;
+        let sent = store.put_folder(&mk("Sent", FolderRole::Sent))?;
+        let archive = store.put_folder(&mk("Archive", FolderRole::Archive))?;
+        let trash = store.put_folder(&mk("Trash", FolderRole::Trash))?;
+        let junk = store.put_folder(&mk("Junk", FolderRole::Junk))?;
+        let c1 = store.put_folder(&mk("Clientes", FolderRole::Custom))?;
+        let c2 = store.put_folder(&mk("Newsletters", FolderRole::Custom))?;
+        store.put_folder(&mk("Drafts", FolderRole::Drafts))?;
+        sum.folders = sum.folders.saturating_add(8);
+        // Mensajes recientes de la cuenta a los que se puede responder: (Message-ID, referencias,
+        // asunto, fecha).
+        let mut recent: Vec<(String, Vec<String>, String, DateTime<Utc>)> = Vec::new();
+        let mut batch: Vec<NewMessage> = Vec::with_capacity(2_000);
+        for i in 0..spec.per_account {
+            let folder = match rng.below(100) {
+                0..=54 => inbox,
+                55..=69 => sent,
+                70..=89 => archive,
+                90..=92 => trash,
+                93..=94 => junk,
+                95..=97 => c1,
+                _ => c2,
+            };
+            let other = person(&mut rng);
+            let (from, to) = if folder == sent { (me.clone(), other) } else { (other, me.clone()) };
+            let mid = format!("s{ai}-{i}-{:x}@scale.example.org", rng.next_u64() & 0xffff_ffff);
+            let parent = if !recent.is_empty() && rng.chance(35) {
+                let back = usize::try_from(rng.below(recent.len().min(300) as u64)).unwrap_or(0);
+                recent.len().checked_sub(back.saturating_add(1)).and_then(|k| recent.get(k)).cloned()
+            } else {
+                None
+            };
+            let (subject, in_reply_to, references, date) = match parent {
+                Some((pid, mut refs, subj, pdate)) => {
+                    refs.push(pid.clone());
+                    if refs.len() > 20 {
+                        refs.remove(0);
+                    }
+                    let d = (pdate + Duration::minutes(i64::try_from(rng.below(3 * 24 * 60)).unwrap_or(0))).min(now);
+                    let s = if subj.starts_with("Re: ") { subj } else { format!("Re: {subj}") };
+                    (s, Some(pid), refs, d)
+                }
+                None => {
+                    let n = 3 + rng.below(6);
+                    let words: Vec<&str> = (0..n).map(|_| rng.pick_str(WORDS)).collect();
+                    let d = now - Duration::seconds(i64::try_from(rng.below(3 * 365 * 86_400)).unwrap_or(0));
+                    (words.join(" "), None, Vec::new(), d)
+                }
+            };
+            let with_body = rng.chance(spec.body_pct);
+            let newsletter = folder == c2 || rng.chance(4);
+            let n_body = 60 + rng.below(400);
+            let mut body = String::with_capacity(usize::try_from(n_body).unwrap_or(0).saturating_mul(9));
+            for k in 0..n_body {
+                body.push_str(rng.pick_str(WORDS));
+                body.push(if k % 14 == 13 { '\n' } else { ' ' });
+            }
+            let with_att = rng.chance(12);
+            let attachments = if with_att {
+                (0..1 + rng.below(3))
+                    .map(|_| AttachmentMeta {
+                        filename: rng.pick_str(FILES).into(),
+                        mime_type: "application/octet-stream".into(),
+                        size: 20_000 + rng.below(4_000_000),
+                        ..Default::default()
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let mut keywords = Vec::new();
+            if rng.chance(25) {
+                keywords.push(rng.pick_str(SCALE_LABELS).to_string());
+                if rng.chance(30) {
+                    keywords.push(rng.pick_str(SCALE_LABELS).to_string());
+                }
+            }
+            let att_bytes: u64 = attachments.iter().map(|a: &AttachmentMeta| a.size).sum();
+            let mut env = MessageEnvelope {
+                folder,
+                remote_id: Some(format!("{}", i.saturating_add(1))),
+                message_id: Some(mid.clone()),
+                in_reply_to,
+                references: references.clone(),
+                from: vec![from],
+                to: vec![to],
+                subject: subject.clone(),
+                date,
+                flags: Flags {
+                    seen: folder == sent || rng.chance(85),
+                    flagged: rng.chance(3),
+                    answered: rng.chance(10),
+                    ..Default::default()
+                },
+                keywords,
+                has_attachments: with_att,
+                attachments,
+                preview: make_preview(&body),
+                ..Default::default()
+            };
+            let raw = with_body.then(|| {
+                if newsletter {
+                    render_rfc822_html(&env, &body, &newsletter_html(i, "Yo"))
+                } else {
+                    render_rfc822(&env, &body)
+                }
+            });
+            env.size =
+                raw.as_ref().map_or(2_000 + n_body.saturating_mul(9), |r| r.len() as u64).saturating_add(att_bytes);
+            batch.push(NewMessage { envelope: env, raw, body_text: with_body.then_some(body) });
+            recent.push((mid, references, subject, date));
+            if recent.len() > 4_000 {
+                recent.drain(..2_000);
+            }
+            if batch.len() >= 2_000 {
+                written = written.saturating_add(batch.len());
+                store.put_messages(std::mem::take(&mut batch))?;
+                progress(written);
+            }
+        }
+        if !batch.is_empty() {
+            written = written.saturating_add(batch.len());
+            store.put_messages(batch)?;
+            progress(written);
+        }
+    }
+    sum.messages = written;
+    Ok(sum)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 10, 21, 15, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn scale_mailbox_has_threads_labels_and_bodies() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path()).unwrap();
+        let spec = ScaleSpec { accounts: 2, per_account: 1_500, ..Default::default() };
+        let sum = populate_scale(&s, spec, now(), |_| {}).unwrap();
+        assert_eq!(sum.messages, 3_000);
+        let st = s.stats().unwrap();
+        assert_eq!(st.messages, 3_000);
+        // ≈ 35 % son respuestas: bastante menos hilos que mensajes.
+        assert!(st.threads < 2_600 && st.threads > 1_200, "{}", st.threads);
+        let inbox = s.folders(AccountId(1)).unwrap().into_iter().find(|f| f.role == FolderRole::Inbox).unwrap();
+        let page = s.list_envelopes(inbox.id, 0, 500).unwrap();
+        assert!(page.iter().any(|e| !e.keywords.is_empty()));
+        assert!(page.iter().any(|e| e.has_attachments));
+        let with_raw = page.iter().filter(|e| e.blob.is_some()).count();
+        assert!(with_raw > 50 && with_raw < 200, "{with_raw}");
     }
 
     #[test]

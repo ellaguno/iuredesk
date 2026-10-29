@@ -25,6 +25,11 @@ const MAX_SEARCH_CANDIDATES: usize = 50_000;
 /// Longitud máxima de una clave de texto en índices (Message-ID, id remoto).
 const MAX_KEY_LEN: usize = 998;
 
+/// Ids máximos por lectura en lote (`get_envelopes`, `flags_of`).
+pub const MAX_BATCH_READ: usize = 1_000_000;
+/// Mensajes máximos en la caché de hilos (≈ 40 B cada uno).
+const MAX_THREAD_CACHE: usize = 2_000_000;
+
 /// Carpetas (etiquetas) máximas a las que pertenece un mensaje.
 const MAX_MEMBERSHIPS: usize = 500;
 
@@ -124,6 +129,7 @@ impl<'t> MailTx<'t> {
     fn detach(&mut self, env: &MessageEnvelope, pending: &mut Pending) -> Result<()> {
         let id = env.id.get();
         let key = (inv_date_key(env.date), id);
+        pending.cache.push(CacheOp::ForgetThread(id, env.thread.map(ThreadId::get)));
         self.folder_index.remove((env.folder.get(), key.0, key.1))?;
         pending.cache.push(CacheOp::Remove(env.folder.get(), key));
         self.bump_counts(env.folder.get(), -1, if env.flags.seen { 0 } else { -1 })?;
@@ -165,6 +171,7 @@ impl<'t> MailTx<'t> {
     fn attach(&mut self, env: &MessageEnvelope, pending: &mut Pending) -> Result<()> {
         let id = env.id.get();
         let key = (inv_date_key(env.date), id);
+        pending.cache.push(CacheOp::ForgetThread(id, env.thread.map(ThreadId::get)));
         self.folder_index.insert((env.folder.get(), key.0, key.1), ())?;
         pending.cache.push(CacheOp::Insert(env.folder.get(), key));
         self.bump_counts(env.folder.get(), 1, if env.flags.seen { 0 } else { 1 })?;
@@ -609,6 +616,113 @@ impl Store {
         self.read_rec(ENVELOPES, id.get())
     }
 
+    /// Varios sobres en una sola transacción de lectura (`None` si falta). Para recorrer miles de
+    /// mensajes: abrir una transacción por sobre cuesta más que decodificarlo. Como mucho
+    /// [`MAX_BATCH_READ`] ids.
+    pub fn get_envelopes(&self, ids: &[MessageId]) -> Result<Vec<Option<MessageEnvelope>>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(ENVELOPES)?;
+        let mut out = Vec::with_capacity(ids.len().min(MAX_BATCH_READ));
+        for id in ids.iter().take(MAX_BATCH_READ) {
+            out.push(get_rec::<MessageEnvelope>(&t, id.get())?);
+        }
+        Ok(out)
+    }
+
+    /// Banderas de varios mensajes en una sola transacción (sin decodificar los sobres).
+    pub fn flags_of(&self, ids: &[MessageId]) -> Result<Vec<Option<Flags>>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(FLAGS)?;
+        let mut out = Vec::with_capacity(ids.len().min(MAX_BATCH_READ));
+        for id in ids.iter().take(MAX_BATCH_READ) {
+            out.push(t.get(id.get())?.map(|g| Flags::from_bits(g.value())));
+        }
+        Ok(out)
+    }
+
+    /// Agrupa una lista ordenada por conversación en una sola transacción: la primera aparición
+    /// (la más reciente) de cada hilo la representa y lleva el total de mensajes del hilo. Los
+    /// mensajes sin hilo van solos. El hilo de cada mensaje sale de una caché en memoria que se
+    /// mantiene al escribir, así que repetir la agrupación (cada refresco de la sincronización)
+    /// casi no lee sobres.
+    pub fn group_by_thread(&self, order: &[MessageId]) -> Result<Vec<(MessageId, u32)>> {
+        let (generation, count_generation) = {
+            let c = self.thread_cache.read().unwrap_or_else(PoisonError::into_inner);
+            (c.generation, c.count_generation)
+        };
+        let tx = self.db.begin_read()?;
+        let envs = tx.open_table(ENVELOPES)?;
+        let threads = tx.open_table(THREADS)?;
+        // En frío (primera agrupación tras abrir): el hilo de todos los mensajes sale de recorrer
+        // la tabla de miembros, mucho más barato que decodificar un sobre por mensaje.
+        let cold = self.thread_cache.read().unwrap_or_else(PoisonError::into_inner).map.len() < order.len() / 2;
+        if cold {
+            let members = tx.open_table(THREAD_MEMBERS)?;
+            let mut fresh: Vec<(u64, u64)> = Vec::new();
+            for item in members.iter()?.take(MAX_THREAD_CACHE) {
+                let (k, _) = item?;
+                let (t, m) = k.value();
+                fresh.push((m, t));
+            }
+            let mut cache = self.thread_cache.write().unwrap_or_else(PoisonError::into_inner);
+            if cache.generation == generation {
+                cache.map.clear();
+                cache.map.extend(fresh);
+            }
+        }
+        let mut seen: HashSet<u64> = HashSet::with_capacity(order.len() / 2 + 1);
+        let mut out = Vec::with_capacity(order.len() / 2 + 1);
+        let mut missing: Vec<(u64, u64)> = Vec::new();
+        let mut new_counts: Vec<(u64, u32)> = Vec::new();
+        {
+            let cache = self.thread_cache.read().unwrap_or_else(PoisonError::into_inner);
+            for &id in order {
+                let t = match cache.map.get(&id.get()) {
+                    Some(&t) => t,
+                    None => {
+                        let Some(env) = get_rec::<MessageEnvelope>(&envs, id.get())? else { continue };
+                        let t = env.thread.map_or(0, |t| t.get());
+                        missing.push((id.get(), t));
+                        t
+                    }
+                };
+                if t == 0 {
+                    out.push((id, 1));
+                    continue;
+                }
+                if !seen.insert(t) {
+                    continue;
+                }
+                let n = match cache.counts.get(&t) {
+                    Some(&n) => n,
+                    None => {
+                        let n = get_rec::<Thread>(&threads, t)?.map_or(1, |th| th.message_count.max(1));
+                        new_counts.push((t, n));
+                        n
+                    }
+                };
+                out.push((id, n));
+            }
+        }
+        if !missing.is_empty() || !new_counts.is_empty() {
+            let mut cache = self.thread_cache.write().unwrap_or_else(PoisonError::into_inner);
+            // Si algo cambió mientras se leía, lo leído puede estar viejo: no se guarda.
+            if cache.generation == generation {
+                if cache.map.len().saturating_add(missing.len()) > MAX_THREAD_CACHE {
+                    cache.map.clear();
+                }
+                cache.map.extend(missing);
+            }
+            if cache.count_generation == count_generation {
+                if cache.counts.len().saturating_add(new_counts.len()) > MAX_THREAD_CACHE {
+                    cache.counts.clear();
+                }
+                cache.counts.extend(new_counts);
+            }
+        }
+        Ok(out)
+    }
+
     /// Mensaje crudo (RFC 822) desde el almacén de blobs.
     pub fn get_raw(&self, id: MessageId) -> Result<Vec<u8>> {
         let env = self.get_envelope(id)?.ok_or_else(|| StoreError::not_found("mensaje", id))?;
@@ -949,18 +1063,27 @@ impl Store {
     /// el número de hilos.
     pub fn rethread_account(&self, account: AccountId) -> Result<usize> {
         let mut envs: Vec<MessageEnvelope> = Vec::new();
-        let mut seen: HashSet<MessageId> = HashSet::new();
         let mut hint_of: HashMap<MessageId, String> = HashMap::new();
-        for f in self.folders(account)? {
-            for id in self.list_ids(f.id)? {
-                // Con etiquetas un mensaje aparece en varias carpetas: se cuenta una vez.
-                if !seen.insert(id) {
-                    continue;
+        {
+            // Una sola transacción de lectura para todo (antes, dos por mensaje).
+            let mut seen: HashSet<MessageId> = HashSet::new();
+            let mut ids: Vec<MessageId> = Vec::new();
+            for f in self.folders(account)? {
+                for id in self.list_ids(f.id)? {
+                    // Con etiquetas un mensaje aparece en varias carpetas: se cuenta una vez.
+                    if seen.insert(id) {
+                        ids.push(id);
+                    }
                 }
-                if let Some(e) = self.get_envelope(id)? {
+            }
+            let tx = self.db.begin_read()?;
+            let et = tx.open_table(ENVELOPES)?;
+            let pt = tx.open_table(MSG_PROVIDER)?;
+            for id in ids {
+                if let Some(e) = get_rec::<MessageEnvelope>(&et, id.get())? {
                     envs.push(e);
                 }
-                if let Some(h) = self.provider_meta(id)?.thread_hint {
+                if let Some(h) = get_rec::<ProviderMeta>(&pt, id.get())?.and_then(|m| m.thread_hint) {
                     hint_of.insert(id, h);
                 }
             }
@@ -970,10 +1093,61 @@ impl Store {
             merge_by_hint(thread_messages(&inputs), &hint_of)
         };
         let mut by_id: HashMap<MessageId, MessageEnvelope> = envs.into_iter().map(|e| (e.id, e)).collect();
-        self.write(|tx, _| {
+        // Mensajes por hilo actual: un grupo que coincide exactamente con un hilo existente se
+        // conserva tal cual (lo normal: la asignación incremental ya acertó). Solo se reescriben
+        // los sobres que cambian de hilo; antes se reescribía la cuenta entera con el candado de
+        // escritura tomado y la interfaz esperaba (R2.1).
+        let mut old_size: HashMap<u64, usize> = HashMap::new();
+        for e in by_id.values() {
+            if let Some(t) = e.thread {
+                *old_size.entry(t.get()).or_default() += 1;
+            }
+        }
+        let thread_of = |by_id: &HashMap<MessageId, MessageEnvelope>, id: &MessageId| {
+            by_id.get(id).and_then(|e| e.thread).map(ThreadId::get)
+        };
+        self.write(|tx, pending| {
             let mut m = MailTx::open(tx)?;
-            // Quita los hilos viejos.
-            let old: HashSet<u64> = by_id.values().filter_map(|e| e.thread.map(ThreadId::get)).collect();
+            let n = groups.len();
+            let mut kept: HashSet<u64> = HashSet::new();
+            let mut changed: Vec<&ThreadGroup> = Vec::new();
+            for g in &groups {
+                let first = g.members.first().and_then(|mem| thread_of(&by_id, &mem.id));
+                let same = first.is_some_and(|t| {
+                    !kept.contains(&t)
+                        && old_size.get(&t) == Some(&g.members.len())
+                        && g.members.iter().all(|mem| thread_of(&by_id, &mem.id) == Some(t))
+                });
+                match first {
+                    Some(t) if same => {
+                        kept.insert(t);
+                        if let Some(mut th) = get_rec::<Thread>(&m.threads, t)?
+                            && (th.subject != g.subject || th.last_date != g.last_date)
+                        {
+                            th.subject = g.subject.clone();
+                            th.last_date = g.last_date;
+                            put_rec(&mut m.threads, t, &th)?;
+                        }
+                        for mem in &g.members {
+                            if let Some(h) = hint_of.get(&mem.id) {
+                                m.hints.insert((account.get(), clip(h, MAX_KEY_LEN)), t)?;
+                            }
+                        }
+                    }
+                    _ => changed.push(g),
+                }
+            }
+            if changed.is_empty() {
+                return Ok(n);
+            }
+            pending.cache.push(CacheOp::ClearThreads);
+            // Quita los hilos viejos que no se conservaron.
+            let old: HashSet<u64> = changed
+                .iter()
+                .flat_map(|g| g.members.iter())
+                .filter_map(|mem| thread_of(&by_id, &mem.id))
+                .filter(|t| !kept.contains(t))
+                .collect();
             for t in old {
                 m.threads.remove(t)?;
                 let members: Vec<u64> =
@@ -982,8 +1156,7 @@ impl Store {
                     m.members.remove((t, msg))?;
                 }
             }
-            let n = groups.len();
-            for g in groups {
+            for g in changed {
                 let tid = ThreadId(next_id(&mut m.meta, "thread")?);
                 let mut th = Thread {
                     id: tid,
@@ -1039,13 +1212,34 @@ impl Store {
             // Con filtros posteriores se piden más candidatos: recoger el top-k cuesta casi lo
             // mismo con k = 1000 que con k = 100 (domina recorrer las coincidencias).
             let mut k = if post { limit.saturating_mul(10) } else { limit };
+            // Prefiltro barato antes de decodificar sobres (R2.1): pertenencia a las carpetas
+            // pedidas (sus listas ya están en caché) y banderas (tabla aparte).
+            let allowed: Option<HashSet<u64>> = match &folders {
+                Some(fs) => {
+                    let lists: Vec<FolderKeys> = fs.iter().map(|f| self.folder_keys(*f)).collect::<Result<_>>()?;
+                    let total: usize = lists.iter().map(|l| l.len()).sum();
+                    (total <= MAX_BATCH_READ)
+                        .then(|| lists.iter().flat_map(|l| l.iter().map(|&(_, id)| id)).collect::<HashSet<u64>>())
+                }
+                None => None,
+            };
             loop {
                 let ids = self.search.run(q, k)?;
                 let exhausted = ids.len() < k;
                 let tx = self.db.begin_read()?;
                 let t = tx.open_table(ENVELOPES)?;
+                let ft = tx.open_table(FLAGS)?;
                 let mut out = Vec::with_capacity(limit);
                 for id in ids {
+                    if allowed.as_ref().is_some_and(|a| !a.contains(&id)) {
+                        continue;
+                    }
+                    if q.unread.is_some() || q.flagged.is_some() {
+                        let fl = Flags::from_bits(ft.get(id)?.map(|g| g.value()).unwrap_or(0));
+                        if !(q.unread.is_none_or(|u| u != fl.seen) && q.flagged.is_none_or(|x| x == fl.flagged)) {
+                            continue;
+                        }
+                    }
                     // Un documento huérfano (mensaje ya borrado) simplemente no aparece.
                     if let Some(e) = get_rec::<MessageEnvelope>(&t, id)?
                         && keep(&e)
