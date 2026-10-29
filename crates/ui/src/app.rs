@@ -17,8 +17,13 @@ use crate::mail::MailState;
 use crate::pim::PimState;
 use crate::widgets::{kit_density, kit_theme};
 
-/// Notificación del escritorio: (título, texto). La pone la app (en Linux, D-Bus con zbus).
-pub type Notifier = Arc<dyn Fn(&str, &str) + Send + Sync>;
+/// Notificación del escritorio: (título, texto, enlace `iuredesk://` que abre el clic). La pone la
+/// app (Linux: D-Bus con zbus; Windows: avisos de WinRT; macOS: UserNotifications).
+pub type Notifier = Arc<dyn Fn(&str, &str, Option<&str>) + Send + Sync>;
+
+/// R1.2: argumentos que llegan con la app abierta (otra instancia, clic en una notificación).
+/// Cada lote es una petición; un lote vacío solo trae la ventana al frente.
+pub type Incoming = Arc<std::sync::Mutex<Vec<Vec<String>>>>;
 
 /// Opciones de arranque.
 #[derive(Clone, Default)]
@@ -36,6 +41,10 @@ pub struct Options {
     /// Barra de título integrada (sin decoraciones del sistema). `None` = la del sistema: la
     /// barra de la app se dibuja igual, sin botones de ventana ni arrastre.
     pub chrome: Option<crate::header::WindowChrome>,
+    /// R1.2: archivos y enlaces con los que se abrió (rutas ya absolutas).
+    pub open: Vec<String>,
+    /// R1.2: lo que llega después (ver [`Incoming`]).
+    pub incoming: Option<Incoming>,
 }
 
 impl std::fmt::Debug for Options {
@@ -46,7 +55,8 @@ impl std::fmt::Debug for Options {
             .field("mailto", &self.mailto)
             .field("notifier", &self.notifier.is_some())
             .field("chrome", &self.chrome)
-            .finish()
+            .field("open", &self.open)
+            .finish_non_exhaustive()
     }
 }
 
@@ -106,6 +116,8 @@ pub struct DeskApp {
     pub(crate) confirm: Option<(iuredesk_engine::lang::Text, iuredesk_engine::lang::Text, String)>,
     /// R2.1: tiempo por cuadro, memoria y estado para Ajustes → Avanzado.
     pub(crate) diag: crate::diagnostics::DiagState,
+    /// R1.2: archivos abiertos desde el sistema.
+    pub(crate) opened: crate::opened::OpenedUi,
 }
 
 impl DeskApp {
@@ -146,6 +158,7 @@ impl DeskApp {
             applied_fonts: None,
             confirm: None,
             diag: Default::default(),
+            opened: Default::default(),
         };
         if let Some(m) = app.options.mailto.clone()
             && let Some(d) = app.session.compose_mailto(&m)
@@ -243,6 +256,7 @@ impl DeskApp {
             }
             crate::header::show(self, ui, false);
             crate::onboarding::page(self, ui);
+            crate::opened::frame(self, &ctx);
             crate::import_ui::frame(self, &ctx);
             self.toasts.show(&ctx);
             crate::header::window_frame(self, ui);
@@ -285,6 +299,7 @@ impl DeskApp {
         }
 
         crate::event_editor::show(self, &ctx);
+        crate::opened::frame(self, &ctx);
         crate::reminders::show(self, &ctx);
         crate::compose::show_all(self, &ctx);
         crate::settings::show(self, &ctx);
@@ -415,9 +430,22 @@ impl DeskApp {
         }
     }
 
+    /// R1.2: abre archivos y enlaces como si los pasara el sistema (se atienden en el próximo
+    /// cuadro; pruebas y capturas).
+    pub fn open_args(&mut self, args: Vec<String>) {
+        self.options.open.extend(args);
+    }
+
+    /// R1.2: ventanas de archivos abiertos (pruebas).
+    pub fn opened_windows(&self) -> usize {
+        self.opened.count()
+    }
+
     /// No queda trabajo de fondo ni renders pendientes (capturas y pruebas deterministas).
     pub fn is_settled(&self) -> bool {
-        self.session.is_idle()
+        self.options.open.is_empty()
+            && self.opened.pending() == 0
+            && self.session.is_idle()
             && !self.html.pending()
             && self.ai.hub.is_idle()
             && self.import.hub.is_idle()
@@ -614,10 +642,27 @@ impl DeskApp {
         {
             self.session.reload_external();
         }
+        // R1.2: archivos y enlaces del arranque y de otras instancias.
+        if !self.options.open.is_empty() {
+            let args = std::mem::take(&mut self.options.open);
+            crate::opened::handle(self, ctx, &args);
+        }
+        let batches: Vec<Vec<String>> = match &self.options.incoming {
+            Some(q) => q.lock().map(|mut v| std::mem::take(&mut *v)).unwrap_or_default(),
+            None => Vec::new(),
+        };
+        for args in batches {
+            crate::opened::handle(self, ctx, &args);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            // Wayland no deja robar el foco: al menos que la ventana pida atención.
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational));
+        }
         for ev in self.session.poll() {
             match ev {
                 Event::Notice(n) => self.notice(n),
-                Event::NewMail { summary, detail, account } => {
+                Event::NewMail { summary, detail, account, link } => {
                     let first = detail.lines().next().unwrap_or("").to_string();
                     let text = if first.is_empty() {
                         summary.get().to_string()
@@ -633,7 +678,7 @@ impl DeskApp {
                         } else {
                             format!("{} — {account}", summary.get())
                         };
-                        n(&title, &detail);
+                        n(&title, &detail, link.as_deref());
                     }
                 }
                 Event::Compose(d) => self.open_composer(*d),
@@ -643,6 +688,10 @@ impl DeskApp {
                     } else if value.is::<crate::compose::PickedFiles>() {
                         if let Ok(p) = value.downcast::<crate::compose::PickedFiles>() {
                             crate::compose::on_picked(self, *p);
+                        }
+                    } else if value.is::<iuredesk_engine::session::FileOpened>() {
+                        if let Ok(f) = value.downcast::<iuredesk_engine::session::FileOpened>() {
+                            crate::opened::on_loaded(self, id, *f);
                         }
                     } else if value.is::<crate::diagnostics::StoreReport>() {
                         if let Ok(r) = value.downcast::<crate::diagnostics::StoreReport>() {

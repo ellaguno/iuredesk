@@ -1,0 +1,33 @@
+[package]
+name = "iuredesk-desktop"
+description = "Integración con el escritorio: notificaciones (D-Bus, WinRT, UserNotifications), abrir al iniciar sesión y memoria del proceso"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+thiserror = { workspace = true }
+dirs = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+windows-registry = { workspace = true }
+memory-stats = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-user-notifications = { workspace = true }
+block2 = { workspace = true }
+memory-stats = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

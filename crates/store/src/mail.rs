@@ -611,6 +611,23 @@ impl Store {
         Ok(t.get((folder.get(), clip(remote, MAX_KEY_LEN)))?.map(|g| MessageId(g.value())))
     }
 
+    /// R1.2: mensaje por su `Message-ID` (con o sin `<>`) en cualquier cuenta; el de la primera
+    /// cuenta que lo tenga. Para los enlaces `iuredesk://message/…`.
+    pub fn message_by_msgid(&self, message_id: &str) -> Result<Option<MessageId>> {
+        let Some(key) = clean_msgid(message_id) else { return Ok(None) };
+        let mut accounts: Vec<u64> = self.all_folders()?.iter().map(|f| f.account.get()).collect();
+        accounts.sort_unstable();
+        accounts.dedup();
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(MSGID_INDEX)?;
+        for a in accounts {
+            if let Some(g) = t.get((a, key))? {
+                return Ok(Some(MessageId(g.value())));
+            }
+        }
+        Ok(None)
+    }
+
     /// Un sobre.
     pub fn get_envelope(&self, id: MessageId) -> Result<Option<MessageEnvelope>> {
         self.read_rec(ENVELOPES, id.get())

@@ -206,6 +206,64 @@ impl Session {
         Ok(())
     }
 
+    /// R1.2: agrega los contactos de un `.vcf` abierto a la primera libreta en la que se puede
+    /// escribir (o a una local «Contactos» si no hay). Con deshacer.
+    pub fn add_file_contacts(&mut self, contacts: &[Contact]) -> Result<Outcome> {
+        let books = self.store.address_books().map_err(store_err)?;
+        let book = match books.iter().find(|b| !b.read_only) {
+            Some(b) => b.id,
+            None => self
+                .store
+                .put_address_book(&iuredesk_model::AddressBook {
+                    name: crate::lang::pick("Contacts", "Contactos").to_string(),
+                    ..Default::default()
+                })
+                .map_err(store_err)?,
+        };
+        let mut ids = Vec::new();
+        for c in contacts.iter().take(crate::open::MAX_ITEMS) {
+            let mut c = c.clone();
+            c.id = ContactId::UNASSIGNED;
+            c.address_book = book;
+            c.remote_id = None;
+            c.etag = None;
+            let id = match &self.pim.handle {
+                Some(h) => h.save_contact(&c, None),
+                None => iuredesk_pim_sync::ops::save_contact(&self.store, &c, None),
+            }
+            .map_err(pim_err)?;
+            ids.push(id);
+        }
+        self.contacts_changed();
+        let text = match (ids.len(), contacts.first()) {
+            (0, _) => return Ok(Outcome::Notice(Notice::info("Nothing to add.", "No hay nada que agregar."))),
+            (1, Some(c)) => {
+                let name = contact_display_name(c).unwrap_or_else(|| "(Sin nombre)".into());
+                Text::new(format!("Added «{name}» to your contacts"), format!("Se agregó «{name}» a tus contactos"))
+            }
+            (n, _) => Text::new(format!("Added {n} contacts"), format!("Se agregaron {n} contactos")),
+        };
+        self.push_undo(text.clone(), vec![(Inverse::ContactsAdded(ids), None)]);
+        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
+    }
+
+    pub(crate) fn undo_contacts_added(&mut self, ids: &[ContactId]) -> Result<()> {
+        for &id in ids {
+            let r = match &self.pim.handle {
+                Some(h) => h.delete_contact(id),
+                None => iuredesk_pim_sync::ops::delete_contact(&self.store, id),
+            };
+            if let Err(e) = r
+                && !matches!(e, PimError::ReadOnly)
+            {
+                self.contacts_changed();
+                return Err(pim_err(e));
+            }
+        }
+        self.contacts_changed();
+        Ok(())
+    }
+
     fn contacts_changed(&mut self) {
         self.contacts_cache = None;
         self.data_gen = self.data_gen.wrapping_add(1);

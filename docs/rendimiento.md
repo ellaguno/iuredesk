@@ -92,10 +92,11 @@ dueño.
 
 ## Pendiente
 
-- La sesión tarda ≈ 90 ms en el hilo de la UI antes del primer cuadro: clasificar en categorías
-  los 5 000 mensajes más recientes (lee 5 000 sobres) y las señales (2 000 enviados por cuenta).
-  Cabe en el segundo de la promesa; se puede pasar a segundo plano.
-- La memoria en Windows y macOS no se muestra en el panel (requiere llamadas nativas).
+- ~~La sesión tardaba ≈ 90 ms en el hilo de la UI antes del primer cuadro clasificando en
+  categorías~~ (R1.2: con 1 000 o más sin clasificar, sobres y señales se leen en segundo plano y
+  la lista muestra «cargando» hasta tenerlas).
+- ~~La memoria en Windows y macOS no se mostraba~~ (R1.2: residente con `memory-stats`; la anónima
+  y el pico solo en Linux).
 - El tiempo de cuadro de la GPU no se mide sin pantalla; medirlo en la app real con el panel.
 - La sincronización real de Gmail/Graph (red, OAuth, `X-GM-LABELS`) no está en el banco: el
   servidor falso es IMAP genérico en local.

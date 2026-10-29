@@ -21,7 +21,7 @@ fn comment_id(msg: MessageId) -> egui::Id {
     egui::Id::unique(("invite-comment", msg))
 }
 
-fn when(app: &DeskApp, s: &EventTime, e: &EventTime) -> String {
+pub(crate) fn when(app: &DeskApp, s: &EventTime, e: &EventTime) -> String {
     let zone = app.session.zone();
     let day = |d: chrono::NaiveDate| {
         let m: String = month_name(d.month()).chars().take(3).collect();

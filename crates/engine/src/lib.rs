@@ -22,6 +22,7 @@ pub mod iure;
 pub mod lang;
 pub mod migrate;
 pub mod onboarding;
+pub mod open;
 pub mod prefs;
 pub mod security;
 pub mod session;

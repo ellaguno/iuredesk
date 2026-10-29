@@ -509,3 +509,35 @@ fn sync_refresh_keeps_grouped_rows_until_regrouped() {
     assert!(!s.is_loading());
     assert_eq!(s.rows(), grouped.as_slice());
 }
+
+/// R1.2: con un buzón grande, clasificar en categorías no frena el arranque: la sesión deja la
+/// lista «cargando», clasifica en segundo plano y luego muestra Principal con sus recuentos.
+#[test]
+fn large_inbox_classifies_categories_in_background() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let spec = sample::ScaleSpec { accounts: 1, per_account: 3_000, body_pct: 0, seed: 7 };
+    sample::populate_scale(&store, spec, now(), |_| {}).unwrap();
+    let mut s = Session::new(SessionConfig {
+        store: Arc::new(store),
+        accounts: None,
+        secrets: Arc::new(MemoryStore::default()),
+        prefs_path: None,
+        now: Some(now()),
+        zone: Zone::utc(),
+        sample: true,
+        sync: None,
+        transport: Some(Arc::new(OfflineTransport)),
+    })
+    .unwrap();
+    s.set_conversations(false);
+    s.select_folder(FolderSel::Unified(FolderRole::Inbox));
+    assert!(s.category_tabs_shown());
+    assert!(s.is_loading(), "la clasificación va en segundo plano");
+    assert!(s.rows().is_empty());
+    settle(&mut s);
+    assert!(!s.is_loading());
+    assert!(!s.rows().is_empty());
+    let total: usize = s.category_counts().iter().map(|c| c.0).sum();
+    assert!(total >= 1_000, "recuentos por categoría tras clasificar: {total}");
+}

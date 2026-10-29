@@ -15,6 +15,7 @@ mod iure;
 mod live;
 mod mailops;
 mod notes;
+mod opened;
 mod outbox;
 mod pim;
 mod rules_glue;
@@ -29,6 +30,7 @@ pub use iure::{IURE_CALENDAR_PATH, IURE_TASKS_PATH, IurePanel, IureSetup, LeadSu
 pub use live::{AccountSync, SyncStatus};
 pub use mailops::AccountRow;
 pub use notes::{note_matches, note_title};
+pub use opened::FileOpened;
 pub use outbox::OfflineTransport;
 pub use rules_glue::{IureBadge, IureKind, RulePlace, SieveRow};
 pub use today::{folder_from_key, folder_key};
@@ -260,6 +262,8 @@ pub enum Event {
         detail: String,
         /// Cuenta que lo recibió.
         account: String,
+        /// R1.2: `iuredesk://message/…` del mensaje si es uno solo (clic en la notificación).
+        link: Option<String>,
     },
     /// Abrir el redactor con este borrador (p. ej. «Responder vía la dirección de la
     /// oportunidad», que primero consulta la instancia).
@@ -300,6 +304,8 @@ enum Inverse {
     Calendar(Box<cal::CalUndo>),
     /// Contactos borrados.
     Contacts(Vec<contacts::ContactSnap>),
+    /// Contactos agregados desde un `.vcf` (se borran) (R1.2).
+    ContactsAdded(Vec<iuredesk_model::ContactId>),
     /// Reglas, posponer, seguimientos (F5.3).
     Rules(Box<rules_glue::RulesUndo>),
     /// Notas (F7.1).
@@ -722,6 +728,15 @@ impl Session {
             return;
         }
         let order = self.merged_order();
+        if self.rules_warming(&order) {
+            // R1.2: las categorías se calculan en segundo plano; la lista espera «cargando».
+            self.loading = true;
+            self.rows_job = None;
+            if !self.keep_rows {
+                self.rows = Arc::new(Vec::new());
+            }
+            return;
+        }
         let order = self.rules_filter_order(order);
         let grouping = self.prefs.conversations && !order.is_empty();
         if !(grouping && self.keep_rows && !self.rows.is_empty()) {
@@ -1477,6 +1492,7 @@ impl Session {
                 }
                 Inverse::Calendar(u) => self.undo_calendar(*u)?,
                 Inverse::Contacts(s) => self.undo_contacts(s)?,
+                Inverse::ContactsAdded(ids) => self.undo_contacts_added(&ids)?,
                 Inverse::Rules(u) => self.undo_rules(*u)?,
                 Inverse::Note(u) => self.undo_note(*u)?,
                 Inverse::TaskAdded(id) => self.undo_task_added(id)?,
@@ -1546,6 +1562,19 @@ impl Session {
             }
             JobOutput::Custom(Box::new(Fetched { tag, items }))
         })
+    }
+
+    /// R1.2: enlace al mensaje de un aviso de correo nuevo, si es uno solo y tiene `Message-ID`.
+    pub(crate) fn newmail_link(&self, sample: &[iuredesk_sync::NewMailSample]) -> Option<String> {
+        let [one] = sample else { return None };
+        let env = self.store.get_envelope(one.message).ok().flatten()?;
+        env.message_id.as_deref().filter(|m| !m.trim().is_empty()).map(crate::open::message_link)
+    }
+
+    /// R1.2: enlace `iuredesk://event/…` del evento de un recordatorio.
+    pub fn reminder_link(&self, event: iuredesk_model::EventId) -> Option<String> {
+        let ev = self.store.get_event(event).ok().flatten()?;
+        (!ev.uid.trim().is_empty()).then(|| crate::open::event_link(&ev.uid))
     }
 
     /// No hay trabajos en curso (capturas deterministas).

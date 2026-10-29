@@ -163,6 +163,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("iuredesk-crypto", 3),
     ("iuredesk-import", 3),
     ("iuredesk-rules", 3),
+    ("iuredesk-desktop", 3),
     ("iuredesk-engine", 4),
     ("iuredesk-integrations", 4),
     ("iuredesk-mcp", 4),

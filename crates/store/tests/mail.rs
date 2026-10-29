@@ -302,3 +302,18 @@ fn remote_id_lookups() {
     assert!(s.remote_ids(a).unwrap().is_empty());
     assert!(s.remote_ids(FolderId(u64::MAX)).unwrap().is_empty());
 }
+
+/// R1.2: los enlaces `iuredesk://message/<Message-ID>` encuentran el mensaje en cualquier cuenta.
+#[test]
+fn message_by_msgid_any_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::open(dir.path()).unwrap();
+    let a = folder(&s, 1, "INBOX", FolderRole::Inbox);
+    let b = folder(&s, 2, "INBOX", FolderRole::Inbox);
+    let x = s.put_message(env(a, 1, "uno"), b"x").unwrap();
+    let y = s.put_message(env(b, 2, "dos"), b"y").unwrap();
+    assert_eq!(s.message_by_msgid("m1@test").unwrap(), Some(x));
+    assert_eq!(s.message_by_msgid(" <m2@test> ").unwrap(), Some(y));
+    assert_eq!(s.message_by_msgid("m3@test").unwrap(), None);
+    assert_eq!(s.message_by_msgid("<>").unwrap(), None);
+}

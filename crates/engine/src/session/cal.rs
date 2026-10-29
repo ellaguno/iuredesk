@@ -634,7 +634,7 @@ impl Session {
     pub fn respond_invitation(&mut self, msg: MessageId, partstat: PartStat, comment: Option<&str>) -> Result<Outcome> {
         let (inv, _) = self.invitation(msg).ok_or(EngineError::NoSelection)?;
         let backend = self.backend();
-        let id = self.import_invitation(msg, &inv)?;
+        let id = self.import_invitation(Some(msg), &inv)?;
         let comment = comment.map(str::trim).filter(|c| !c.is_empty());
         let mine = self.my_addresses();
         let reply = backend.rsvp(&self.store, id, partstat.clone(), comment, &mine).map_err(pim_err)?;
@@ -651,7 +651,9 @@ impl Session {
     }
 
     /// Guarda (o actualiza) en mi calendario el evento de la invitación; devuelve su id.
-    fn import_invitation(&mut self, msg: MessageId, inv: &Invitation) -> Result<EventId> {
+    /// `msg` elige el calendario de la cuenta que la recibió; sin mensaje (un `.ics` abierto), el
+    /// calendario por omisión.
+    fn import_invitation(&mut self, msg: Option<MessageId>, inv: &Invitation) -> Result<EventId> {
         let backend = self.backend();
         match (inv.existing.and_then(|id| self.calendar_event(id)), inv.freshness) {
             (Some(mut ev), Freshness::Update) => {
@@ -683,7 +685,10 @@ impl Session {
             }
             (Some(ev), _) => Ok(ev.id),
             (None, _) => {
-                let cal = self.calendar_for_message(msg).ok_or(EngineError::NoAccount)?;
+                let cal = msg
+                    .and_then(|m| self.calendar_for_message(m))
+                    .or_else(|| self.default_calendar())
+                    .ok_or(EngineError::NoAccount)?;
                 let mut ev = inv.event.clone();
                 ev.id = EventId::default();
                 ev.calendar = cal;
@@ -697,11 +702,99 @@ impl Session {
         }
     }
 
+    // ------------------------------------------------------------------ R1.2: `.ics` abiertos
+
+    /// Completa una invitación leída de un archivo con mi calendario (si ya la tengo y si es más
+    /// nueva), como hace [`Session::invitation`] con las de un correo.
+    pub fn enrich_file_invitation(&self, inv: &mut Invitation) {
+        let stored = self.event_by_uid(&inv.uid, &inv.event);
+        inv.existing = stored.as_ref().map(|e| e.id);
+        inv.freshness = freshness(stored.as_ref(), &inv.event);
+    }
+
+    /// Responde a una invitación abierta desde un `.ics` (como [`Session::respond_invitation`]).
+    pub fn respond_file_invitation(&mut self, inv: &Invitation, partstat: PartStat) -> Result<Outcome> {
+        let mut inv = inv.clone();
+        self.enrich_file_invitation(&mut inv);
+        let backend = self.backend();
+        let id = self.import_invitation(None, &inv)?;
+        let mine = self.my_addresses();
+        let reply = backend.rsvp(&self.store, id, partstat.clone(), None, &mine).map_err(pim_err)?;
+        self.calendar_changed();
+        let what = crate::calendar::invite::partstat_label(&partstat);
+        let to = inv.organizer.as_ref().map(|o| o.display().to_string()).unwrap_or_default();
+        Ok(Outcome::Notice(match reply {
+            Some(_) => Notice::success(
+                format!("{what} — reply to {to} is in the outbox."),
+                format!("{what} — la respuesta a {to} está en la bandeja de salida."),
+            ),
+            None => Notice::success(format!("{what}: {}", inv.event.summary), format!("{what}: {}", inv.event.summary)),
+        }))
+    }
+
+    /// Agrega a mi calendario por omisión los eventos de un `.ics` abierto (los que ya tengo, por
+    /// `UID`, se saltan). Con deshacer.
+    pub fn add_file_events(&mut self, events: &[Event]) -> Result<Outcome> {
+        let cal = self.default_calendar().ok_or(EngineError::NoAccount)?;
+        let backend = self.backend();
+        let mut undo = CalUndo::default();
+        let mut created = Vec::new();
+        let mut skipped = 0usize;
+        for e in events.iter().take(crate::open::MAX_ITEMS) {
+            if self.event_by_uid(&e.uid, e).is_some() {
+                skipped += 1;
+                continue;
+            }
+            let mut ev = e.clone();
+            ev.id = EventId::default();
+            ev.calendar = cal;
+            ev.remote_id = None;
+            ev.etag = None;
+            let id = backend.save_event(&self.store, &ev).map_err(pim_err)?;
+            undo.remove.push(id);
+            created.push(id);
+        }
+        let n = created.len();
+        let text = match (n, skipped) {
+            (0, _) => {
+                Text::new("Those events are already in your calendar.", "Esos eventos ya están en tu calendario.")
+            }
+            (1, 0) => {
+                let s = events.first().map(|e| e.summary.clone()).unwrap_or_default();
+                Text::new(format!("Added to your calendar: {s}"), format!("Agregado a tu calendario: {s}"))
+            }
+            (n, 0) => Text::new(
+                format!("{n} events added to your calendar."),
+                format!("{n} eventos agregados a tu calendario."),
+            ),
+            (n, k) => Text::new(
+                format!("{n} events added; {k} were already in your calendar."),
+                format!("{n} eventos agregados; {k} ya estaban en tu calendario."),
+            ),
+        };
+        Ok(self.finish(text, EditResult { undo, created }))
+    }
+
+    /// Una aparición del evento con ese `UID` (la próxima si se repite), para abrirlo desde un
+    /// enlace `iuredesk://event/…`. Busca dos años hacia atrás y uno hacia delante.
+    pub fn occurrence_by_uid(&mut self, uid: &str) -> Option<Occurrence> {
+        let now = self.now();
+        let ev = self
+            .store
+            .events_between(&[], now - Duration::days(730), now + Duration::days(366))
+            .unwrap_or_default()
+            .into_iter()
+            .find(|e| e.uid == uid)?;
+        let start = ev.start.to_utc();
+        let from = if ev.rrule.is_some() { now.max(start) } else { start } - Duration::days(1);
+        self.occurrences_uncached(from, from + Duration::days(370)).into_iter().find(|o| o.id == ev.id)
+    }
+
     /// Agrega al calendario una invitación sin responder (o una publicación).
     pub fn add_invitation_to_calendar(&mut self, msg: MessageId) -> Result<Outcome> {
         let (inv, _) = self.invitation(msg).ok_or(EngineError::NoSelection)?;
         let existed = inv.existing.is_some();
-        let id = self.import_invitation(msg, &inv)?;
+        let id = self.import_invitation(Some(msg), &inv)?;
         let mut undo = CalUndo::default();
         if !existed {
             undo.remove.push(id);

@@ -1,5 +1,5 @@
 //! Recordatorios mientras la app está abierta: una notificación del escritorio la primera vez
-//! (`notify-rust` en Linux; en otros sistemas, solo la tarjeta) y una tarjeta discreta abajo a la
+//! (Linux, Windows y macOS; el clic abre el evento) y una tarjeta discreta abajo a la
 //! derecha con «Posponer» y «Descartar» hasta que se atienden.
 
 use egui::{Align, Context, Layout, RichText, Sense, vec2};
@@ -22,7 +22,7 @@ pub(crate) fn show(app: &mut DeskApp, ctx: &Context) {
                 format!("{}–{}", zone.local(r.start).format("%H:%M"), zone.local(r.end).format("%H:%M"))
             };
             let body = if r.location.is_empty() { when } else { format!("{when} · {}", r.location) };
-            n(&r.summary, &body);
+            n(&r.summary, &body, app.session.reminder_link(r.key.event).as_deref());
         }
     }
     if let Some(d) = app.session.next_reminder_in() {
