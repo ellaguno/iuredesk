@@ -21,6 +21,10 @@ fn now() -> chrono::DateTime<Utc> {
 }
 
 fn app(dir: &std::path::Path) -> DeskApp {
+    app_at(dir, now())
+}
+
+fn app_at(dir: &std::path::Path, at: chrono::DateTime<Utc>) -> DeskApp {
     iuredesk_ui::iurefficient_ui::lang::set_lang(iuredesk_ui::iurefficient_ui::lang::Lang::Es);
     iuredesk_engine::lang::set_lang(iuredesk_engine::lang::Lang::Es);
     let store = Store::open(dir).unwrap();
@@ -30,7 +34,7 @@ fn app(dir: &std::path::Path) -> DeskApp {
         accounts: None,
         secrets: Arc::new(MemoryStore::default()),
         prefs_path: None,
-        now: Some(now()),
+        now: Some(at),
         zone: Zone::utc(),
         sample: true,
         sync: None,
@@ -114,4 +118,37 @@ fn completing_a_task_from_today() {
     let day = h.state_mut().session.day_summary().unwrap();
     assert!(!day.tasks.today.iter().any(|t| t.task.summary == "Presentar escrito caso 241/2026"));
     assert_eq!(h.state().session.module, Module::Today, "terminar no navega");
+}
+
+/// UX-2: el botón «Unirse · Teams» de la próxima cita abre solo la reunión; antes la tarjeta
+/// (que escuchaba el clic encima del botón) abría además el editor del evento y ganaba.
+#[test]
+fn join_button_opens_only_the_meeting() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    // Busca la reunión de Teams del ejemplo y vuelve a abrir «Mi día» poco antes de que empiece.
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    let day = h.state_mut().session.day_summary().unwrap();
+    let teams = day.events.iter().find(|e| e.join.as_ref().is_some_and(|j| j.provider == "Teams")).unwrap().clone();
+    let url = teams.join.as_ref().unwrap().url.clone();
+    drop(h);
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app_at(dir.path(), teams.occ.start - chrono::Duration::minutes(5)));
+    settle(&mut h);
+    let day = h.state_mut().session.day_summary().unwrap();
+    let (i, _) = day.next_event(h.state().session.now()).unwrap();
+    assert_eq!(day.events.get(i).map(|e| e.occ.id), Some(teams.occ.id), "la de Teams es la siguiente");
+
+    iuredesk_ui::capture_opened_urls();
+    h.get_by_label("Unirse a la reunión").click();
+    settle(&mut h);
+    assert_eq!(iuredesk_ui::opened_urls(), vec![url], "se abre el enlace de la reunión");
+    assert_eq!(h.state().session.module, Module::Today, "y no se abre el evento");
+
+    // Un clic en el resto de la tarjeta (el título, en el centro) sí abre el evento.
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, &teams.occ.summary).next().unwrap().click();
+    settle(&mut h);
+    assert_eq!(h.state().session.module, Module::Calendar);
+    assert_eq!(iuredesk_ui::opened_urls().len(), 1, "sin abrir la reunión otra vez");
 }

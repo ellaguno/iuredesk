@@ -40,6 +40,7 @@ pub(crate) fn show(app: &mut DeskApp, ctx: &Context) {
     let w: f32 = 320.0;
     let mut snooze: Option<(iuredesk_engine::calendar::reminders::ReminderKey, i64)> = None;
     let mut dismiss: Vec<iuredesk_engine::calendar::reminders::ReminderKey> = Vec::new();
+    let mut join: Option<String> = None;
     egui::Area::new(egui::Id::unique("reminders"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::RIGHT_BOTTOM, vec2(-16.0, -16.0))
@@ -98,6 +99,13 @@ pub(crate) fn show(app: &mut DeskApp, ctx: &Context) {
                             dismiss.push(r.key);
                         }
                     });
+                    let description =
+                        app.session.calendar_event(r.key.event).map(|e| e.description).unwrap_or_default();
+                    if let Some(j) = iuredesk_engine::today::meeting_link(&[&r.location, &description])
+                        && crate::meeting::join_button(ui, &j, true)
+                    {
+                        join = Some(j.url.clone());
+                    }
                 }
                 if due.len() > 4 {
                     ui.label(RichText::new(format!("+{} {}", due.len() - 4, pick("more", "más"))).color(c.text_muted));
@@ -109,5 +117,8 @@ pub(crate) fn show(app: &mut DeskApp, ctx: &Context) {
     }
     for k in dismiss {
         app.session.dismiss_reminder(k);
+    }
+    if let Some(u) = join {
+        crate::meeting::join(app, ctx, &u);
     }
 }

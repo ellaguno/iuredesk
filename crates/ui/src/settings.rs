@@ -6,7 +6,7 @@
 use egui::{Context, RichText, Ui};
 use iuredesk_engine::session::{ConnectionTest, kind_label, servers_editable};
 use iuredesk_engine::{AccountRow, DensityPref, ShortcutScheme, StartPref, ThemePref};
-use iuredesk_model::account::{Account, Identity, Protocol, Security, ServerConfig};
+use iuredesk_model::account::{Account, Identity, Protocol};
 use iurefficient_ui::fonts::FontChoice;
 use iurefficient_ui::{Icon, avatar, icons, lang, pick, section_label, segmented, sidebar_item, theme};
 
@@ -360,28 +360,6 @@ fn accounts(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
     }
 }
 
-fn server_fields(ui: &mut Ui, id: &str, s: &mut ServerConfig) {
-    egui::Grid::new(id).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-        let l = ui.label(pick("Server", "Servidor"));
-        ui.add(egui::TextEdit::singleline(&mut s.host).desired_width(260.0).hint_text("mail.example.com"))
-            .labelled_by(l.id);
-        ui.end_row();
-        let l = ui.label(pick("Port", "Puerto"));
-        ui.add(egui::DragValue::new(&mut s.port).range(1..=65535)).labelled_by(l.id);
-        ui.end_row();
-        ui.label(pick("Security", "Seguridad"));
-        segmented(
-            ui,
-            &mut s.security,
-            &[(Security::Tls, "SSL/TLS"), (Security::StartTls, "STARTTLS"), (Security::Plain, pick("None", "Ninguna"))],
-        );
-        ui.end_row();
-        let l = ui.label(pick("User name", "Usuario"));
-        ui.add(egui::TextEdit::singleline(&mut s.username).desired_width(260.0)).labelled_by(l.id);
-        ui.end_row();
-    });
-}
-
 /// Ventana del editor de una cuenta.
 fn editor_window(app: &mut DeskApp, ctx: &Context) {
     let Some(mut ed) = app.settings_ui.editor.take() else { return };
@@ -470,10 +448,10 @@ fn editor_window(app: &mut DeskApp, ctx: &Context) {
                         _ => "IMAP",
                     };
                     section_label(ui, &format!("{} ({proto})", pick("Incoming mail", "Correo entrante")));
-                    server_fields(ui, "acc-in", &mut ed.account.incoming);
+                    crate::server_form::server_fields(ui, "acc-in", &mut ed.account.incoming);
                     ui.add_space(8.0);
                     section_label(ui, &format!("{} (SMTP)", pick("Outgoing mail", "Correo saliente")));
-                    server_fields(ui, "acc-out", &mut ed.account.outgoing);
+                    crate::server_form::server_fields(ui, "acc-out", &mut ed.account.outgoing);
                     ui.add_space(8.0);
                     section_label(ui, pick("Calendar and contacts", "Calendario y contactos"));
                     egui::Grid::new("acc-dav").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {

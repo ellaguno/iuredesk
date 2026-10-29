@@ -17,6 +17,7 @@ mod outbox;
 mod pim;
 mod rules_glue;
 mod today;
+mod wizard;
 
 pub use accounts::{ConnectionTest, kind_label, servers_editable, validate_account};
 pub use cal::{CalState, PimBackend, occurrence_start};
@@ -230,7 +231,14 @@ pub enum EngineJob {
     Discovery(std::result::Result<iuredesk_autoconfig::Discovery, Text>),
     /// Prueba de conexión (y secreto ya guardado) de la cuenta en curso.
     Probe(std::result::Result<(), Text>),
-    OAuth(std::result::Result<(), Text>),
+    OAuth(std::result::Result<(), crate::onboarding::OAuthFailure>),
+    /// «Probar conexión» de «Configurar manualmente»: cada servidor por separado y, si los dos
+    /// funcionan, el guardado de la contraseña.
+    ManualProbe {
+        incoming: std::result::Result<(), Text>,
+        outgoing: std::result::Result<(), Text>,
+        saved: std::result::Result<(), Text>,
+    },
     /// «Probar conexión» del editor de cuentas.
     AccountTest(std::result::Result<(), Text>),
     /// Resumen de «Mi día» (F6.1).
@@ -1551,7 +1559,10 @@ impl Session {
             }
             EngineJob::Discovery(r) => self.wizard_on_discovery(id, r),
             EngineJob::Probe(r) => self.wizard_on_probe(id, r, false),
-            EngineJob::OAuth(r) => self.wizard_on_probe(id, r, true),
+            EngineJob::OAuth(r) => self.wizard_on_oauth(id, r),
+            EngineJob::ManualProbe { incoming, outgoing, saved } => {
+                self.wizard_on_manual(id, incoming, outgoing, saved)
+            }
             EngineJob::AccountTest(r) => {
                 self.on_account_test(id, r);
                 None
@@ -1748,6 +1759,9 @@ impl Session {
             w.discovery = None;
             w.message = None;
             w.job = None;
+            w.manual = None;
+            w.existing = None;
+            w.oauth_issue = None;
             w.password.clear();
         }
     }
@@ -1762,6 +1776,9 @@ impl Session {
                     "Eso no parece una dirección de correo. Revisa que tenga la forma nombre@dominio.com.",
                 )));
             }
+            return;
+        }
+        if self.wizard_check_existing() {
             return;
         }
         let job = self.bg.spawn(async move {
@@ -1788,19 +1805,34 @@ impl Session {
         let w = self.wizard.as_mut().filter(|w| w.job == Some(id))?;
         w.job = None;
         match r {
-            Ok(d) if d.best().is_some() => {
+            Ok(d) if !crate::onboarding::needs_manual(&d) => {
                 self.wizard_apply_discovery(d);
             }
-            Ok(_) => {
-                w.step = WizardStep::Email;
-                w.message = Some(Notice::error(Text::new(
-                    "We couldn't find the mail servers for that address. Check the spelling, or ask your provider for the IMAP and SMTP settings.",
-                    "No encontramos los servidores de correo de esa dirección. Revisa cómo está escrita o pide a tu proveedor los datos de IMAP y SMTP.",
-                )));
+            // Nada o solo suposiciones: al formulario manual, con lo que se haya encontrado.
+            Ok(d) => {
+                let found = d.best().is_some();
+                w.discovery = Some(d);
+                self.wizard_manual();
+                if let Some(w) = self.wizard.as_mut() {
+                    w.message = Some(Notice::info(
+                        if found {
+                            "We couldn't confirm the mail servers for that address. Check the proposed ones and test the connection."
+                        } else {
+                            "We couldn't find the mail servers for that address. Enter them below (your provider has them) and test the connection."
+                        },
+                        if found {
+                            "No pudimos confirmar los servidores de correo de esa dirección. Revisa los propuestos y prueba la conexión."
+                        } else {
+                            "No encontramos los servidores de correo de esa dirección. Escríbelos abajo (tu proveedor te los da) y prueba la conexión."
+                        },
+                    ));
+                }
             }
             Err(t) => {
-                w.step = WizardStep::Email;
-                w.message = Some(Notice::error(t));
+                self.wizard_manual();
+                if let Some(w) = self.wizard.as_mut() {
+                    w.message = Some(Notice::error(t));
+                }
             }
         }
         None
@@ -1822,6 +1854,7 @@ impl Session {
         w.discovery = Some(d);
         w.step = WizardStep::Provider;
         w.message = None;
+        w.oauth_issue = None;
     }
 
     /// Cambia a contraseña de app (cuando el OAuth no está disponible).
@@ -1912,6 +1945,25 @@ impl Session {
 
     /// «Continuar con Google/Microsoft»: abre el navegador y espera el permiso.
     pub fn wizard_oauth(&mut self) {
+        let Some(Flow::OAuth(provider)) = self.wizard.as_ref().and_then(|w| w.flow.clone()) else { return };
+        let settings = iuredesk_oauth::OAuthSettings::default();
+        let cfg = match provider {
+            OAuthProvider::Google => settings.google(),
+            OAuthProvider::Microsoft => settings.microsoft(),
+        };
+        self.wizard_oauth_with(cfg, None, iuredesk_oauth::DEFAULT_LOGIN_TIMEOUT);
+    }
+
+    /// [`Session::wizard_oauth`] con la configuración, el «navegador» y el tiempo de espera dados
+    /// (pruebas contra un proveedor falso). `open` recibe la URL de autorización; `None` abre el
+    /// navegador del sistema.
+    #[doc(hidden)]
+    pub fn wizard_oauth_with(
+        &mut self,
+        cfg: std::result::Result<iuredesk_oauth::ProviderConfig, iuredesk_oauth::Error>,
+        open: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+        timeout: std::time::Duration,
+    ) {
         let Some(w) = self.wizard.as_ref() else { return };
         let Some(Flow::OAuth(provider)) = w.flow.clone() else { return };
         let reauth = w.reauth.clone();
@@ -1936,30 +1988,28 @@ impl Session {
         let cancel = iuredesk_oauth::CancellationToken::new();
         let token = cancel.clone();
         let id = account.id.clone();
+        let link = Arc::clone(&w.oauth_link);
+        if let Ok(mut g) = link.lock() {
+            *g = None;
+        }
         let job = self.bg.spawn(async move {
             let r = async {
-                let settings = iuredesk_oauth::OAuthSettings::default();
-                let cfg = match provider {
-                    OAuthProvider::Google => settings.google(),
-                    OAuthProvider::Microsoft => settings.microsoft(),
+                let cfg = cfg?;
+                let http = iuredesk_oauth::http_client()?;
+                let pending = iuredesk_oauth::start_login(&cfg, Some(&hint)).await?;
+                if let Ok(mut g) = link.lock() {
+                    *g = Some(pending.authorize_url().to_string());
                 }
-                .map_err(|e| crate::onboarding::oauth_text(&e))?;
-                let http = iuredesk_oauth::http_client().map_err(|e| crate::onboarding::oauth_text(&e))?;
-                let pending = iuredesk_oauth::start_login(&cfg, Some(&hint))
-                    .await
-                    .map_err(|e| crate::onboarding::oauth_text(&e))?;
-                pending.open_browser().map_err(|e| crate::onboarding::oauth_text(&e))?;
-                let tokens = pending
-                    .finish(&http, iuredesk_oauth::DEFAULT_LOGIN_TIMEOUT, &token)
-                    .await
-                    .map_err(|e| crate::onboarding::oauth_text(&e))?;
-                iuredesk_oauth::TokenManager::new(http, secrets)
-                    .store_login(&id, &tokens)
-                    .await
-                    .map_err(|e| crate::onboarding::oauth_text(&e))?;
+                match &open {
+                    Some(f) => f(pending.authorize_url()),
+                    None => pending.open_browser()?,
+                }
+                let tokens = pending.finish(&http, timeout, &token).await?;
+                iuredesk_oauth::TokenManager::new(http, secrets).store_login(&id, &tokens).await?;
                 Ok(())
             }
-            .await;
+            .await
+            .map_err(|e: iuredesk_oauth::Error| crate::onboarding::oauth_failure(&e, provider));
             JobOutput::Engine(EngineJob::OAuth(r))
         });
         if let Some(w) = self.wizard.as_mut() {
@@ -1968,11 +2018,17 @@ impl Session {
             w.cancel = Some(cancel);
             w.step = WizardStep::Working;
             w.message = None;
+            w.oauth_issue = None;
             w.job = Some(job);
         }
     }
 
-    fn wizard_on_probe(&mut self, id: JobId, r: std::result::Result<(), Text>, oauth: bool) -> Option<Notice> {
+    pub(crate) fn wizard_on_probe(
+        &mut self,
+        id: JobId,
+        r: std::result::Result<(), Text>,
+        oauth: bool,
+    ) -> Option<Notice> {
         let w = self.wizard.as_mut().filter(|w| w.job == Some(id))?;
         w.job = None;
         w.cancel = None;

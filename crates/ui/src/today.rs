@@ -449,71 +449,67 @@ fn next_box(app: &DeskApp, ui: &mut Ui, e: &AgendaItem, st: NextState, acts: &mu
     let ctx = ui.ctx().clone();
     let now_on = matches!(st, NextState::Now { .. });
     let tint = if now_on { c.success } else { c.accent };
-    let resp = egui::Frame::new()
-        .fill(tint.gamma_multiply(if c.dark { 0.16 } else { 0.08 }))
-        .stroke(Stroke::new(1.0, tint.gamma_multiply(0.35)))
-        .corner_radius(10)
-        .inner_margin(Margin::symmetric(14, 12))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 3.0;
-                    let head = if now_on { pick("NOW", "AHORA") } else { pick("NEXT", "SIGUIENTE") };
-                    let label = st.label();
-                    let rest = match st {
-                        NextState::Now { .. } => label.get().split_once('·').map_or("", |(_, r)| r).trim().to_string(),
-                        NextState::Soon { .. } => label.get().to_string(),
-                    };
-                    ui.label(
-                        RichText::new(format!("{head} · {}", rest.to_uppercase()))
-                            .font(theme::semibold_font(&ctx, theme::density(&ctx).small_size()))
-                            .color(tint),
-                    );
-                    let w = (ui.available_width() - if e.join.is_some() { 150.0 } else { 0.0 }).max(80.0);
-                    let g = iurefficient_ui::widgets::text::elided(
-                        ui,
-                        &e.occ.summary,
-                        theme::semibold_font(&ctx, 17.0),
-                        c.text,
-                        w,
-                    );
-                    ui.label(egui::WidgetText::Galley(g));
-                    let mut meta = format!("{} – {}", hm(app, e.occ.start), hm(app, e.occ.end));
-                    if !e.occ.location.trim().is_empty() && !e.occ.location.starts_with("https://") {
-                        meta.push_str(&format!(" · {}", e.occ.location.trim()));
-                    }
-                    if !e.calendar.is_empty() {
-                        meta.push_str(&format!(" · {}", e.calendar));
-                    }
-                    let g = iurefficient_ui::widgets::text::elided(ui, &meta, theme::body_font(&ctx), c.text_muted, w);
-                    ui.label(egui::WidgetText::Galley(g));
-                });
-                if let Some(j) = &e.join {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let label = format!("{} · {}", pick("Join", "Unirse"), j.provider);
-                        let r = ui.add(
-                            egui::Button::new(
-                                RichText::new(label)
-                                    .font(theme::medium_font(&ctx, theme::density(&ctx).body_size()))
-                                    .color(c.on_accent),
-                            )
-                            .fill(c.accent)
-                            .corner_radius(8)
-                            .min_size(vec2(0.0, 30.0)),
+    // La tarjeta registra su clic *antes* de dibujar el contenido: así el botón «Unirse», que
+    // queda encima, se lleva su propio clic y no abre además el evento (UX-2).
+    let card = ui.scope_builder(egui::UiBuilder::new().sense(Sense::click()), |ui| {
+        // Textos no seleccionables: si no, el título se quedaría con el clic de la tarjeta.
+        ui.style_mut().interaction.selectable_labels = false;
+        egui::Frame::new()
+            .fill(tint.gamma_multiply(if c.dark { 0.16 } else { 0.08 }))
+            .stroke(Stroke::new(1.0, tint.gamma_multiply(0.35)))
+            .corner_radius(10)
+            .inner_margin(Margin::symmetric(14, 12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 3.0;
+                        let head = if now_on { pick("NOW", "AHORA") } else { pick("NEXT", "SIGUIENTE") };
+                        let label = st.label();
+                        let rest = match st {
+                            NextState::Now { .. } => {
+                                label.get().split_once('·').map_or("", |(_, r)| r).trim().to_string()
+                            }
+                            NextState::Soon { .. } => label.get().to_string(),
+                        };
+                        ui.label(
+                            RichText::new(format!("{head} · {}", rest.to_uppercase()))
+                                .font(theme::semibold_font(&ctx, theme::density(&ctx).small_size()))
+                                .color(tint),
                         );
-                        iurefficient_ui::a11y::button(&r, pick("Join the meeting", "Unirse a la reunión"));
-                        if r.clicked() {
-                            acts.push(Act::Join(j.url.clone()));
+                        let w = (ui.available_width() - if e.join.is_some() { 150.0 } else { 0.0 }).max(80.0);
+                        let g = iurefficient_ui::widgets::text::elided(
+                            ui,
+                            &e.occ.summary,
+                            theme::semibold_font(&ctx, 17.0),
+                            c.text,
+                            w,
+                        );
+                        ui.label(egui::WidgetText::Galley(g));
+                        let mut meta = format!("{} – {}", hm(app, e.occ.start), hm(app, e.occ.end));
+                        if !e.occ.location.trim().is_empty() && !e.occ.location.starts_with("https://") {
+                            meta.push_str(&format!(" · {}", e.occ.location.trim()));
                         }
+                        if !e.calendar.is_empty() {
+                            meta.push_str(&format!(" · {}", e.calendar));
+                        }
+                        let g =
+                            iurefficient_ui::widgets::text::elided(ui, &meta, theme::body_font(&ctx), c.text_muted, w);
+                        ui.label(egui::WidgetText::Galley(g));
                     });
-                }
+                    if let Some(j) = &e.join {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if crate::meeting::join_button(ui, j, true) {
+                                acts.push(Act::Join(j.url.clone()));
+                            }
+                        });
+                    }
+                });
             });
-        })
-        .response
-        .interact(Sense::click());
+    });
+    let resp = card.response;
     iurefficient_ui::a11y::button(&resp, &e.occ.summary);
-    if resp.clicked() {
+    if resp.clicked() && !acts.iter().any(|a| matches!(a, Act::Join(_))) {
         acts.push(Act::Event(Box::new(e.occ.clone())));
     }
 }
@@ -969,14 +965,7 @@ fn apply(app: &mut DeskApp, ctx: &egui::Context, a: Act) {
             app.session.module = Module::Calendar;
             crate::event_editor::open_occurrence(app, &o);
         }
-        Act::Join(url) => {
-            if !crate::open_url(&url) {
-                app.notice(Notice::error(iuredesk_engine::Text::new(
-                    "The meeting link could not be opened.",
-                    "No se pudo abrir el enlace de la reunión.",
-                )));
-            }
-        }
+        Act::Join(url) => crate::meeting::join(app, ctx, &url),
         Act::Calendar => {
             app.session.cal.anchor = None;
             app.session.module = Module::Calendar;

@@ -1,7 +1,7 @@
 //! Captura sin pantalla de IureDesk con el buzón de ejemplo y un «ahora» fijo (determinista).
 //!
 //! `cargo run -p iuredesk-ui --example ui_shot -- /tmp/shot.png [--dark] [--density dense|compact|comfortable]
-//!  [--module today|mail|calendar|contacts|notes|tasks|assistant|onboarding|provider] [--palette[=texto]]
+//!  [--module today|mail|calendar|contacts|notes|tasks|assistant|onboarding|provider|manual|duplicate] [--at HH:MM] [--palette[=texto]]
 //!  [--html] [--month] [--view day|agenda|week|work_week|month] [--editor] [--invite] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]
 //!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]
 //!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]`
@@ -101,26 +101,28 @@ fn main() -> Result<(), String> {
         .unwrap_or((1440.0, 900.0));
     let ppp = flag("--ppp").and_then(|p| p.parse::<f32>().ok()).unwrap_or(1.0).clamp(0.5, 3.0);
 
-    // Miércoles 21 de octubre de 2026, 11:20 UTC.
-    let now = Utc.with_ymd_and_hms(2026, 10, 21, 11, 20, 0).single().ok_or("fecha")?;
+    // Miércoles 21 de octubre de 2026, 11:20 UTC (`--at HH:MM` cambia la hora).
+    let (hh, mm) = flag("--at")
+        .and_then(|t| t.split_once(':').and_then(|(h, m)| Some((h.parse::<u32>().ok()?, m.parse::<u32>().ok()?))))
+        .unwrap_or((11, 20));
+    let now = Utc.with_ymd_and_hms(2026, 10, 21, hh, mm, 0).single().ok_or("fecha")?;
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let store = Store::open(dir.path()).map_err(|e| e.to_string())?;
-    let onboarding = module == "onboarding" || module == "provider";
+    let onboarding = module == "onboarding" || module == "provider" || module == "manual";
     if !onboarding {
         sample::populate(&store, sample::DEFAULT_SEED, now).map_err(|e| e.to_string())?;
     }
     // `--settings[=sección]`: tres cuentas de ejemplo (Gmail, Microsoft 365 y una IMAP con error).
     let settings =
         args.iter().find_map(|a| a.strip_prefix("--settings")).map(|s| s.trim_start_matches('=').to_string());
-    let accounts = match &settings {
-        Some(_) => {
-            let st = iuredesk_accounts::AccountStore::at(dir.path().join("accounts.json"));
-            for a in demo_accounts() {
-                st.upsert(a).map_err(|e| e.to_string())?;
-            }
-            Some(st)
+    let accounts = if module == "duplicate" || settings.is_some() {
+        let st = iuredesk_accounts::AccountStore::at(dir.path().join("accounts.json"));
+        for a in demo_accounts() {
+            st.upsert(a).map_err(|e| e.to_string())?;
         }
-        None => None,
+        Some(st)
+    } else {
+        None
     };
     let mut session = Session::new(SessionConfig {
         store: Arc::new(store),
@@ -254,6 +256,10 @@ fn main() -> Result<(), String> {
     }
     if module == "provider" {
         app.demo_provider_step("laura.mendez@gmail.com");
+    } else if module == "manual" {
+        app.demo_manual_step("ellaguno@confiabilidad.com.mx");
+    } else if module == "duplicate" {
+        app.demo_duplicate_step("Laura.Mendez@gmail.com");
     } else if module == "onboarding" {
         app.demo_email_step("laura@despacho.example.org", "Laura Méndez");
     }
