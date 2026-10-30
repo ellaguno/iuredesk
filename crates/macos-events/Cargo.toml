@@ -1,6 +1,6 @@
 [package]
 name = "iuredesk-macos-events"
-description = "macOS: recibe los Apple Events de abrir enlace (kAEGetURL) y abrir documentos (kAEOpenDocuments) que winit no entrega"
+description = "macOS: recibe los Apple Events de abrir enlace (kAEGetURL) y abrir documentos (kAEOpenDocuments) que winit no entrega, y los clics en notificaciones"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,7 +15,14 @@ objc2 = { workspace = true }
 objc2-foundation = { workspace = true, features = [
     # `objc2-core-services` solo aporta los alias `AEEventClass`/`AEKeyword` (u32) de la firma.
     "NSAppleEventDescriptor", "NSAppleEventManager", "NSNotification", "NSURL", "objc2-core-services",
+    "NSBundle", "NSDictionary",
 ] }
+# R1.5: delegado de UNUserNotificationCenter (clic en un aviso) y `userInfo` del aviso.
+objc2-user-notifications = { workspace = true, features = [
+    "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse",
+    "UNUserNotificationCenter",
+] }
+block2 = { workspace = true }
 
 # R1.4 (decisión del dueño 2026-10-29): el ÚNICO crate del workspace con `unsafe`, solo en macOS
 # (`src/macos.rs`). No hereda `[workspace.lints]` porque `forbid(unsafe_code)` no se puede

@@ -10,7 +10,10 @@
 //!   acceso directo lleva el mismo AUMID; además, al arrancar se registra el AUMID en
 //!   `HKCU\Software\Classes\AppUserModelId\…` para que los avisos salgan aun sin acceso directo.
 //! - **macOS**: `UNUserNotificationCenter` (objc2), solo si la app corre dentro de su `.app`
-//!   (fuera de un paquete el sistema lo rechaza). El clic trae IureDesk al frente.
+//!   (fuera de un paquete el sistema lo rechaza). El enlace va en el `userInfo` del aviso
+//!   (`iuredesk_macos_events::set_notification_link`); el clic lo recibe el delegado que pone
+//!   `iuredesk_macos_events::install` y entra en la bandeja de los Apple Events (R1.5). Sin enlace
+//!   válido el clic solo trae IureDesk al frente.
 //! - Otros: `None` (solo los avisos dentro de la ventana).
 
 use std::sync::Arc;
@@ -167,10 +170,13 @@ mod macos {
             &done,
         );
         let seq = Arc::new(AtomicU64::new(0));
-        Some(Arc::new(move |title: &str, body: &str, _link: Option<&str>| {
+        Some(Arc::new(move |title: &str, body: &str, link: Option<&str>| {
             let content = UNMutableNotificationContent::new();
             content.setTitle(&NSString::from_str(&clip(title)));
             content.setBody(&NSString::from_str(&clip(body)));
+            if let Some(link) = link {
+                iuredesk_macos_events::set_notification_link(&content, link);
+            }
             let n = seq.fetch_add(1, Ordering::Relaxed);
             let id = NSString::from_str(&format!("iuredesk-{}-{n}", std::process::id()));
             let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&id, &content, None);

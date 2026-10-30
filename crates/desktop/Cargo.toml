@@ -24,6 +24,8 @@ objc2 = { workspace = true }
 objc2-foundation = { workspace = true }
 objc2-user-notifications = { workspace = true }
 block2 = { workspace = true }
+# R1.5: guarda en el aviso el enlace que abre su clic (el `unsafe` de `setUserInfo` vive allí).
+iuredesk-macos-events = { workspace = true }
 memory-stats = { workspace = true }
 
 [dev-dependencies]

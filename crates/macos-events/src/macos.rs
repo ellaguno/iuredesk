@@ -5,15 +5,26 @@
 //! eventos del arranque se despachan después. Por eso, como recomienda Apple, registramos los
 //! nuestros al recibir `NSApplicationWillFinishLaunchingNotification` (además de una vez al
 //! instalar, por si la app ya terminó de arrancar). Así no tocamos el delegado de winit.
+//!
+//! R1.5: el delegado de `UNUserNotificationCenter` ([`NotificationDelegate`]) se pone en
+//! [`install`], antes de que la app termine de arrancar, como pide Apple para recibir también el
+//! clic que lanzó la app en frío. El delegado de winit tampoco se toca aquí.
 
 use std::cell::OnceCell;
 
+use block2::DynBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{NSObject, NSObjectProtocol};
-use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
-use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager, NSNotification, NSNotificationCenter, NSString};
+use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::{AllocAnyThread, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+use objc2_foundation::{
+    NSAppleEventDescriptor, NSAppleEventManager, NSBundle, NSDictionary, NSNotification, NSNotificationCenter, NSString,
+};
+use objc2_user_notifications::{
+    UNMutableNotificationContent, UNNotification, UNNotificationPresentationOptions, UNNotificationResponse,
+    UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+};
 
-use crate::{INBOX, MAX_PENDING, MacEventsError};
+use crate::{INBOX, MAX_PENDING, MacEventsError, NOTIFICATION_LINK_KEY, deliver_click, notification_link};
 
 /// Código de cuatro letras de Carbon (`'GURL'` → `0x4755524C`).
 const fn code(c: &[u8; 4]) -> u32 {
@@ -77,6 +88,91 @@ define_class!(
     }
 );
 
+define_class!(
+    // SAFETY:
+    // - NSObject no tiene requisitos para subclases.
+    // - `NotificationDelegate` no implementa `Drop` ni tiene variables de instancia, y solo toca la
+    //   bandeja (segura entre hilos), así que puede vivir en cualquier hilo.
+    #[unsafe(super(NSObject))]
+    #[name = "IureDeskNotificationDelegate"]
+    struct NotificationDelegate;
+
+    // SAFETY: `NSObjectProtocol` no pide nada más a una subclase de NSObject.
+    unsafe impl NSObjectProtocol for NotificationDelegate {}
+
+    // SAFETY: los dos métodos llevan el selector y la firma que declara el protocolo en
+    // objc2-user-notifications; los demás son opcionales.
+    unsafe impl UNUserNotificationCenterDelegate for NotificationDelegate {
+        // SAFETY: `- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+        // willPresentNotification:(UNNotification *)notification
+        // withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler`.
+        #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
+        fn will_present(
+            &self,
+            _center: &UNUserNotificationCenter,
+            _notification: &UNNotification,
+            completion: &DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
+        ) {
+            // Con IureDesk al frente el sistema calla los avisos salvo que se pida mostrarlos.
+            completion.call((UNNotificationPresentationOptions::Banner
+                | UNNotificationPresentationOptions::List
+                | UNNotificationPresentationOptions::Sound,));
+        }
+
+        // SAFETY: `- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+        // didReceiveNotificationResponse:(UNNotificationResponse *)response
+        // withCompletionHandler:(void (^)(void))completionHandler`.
+        #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
+        fn did_receive(
+            &self,
+            _center: &UNUserNotificationCenter,
+            response: &UNNotificationResponse,
+            completion: &DynBlock<dyn Fn()>,
+        ) {
+            let action = response.actionIdentifier().to_string();
+            let link = clicked_link(response);
+            let _ = deliver_click(&INBOX, &action, link.as_deref());
+            // Apple exige llamarlo siempre, y una sola vez.
+            completion.call(());
+        }
+    }
+);
+
+impl NotificationDelegate {
+    fn new() -> Retained<Self> {
+        let this = Self::alloc().set_ivars(());
+        // SAFETY: `init` de NSObject sobre un objeto recién reservado con sus (cero) variables
+        // de instancia ya puestas; devuelve el objeto inicializado y retenido.
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+/// Texto guardado bajo [`NOTIFICATION_LINK_KEY`] en el `userInfo` del aviso (lo valida
+/// [`deliver_click`]); cualquier otro tipo de valor se ignora.
+fn clicked_link(response: &UNNotificationResponse) -> Option<String> {
+    let info = response.notification().request().content().userInfo();
+    let key = NSString::from_str(NOTIFICATION_LINK_KEY);
+    let value = info.objectForKey(&key)?.downcast::<NSString>().ok()?;
+    Some(value.to_string())
+}
+
+/// Guarda en el `userInfo` del aviso el enlace que abre su clic (si [`notification_link`] lo
+/// acepta; si no, no hace nada y el clic solo trae la app al frente).
+pub fn set_notification_link(content: &UNMutableNotificationContent, link: &str) {
+    let Some(link) = notification_link(link) else {
+        return;
+    };
+    let key = NSString::from_str(NOTIFICATION_LINK_KEY);
+    let value = NSString::from_str(&link);
+    let info = NSDictionary::<NSString, NSString>::from_slices(&[&*key], &[&*value]);
+    // SAFETY: `userInfo` debe ser un diccionario de objetos de lista de propiedades: aquí es
+    // `NSString → NSString`. Reinterpretar los genéricos como `AnyObject` (lo que pide la firma)
+    // es válido porque todo objeto de Objective-C lo es; el contenido copia el diccionario.
+    unsafe {
+        content.setUserInfo(info.cast_unchecked());
+    }
+}
+
 impl Handler {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(());
@@ -90,6 +186,9 @@ thread_local! {
     /// El manejador vive lo que el proceso: ni NSAppleEventManager ni NSNotificationCenter lo
     /// retienen, así que se guarda aquí (hilo principal) y nunca se suelta.
     static HANDLER: OnceCell<Retained<Handler>> = const { OnceCell::new() };
+    /// `UNUserNotificationCenter.delegate` es débil: el delegado vive aquí hasta el final del
+    /// proceso (hilo principal, que no termina antes que la app).
+    static NOTIFICATION_DELEGATE: OnceCell<Retained<NotificationDelegate>> = const { OnceCell::new() };
 }
 
 pub(crate) fn install() -> Result<(), MacEventsError> {
@@ -109,7 +208,23 @@ pub(crate) fn install() -> Result<(), MacEventsError> {
             center.addObserver_selector_name_object(handler, sel!(willFinishLaunching:), Some(&name), None);
         }
     });
+    install_notification_delegate();
     Ok(())
+}
+
+/// Pone el delegado de notificaciones (una vez). Fuera de un `.app` (p. ej. `cargo run`) el centro
+/// de notificaciones aborta el proceso, así que entonces no se toca.
+fn install_notification_delegate() {
+    if NSBundle::mainBundle().bundleIdentifier().is_none() {
+        return;
+    }
+    NOTIFICATION_DELEGATE.with(|cell| {
+        if cell.get().is_some() {
+            return;
+        }
+        let delegate = cell.get_or_init(NotificationDelegate::new);
+        UNUserNotificationCenter::currentNotificationCenter().setDelegate(Some(ProtocolObject::from_ref(&**delegate)));
+    });
 }
 
 /// Registra (o vuelve a registrar, reemplazando los de AppKit) los dos manejadores.
