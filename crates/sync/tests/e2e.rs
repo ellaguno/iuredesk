@@ -438,17 +438,17 @@ async fn pop3_incremental_with_delete_policy() {
     p.deliver("u10", &msg(10, 0));
     e.handle.sync_now_wait("t1").await.unwrap();
     assert_eq!(e.store.count(ib).unwrap().total, 5);
-    // El aviso de correo nuevo se emite de forma asíncrona: puede llegar justo después de que
-    // `sync_now_wait` regrese (prueba intermitente con la máquina cargada). Se espera con tope.
+    // El aviso de correo nuevo se emite de forma asíncrona y puede llegar en uno o varios eventos
+    // (según cómo se agrupen las descargas): se suman con tope de tiempo.
     let mut count = 0;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while count == 0 && std::time::Instant::now() < deadline {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while count < 2 && std::time::Instant::now() < deadline {
         while let Ok(ev) = e.events.try_recv() {
             if let SyncEvent::NewMail { count: c, .. } = ev {
-                count = c;
+                count += c;
             }
         }
-        if count == 0 {
+        if count < 2 {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
     }
