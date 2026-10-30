@@ -1,6 +1,7 @@
 //! Cuerpos HTML: se pintan con `html-view` en el runtime de fondo y se suben como textura cuando
 //! están listos. Mientras tanto se ve el texto plano. Las imágenes remotas se bloquean hasta que
-//! el usuario pulsa «Mostrar»; entonces el motor las descarga y se vuelve a pintar.
+//! el usuario pulsa «Mostrar» (o Ajustes → Privacidad dice que se carguen solas, UX-5); entonces
+//! el motor las descarga (sin rastreadores) y se vuelve a pintar.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -114,6 +115,8 @@ pub struct HtmlCache {
     remote: HashMap<MessageId, Arc<HashMap<String, Bytes>>>,
     /// Descargas en curso.
     fetching: HashSet<MessageId>,
+    /// UX-5: imágenes de rastreo bloqueadas por mensaje (al descargar).
+    trackers: HashMap<MessageId, usize>,
     /// Lado máximo de textura de la GPU (0 = aún no se sabe).
     max_side: usize,
 }
@@ -243,10 +246,16 @@ impl HtmlCache {
     }
 
     /// El usuario pidió ver las imágenes remotas de `id`.
-    pub fn allow_remote(&mut self, session: &mut Session, id: MessageId, urls: Vec<String>) {
+    /// `html` sirve para no pedir los píxeles de rastreo declarados de 1×1 (UX-5).
+    pub fn allow_remote(&mut self, session: &mut Session, id: MessageId, urls: Vec<String>, html: &str) {
         if self.fetching.insert(id) {
-            session.fetch_remote(id.get(), urls);
+            session.fetch_remote(id.get(), urls, Some(html));
         }
+    }
+
+    /// UX-5: imágenes de rastreo que se bloquearon al descargar las de `id`.
+    pub fn trackers_blocked(&self, id: MessageId) -> usize {
+        self.trackers.get(&id).copied().unwrap_or(0)
     }
 
     /// ¿Se permitieron (y descargaron) las imágenes de `id`?
@@ -263,6 +272,10 @@ impl HtmlCache {
     pub fn on_fetched(&mut self, f: Fetched) {
         let id = MessageId(f.tag);
         self.fetching.remove(&id);
+        if self.trackers.len() >= 256 {
+            self.trackers.clear();
+        }
+        self.trackers.insert(id, f.blocked);
         let map: HashMap<String, Bytes> = f.items.into_iter().map(|(u, b)| (u, Bytes::from(b))).collect();
         if self.remote.len() >= MAX_REMOTE && !self.remote.contains_key(&id) {
             // Se olvida uno cualquiera: volver a verlo solo pide descargar otra vez.

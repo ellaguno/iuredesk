@@ -357,6 +357,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::Mail,
         "iurefficient crm case lead filter caso filtro",
     ),
+    c(
+        "mail.tab.iurefficient",
+        "Iurefficient tab",
+        "Pestaña Iurefficient",
+        "sparkle",
+        Group::Mail,
+        "iurefficient tab crm related pestaña relacionados casos oportunidades",
+    ),
     c("app.labels", "Labels and colors…", "Etiquetas y colores…", "tag", Group::App, "labels colors etiquetas colores"),
     c("app.rules", "Rules…", "Reglas…", "filter", Group::App, "rules filters sieve reglas filtros"),
     c(
@@ -557,6 +565,8 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
         "view.zoom_in" => Some(Chord::cmd("Plus")),
         "view.zoom_out" => Some(Chord::cmd("Minus")),
         "view.zoom_reset" => Some(Chord::cmd("Num0")),
+        // UX-5: Ctrl+Alt+I, «I» de Iurefficient.
+        "mail.tab.iurefficient" => Some(Chord::cmd_alt("I")),
         _ => None,
     };
     if common.is_some() {

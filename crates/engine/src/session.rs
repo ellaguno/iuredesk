@@ -11,6 +11,7 @@ mod assist_glue;
 mod cal;
 mod contacts;
 mod folders;
+mod images;
 mod iure;
 mod live;
 mod mailops;
@@ -283,6 +284,8 @@ pub enum Event {
 pub struct Fetched {
     pub tag: u64,
     pub items: Vec<(String, Vec<u8>)>,
+    /// UX-5: imágenes de rastreo que no se pidieron o se descartaron.
+    pub blocked: usize,
 }
 
 /// Paso inverso de una acción.
@@ -406,6 +409,8 @@ pub struct Session {
     calendars: Vec<Calendar>,
     events_cache: Option<((DateTime<Utc>, DateTime<Utc>), Vec<Occurrence>)>,
     data_gen: u64,
+    /// UX-5: caché de imágenes remotas (se crea al primer uso).
+    image_cache: Option<Arc<crate::remote_images::ImageCache>>,
     /// `Account::id` → id local.
     account_ids: HashMap<String, AccountId>,
     live: live::Live,
@@ -486,6 +491,7 @@ impl Session {
             calendars: Vec::new(),
             events_cache: None,
             data_gen: 0,
+            image_cache: None,
             account_ids: HashMap::new(),
             live: live::Live::default(),
             sync_options: cfg.sync,
@@ -1562,29 +1568,53 @@ impl Session {
     }
 
     /// Descarga en segundo plano los recursos remotos que el usuario decidió ver (imágenes de un
-    /// correo). Responde con [`Event::Custom`] y un [`Fetched`] con la misma `tag`. Acotado: 40
-    /// recursos, 5 MB cada uno, 10 s por petición, solo `http`/`https`.
-    pub fn fetch_remote(&mut self, tag: u64, urls: Vec<String>) -> JobId {
+    /// correo). Responde con [`Event::Custom`] y un [`Fetched`] con la misma `tag`. Acotado: 60
+    /// recursos, 5 MB cada uno, 10 s por petición, solo `http`/`https`. UX-5: sin rastreadores
+    /// ni píxeles (con `html`, también los declarados de 1×1) y con caché en memoria y disco.
+    pub fn fetch_remote(&mut self, tag: u64, urls: Vec<String>, html: Option<&str>) -> JobId {
+        use crate::remote_images::{FETCH_TIMEOUT, MAX_IMAGE_BYTES, filter_urls, is_pixel_image, is_tracker};
+        // UX-5: rastreadores conocidos y píxeles declarados no se piden nunca.
+        let (urls, mut blocked) = filter_urls(urls, html);
+        let cache = self.image_cache();
         self.bg.spawn(async move {
             let mut items = Vec::new();
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .user_agent(concat!("IureDesk/", env!("CARGO_PKG_VERSION")))
-                .build();
-            if let Ok(client) = client {
-                for url in urls.into_iter().filter(|u| u.starts_with("https://") || u.starts_with("http://")).take(40) {
-                    let Ok(resp) = client.get(&url).send().await else { continue };
-                    if !resp.status().is_success() || resp.content_length().is_some_and(|l| l > 5 * 1024 * 1024) {
-                        continue;
-                    }
-                    if let Ok(bytes) = resp.bytes().await
-                        && bytes.len() <= 5 * 1024 * 1024
-                    {
-                        items.push((url, bytes.to_vec()));
-                    }
+            let mut missing = Vec::new();
+            for url in urls {
+                match cache.get(&url) {
+                    Some(b) => items.push((url, b)),
+                    None => missing.push(url),
                 }
             }
-            JobOutput::Custom(Box::new(Fetched { tag, items }))
+            let client = reqwest::Client::builder()
+                .timeout(FETCH_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::limited(5))
+                .user_agent(concat!("IureDesk/", env!("CARGO_PKG_VERSION")))
+                .build();
+            if let (Ok(client), false) = (client, missing.is_empty()) {
+                for url in missing {
+                    let Ok(resp) = client.get(&url).send().await else { continue };
+                    // Una redirección hacia un rastreador tampoco se sigue mostrando.
+                    if is_tracker(resp.url().as_str()) {
+                        blocked = blocked.saturating_add(1);
+                        continue;
+                    }
+                    if !resp.status().is_success() || resp.content_length().is_some_and(|l| l > MAX_IMAGE_BYTES as u64)
+                    {
+                        continue;
+                    }
+                    let Ok(bytes) = resp.bytes().await else { continue };
+                    if bytes.len() > MAX_IMAGE_BYTES {
+                        continue;
+                    }
+                    if is_pixel_image(&bytes) {
+                        blocked = blocked.saturating_add(1);
+                        continue;
+                    }
+                    cache.put(&url, &bytes);
+                    items.push((url, bytes.to_vec()));
+                }
+            }
+            JobOutput::Custom(Box::new(Fetched { tag, items, blocked }))
         })
     }
 

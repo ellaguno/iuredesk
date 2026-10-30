@@ -15,6 +15,7 @@ use iuredesk_rules::category::{self, Category, CategoryReason};
 use iuredesk_rules::facts::{Facts, Headers};
 use iuredesk_rules::focus::Signals;
 use iuredesk_rules::followup::{FollowUp, FollowUpBook};
+use iuredesk_rules::iure_mail::InstanceKind;
 use iuredesk_rules::managesieve;
 use iuredesk_rules::sieve::{self, GenCtx};
 use iuredesk_rules::snooze::{self, SnoozeBook, SnoozePreset, Snoozed};
@@ -30,6 +31,8 @@ use crate::{EngineError, JobOutput, Result};
 
 /// Mensajes por llegada que se procesan (el resto, en la siguiente).
 const MAX_ARRIVAL: usize = 500;
+/// UX-5: mensajes de la bandeja que se revisan para la pestaña «Iurefficient».
+const MAX_IURE_SCAN: usize = 2_000;
 /// Mensajes por «Aplicar a la carpeta».
 const MAX_APPLY: usize = 5_000;
 /// Clasificaciones recordadas (con cabeceras) entre sesiones.
@@ -62,6 +65,7 @@ pub(crate) fn handles(base: &str) -> bool {
             | "mail.category"
             | "mail.always_category"
             | "mail.iure_only"
+            | "mail.tab.iurefficient"
             | "app.rules"
             | "app.vacation"
             | "app.labels"
@@ -90,6 +94,10 @@ pub enum IureKind {
     Opportunity,
     Lead,
     Ticket,
+    /// UX-5: tarea de Iurefficient que se refiere al correo.
+    Task,
+    /// UX-5: aviso o mención que envió la propia instancia.
+    Notice,
 }
 
 impl IureKind {
@@ -102,6 +110,8 @@ impl IureKind {
             IureKind::Opportunity => Text::new("Opportunity", "Oportunidad"),
             IureKind::Lead => Text::new("Lead", "Lead"),
             IureKind::Ticket => Text::new("Ticket", "Ticket"),
+            IureKind::Task => Text::new("Task", "Tarea"),
+            IureKind::Notice => Text::new("Iurefficient notice", "Aviso de Iurefficient"),
         }
     }
 }
@@ -118,7 +128,12 @@ impl IureBadge {
     fn new(kind: IureKind, what: &str) -> Self {
         let k = kind.label();
         let what: String = what.chars().take(120).collect();
-        IureBadge { kind, tip: Text::new(format!("{}: {what}", k.en), format!("{}: {what}", k.es)) }
+        // «Ticket #7 asignado» ya dice el tipo: sin «Ticket: Ticket #7…».
+        let lower = what.to_lowercase();
+        let tip = |label: &str| {
+            if lower.starts_with(&label.to_lowercase()) { what.clone() } else { format!("{label}: {what}") }
+        };
+        IureBadge { kind, tip: Text::new(tip(&k.en), tip(&k.es)) }
     }
 }
 
@@ -226,7 +241,12 @@ pub(crate) struct RulesState {
     /// Filtro rápido «Solo Iurefficient».
     iure_only: bool,
     badges: HashMap<MessageId, Option<IureBadge>>,
-    badge_gen: (u64, usize),
+    badge_gen: (u64, u64, usize),
+    /// UX-5: pestaña «Iurefficient» elegida (filtro transversal: los mensajes siguen en su
+    /// categoría).
+    iure_tab: bool,
+    /// UX-5: (total, no leídos) con relación en Iurefficient en la vista de la bandeja.
+    iure_counts: (usize, usize),
     /// Etiquetas vistas en la lista (para Ajustes → Etiquetas).
     seen_labels: std::collections::BTreeSet<String>,
     signals: Option<Signals>,
@@ -263,7 +283,9 @@ impl Default for RulesState {
             hints_at: None,
             iure_only: false,
             badges: HashMap::new(),
-            badge_gen: (u64::MAX, 0),
+            badge_gen: (u64::MAX, u64::MAX, 0),
+            iure_tab: false,
+            iure_counts: (0, 0),
             seen_labels: std::collections::BTreeSet::new(),
             signals: None,
             woke: Vec::new(),
@@ -797,10 +819,45 @@ impl Session {
 
     /// Cambia de pestaña.
     pub fn set_category_tab(&mut self, c: Category) {
-        if self.rules.tab != c {
+        if self.rules.tab != c || self.rules.iure_tab {
             self.rules.tab = c;
+            self.rules.iure_tab = false;
             self.selection.clear();
             self.focused = None;
+            self.rebuild_rows();
+        }
+    }
+
+    /// UX-5: la pestaña «Iurefficient» (la primera) se ve: hay pestañas y hay sesión de
+    /// Iurefficient o algún mensaje con relación.
+    pub fn iure_tab_shown(&mut self) -> bool {
+        self.category_tabs_shown() && (self.iure_visible() || self.rules.iure_counts.0 > 0)
+    }
+
+    /// UX-5: ¿está elegida la pestaña «Iurefficient»?
+    pub fn iure_tab(&self) -> bool {
+        self.rules.iure_tab
+    }
+
+    /// UX-5: (total, no leídos) de la pestaña «Iurefficient».
+    pub fn iure_tab_counts(&self) -> (usize, usize) {
+        self.rules.iure_counts
+    }
+
+    /// UX-5: elige la pestaña «Iurefficient».
+    pub fn set_iure_tab(&mut self) {
+        if !self.rules.iure_tab {
+            self.rules.iure_tab = true;
+            self.selection.clear();
+            self.focused = None;
+            self.rebuild_rows();
+        }
+    }
+
+    /// UX-5: llegó una relación nueva (contexto de la instancia): se rehace la lista si la pestaña
+    /// «Iurefficient» puede cambiar.
+    pub(crate) fn iure_relations_changed(&mut self) {
+        if self.rules.book.categories.enabled && self.focus_view() {
             self.rebuild_rows();
         }
     }
@@ -919,21 +976,38 @@ impl Session {
                 }
             }
             let flags = self.store.flags_of(&head).unwrap_or_default();
+            // UX-5: relaciones con Iurefficient (pestaña transversal), con su propio tope.
+            let related = self.iure_related(&head);
+            let mut iure_counts = (0usize, 0usize);
+            let iure_tab = self.rules.iure_tab;
             for (i, id) in out.into_iter().enumerate() {
                 let c = self.rules.focus_cache.get(&id).copied().unwrap_or(Category::Primary);
                 let k = Category::ALL.iter().position(|x| *x == c).unwrap_or(0);
+                let unread = flags.get(i).copied().flatten().is_some_and(|f| !f.seen);
                 if let Some(slot) = counts.get_mut(k) {
                     slot.0 += 1;
-                    if flags.get(i).copied().flatten().is_some_and(|f| !f.seen) {
+                    if unread {
                         slot.1 += 1;
                     }
                 }
-                if c == tab {
+                let rel = related.contains(&id);
+                if rel {
+                    iure_counts.0 += 1;
+                    if unread {
+                        iure_counts.1 += 1;
+                    }
+                }
+                if if iure_tab { rel } else { c == tab } {
                     keep.push(id);
                 }
             }
             self.rules.tab_counts = counts;
+            self.rules.iure_counts = iure_counts;
             out = keep;
+            // Sin sesión ni relaciones la pestaña desaparece: se vuelve a la categoría.
+            if iure_tab && iure_counts.0 == 0 && !self.iure_visible() {
+                self.rules.iure_tab = false;
+            }
         }
         // Lo que volvió de posponer va arriba hasta que se lea.
         if !self.rules.woke.is_empty() {
@@ -1038,15 +1112,42 @@ impl Session {
     }
 
     fn compute_badge(&mut self, id: MessageId) -> Option<IureBadge> {
-        if !self.iure_visible() {
-            return None;
-        }
         let env = self.store.get_envelope(id).ok().flatten()?;
+        self.badge_for(&env)
+    }
+
+    /// UX-5: mensajes de `ids` (los primeros [`MAX_IURE_SCAN`]) con relación en Iurefficient. Los
+    /// sobres que faltan se leen en lote; el resultado queda en la caché de insignias.
+    fn iure_related(&mut self, ids: &[MessageId]) -> HashSet<MessageId> {
+        let current = self.iure_badge_gen();
+        if current != self.rules.badge_gen {
+            self.rules.badges.clear();
+            self.rules.badge_gen = current;
+        }
+        let head = ids.get(..ids.len().min(MAX_IURE_SCAN)).unwrap_or_default();
+        let need: Vec<MessageId> = head.iter().filter(|id| !self.rules.badges.contains_key(id)).copied().collect();
+        if !need.is_empty() {
+            if self.rules.badges.len().saturating_add(need.len()) > 50_000 {
+                self.rules.badges.clear();
+            }
+            for env in self.store.get_envelopes(&need).unwrap_or_default().into_iter().flatten() {
+                let b = self.badge_for(&env);
+                self.rules.badges.insert(env.id, b);
+            }
+        }
+        head.iter().filter(|id| self.rules.badges.get(id).is_some_and(Option::is_some)).copied().collect()
+    }
+
+    /// Insignia de un sobre, por orden: vínculo guardado → correo de la propia instancia →
+    /// contexto ya conocido del remitente (oportunidad, caso, ticket, cliente/lead) → tarea que
+    /// se refiere al correo → número de caso en el asunto. Sin red.
+    pub(crate) fn badge_for(&mut self, env: &MessageEnvelope) -> Option<IureBadge> {
         if let Some(mid) = env.message_id.as_deref().filter(|m| !m.trim().is_empty())
             && let Some(l) = self.store.email_links(mid).ok().and_then(|v| v.into_iter().last())
         {
             let kind = match l.kind.as_str() {
-                "case" | "task" => IureKind::Case,
+                "case" | "project" => IureKind::Case,
+                "task" => IureKind::Task,
                 "client" => IureKind::Client,
                 "lead" => IureKind::Lead,
                 "opportunity" => IureKind::Opportunity,
@@ -1055,7 +1156,23 @@ impl Session {
             };
             return Some(IureBadge::new(kind, &l.label));
         }
-        if let Some(ctx) = self.iure_known_context(&env) {
+        let host = self.iure_host();
+        if let Some(hit) = iuredesk_rules::iure_mail::from_instance(env, None, host.as_deref()) {
+            let kind = match hit.kind {
+                InstanceKind::Ticket => IureKind::Ticket,
+                InstanceKind::Task => IureKind::Task,
+                InstanceKind::Opportunity => IureKind::Opportunity,
+                InstanceKind::Lead => IureKind::Lead,
+                InstanceKind::Case => IureKind::Case,
+                InstanceKind::Notice => IureKind::Notice,
+            };
+            return Some(IureBadge::new(kind, &hit.what));
+        }
+        // Lo que sigue necesita una sesión (o la hubo): el contexto y las tareas de la instancia.
+        if !self.iure_visible() {
+            return None;
+        }
+        if let Some(ctx) = self.iure_known_context(env) {
             if let Some(d) = ctx.deals.first() {
                 let kind = if d.kind == crate::iure::TargetKind::Lead { IureKind::Lead } else { IureKind::Opportunity };
                 let mut what = d.organization.clone().unwrap_or_else(|| d.name.clone());
@@ -1077,6 +1194,9 @@ impl Session {
                 };
                 return Some(IureBadge::new(kind, &p.name));
             }
+        }
+        if let Some(title) = self.iure_task_for(env) {
+            return Some(IureBadge::new(IureKind::Task, &title));
         }
         crate::context::case_refs(&env.subject).into_iter().next().map(|r| IureBadge::new(IureKind::Case, &r))
     }
@@ -1640,6 +1760,10 @@ impl Session {
                 _ => Ok(Outcome::Notice(Notice::info("Open a folder first.", "Primero abre una carpeta."))),
             },
             "mail.unsubscribe" => Ok(Outcome::Rules("unsubscribe".into())),
+            "mail.category" if arg == Some("iurefficient") => {
+                self.set_iure_tab();
+                Ok(Outcome::Done)
+            }
             "mail.category" => match arg.and_then(Category::from_key) {
                 Some(c) => {
                     self.set_category_tab(c);
@@ -1647,6 +1771,10 @@ impl Session {
                 }
                 // Sin argumento: la pestaña siguiente.
                 None => {
+                    if self.rules.iure_tab {
+                        self.set_category_tab(Category::Primary);
+                        return Ok(Outcome::Done);
+                    }
                     let k = Category::ALL.iter().position(|c| *c == self.rules.tab).unwrap_or(0);
                     let next = Category::ALL.get((k + 1) % Category::ALL.len()).copied().unwrap_or_default();
                     self.set_category_tab(next);
@@ -1660,6 +1788,17 @@ impl Session {
             "mail.iure_only" => {
                 self.set_iure_only(!self.rules.iure_only);
                 Ok(Outcome::Done)
+            }
+            "mail.tab.iurefficient" => {
+                if self.iure_tab_shown() {
+                    self.set_iure_tab();
+                    Ok(Outcome::Done)
+                } else {
+                    Ok(Outcome::Notice(Notice::info(
+                        "Open the inbox with categories and connect Iurefficient first.",
+                        "Primero abre la bandeja con categorías y conecta Iurefficient.",
+                    )))
+                }
             }
             "app.labels" => Ok(Outcome::Rules("labels".into())),
             "app.rules" => Ok(Outcome::Rules("rules".into())),

@@ -34,6 +34,30 @@ API (`src/lib.rs`):
 Ejemplo: `cargo run --release -p iuredesk-html-view --example render_corpus -- <dir> [--width 800]
 [--scale 2] [--dark] [--only texto]`. Pinta cada correo a PNG e imprime tiempos.
 
+## Imágenes remotas (UX-5)
+
+`html-view` nunca abre conexiones: lista en `blocked` lo remoto y pinta solo lo que le da un
+`Fetcher`. La política vive en el motor (`iuredesk_engine::remote_images`):
+
+- **Cuándo** (Ajustes → Privacidad, `prefs.remote_images`): *Nunca (preguntar)* por omisión;
+  *Solo de contactos y remitentes de confianza* (contactos, direcciones propias y remitentes con
+  relación en Iurefficient); *Siempre*. La lista de permitidos (`prefs.image_senders`,
+  `prefs.image_domains`; un dominio cubre sus subdominios) vale en cualquier modo y se llena desde
+  el aviso del correo («Mostrar siempre de este remitente», «…de <dominio>»; el dominio no se
+  ofrece para correo público como Gmail u Outlook).
+- **Rastreo**, aun en *Siempre*: no se piden las URL de una lista corta de servicios de «correo
+  abierto» (`TRACKERS`: Mailtrack, Yesware, Bananatag, Streak, `list-manage.com/track/open`,
+  `sendgrid.net/wf/open`, `mandrillapp.com/track/open`, Google Analytics, DoubleClick…), ni rutas
+  `…/open.gif`/`…/pixel.gif`, ni las `<img>` declaradas de 1×1, 0×0 u ocultas
+  (`display:none`, `visibility:hidden`). Lo descargado de 2×2 px o menos (cabecera GIF, PNG, JPEG,
+  WebP, BMP) se descarta, y una redirección hacia un rastreador también. La lista es pequeña a
+  propósito: bloquea píxeles, no remitentes; las imágenes de contenido de un boletín se ven.
+- **Descarga y caché**: `Session::fetch_remote` en el runtime de fondo (reqwest + rustls, 10 s y
+  5 MB por imagen, 60 por correo, 5 redirecciones); caché en memoria (32 MB) y en disco
+  (`<caché>/iuredesk/remote-images/<sha256 de la URL>`, carpeta 0700 y archivos 0600, 192 MB,
+  30 días; con `IUREDESK_DATA_DIR`, dentro de esa carpeta; las pruebas y el buzón de ejemplo solo
+  usan memoria). La interfaz nunca espera: vuelve a pintar cuando llega `Fetched`.
+
 ## Seguridad
 
 - Blitz no ejecuta JavaScript. Aun así el saneador (por tokens, con los mismos estados de texto

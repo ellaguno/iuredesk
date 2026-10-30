@@ -25,6 +25,7 @@ pub mod migrate;
 pub mod onboarding;
 pub mod open;
 pub mod prefs;
+pub mod remote_images;
 pub mod security;
 pub mod session;
 pub mod suite;

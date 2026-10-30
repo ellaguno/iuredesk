@@ -538,6 +538,7 @@ impl DeskApp {
             "general" => crate::settings::Section::General,
             "appearance" => crate::settings::Section::Appearance,
             "mail" => crate::settings::Section::Mail,
+            "privacy" => crate::settings::Section::Privacy,
             "integrations" => crate::settings::Section::Integrations,
             "rules" => crate::settings::Section::Rules,
             "labels" => crate::settings::Section::Labels,

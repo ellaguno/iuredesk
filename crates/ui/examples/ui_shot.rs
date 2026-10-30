@@ -198,6 +198,67 @@ fn main() -> Result<(), String> {
     session.poll();
     if session.module == Module::Mail && !onboarding {
         let html = args.iter().any(|a| a == "--html");
+        // UX-5: avisos de la propia instancia (`demo.iurefficient.com` en el ejemplo) para la
+        // pestaña «Iurefficient» y la cápsula.
+        if args.iter().any(|a| a == "--iure-tab") {
+            let base = session.rows().first().map(|r| r.id).and_then(|id| session.envelope(id).cloned());
+            if let Some(base) = base {
+                let notices = [
+                    ("[Iurefficient] Ticket #482 asignado: no llega la factura", "t482", 5),
+                    ("[Iurefficient] Laura te mencionó en «Contrato marco ACME»", "m17", 25),
+                    ("[Iurefficient] Nueva tarea: revisar anexo B del caso 241/2026", "k9", 50),
+                ];
+                for (subject, key, mins) in notices {
+                    let mut env = base.clone();
+                    env.id = iuredesk_model::MessageId::UNASSIGNED;
+                    env.thread = None;
+                    env.remote_id = Some(format!("ux5-{key}"));
+                    env.message_id = Some(format!("<{key}@demo.iurefficient.com>"));
+                    env.in_reply_to = None;
+                    env.references = Vec::new();
+                    env.from = vec![iuredesk_model::Mailbox {
+                        name: Some("Iurefficient".into()),
+                        addr: "noreply@demo.iurefficient.com".into(),
+                    }];
+                    env.reply_to = Vec::new();
+                    env.subject = subject.into();
+                    env.preview = "Abre Iurefficient para ver el detalle.".into();
+                    env.date = now - chrono::Duration::minutes(mins);
+                    env.flags = Default::default();
+                    env.has_attachments = false;
+                    env.attachments = Vec::new();
+                    if let Err(e) = session.store().put_message(env, b"Subject: aviso\r\n\r\nAbre Iurefficient.") {
+                        eprintln!("aviso: {e}");
+                    }
+                }
+            }
+            session.set_iure_tab();
+            session.rebuild_rows();
+            let start = Instant::now();
+            while !session.is_idle() && start.elapsed() < Duration::from_secs(30) {
+                session.poll();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            session.poll();
+        }
+        if let Some(tab) = flag("--tab") {
+            let _ = session.run(&format!("mail.category:{tab}"));
+            let start = Instant::now();
+            while !session.is_idle() && start.elapsed() < Duration::from_secs(30) {
+                session.poll();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            session.poll();
+        }
+        if let Some(list) = flag("--image-allow") {
+            for v in list.split(',') {
+                if v.contains('@') {
+                    session.allow_images_sender(v);
+                } else {
+                    session.allow_images_domain(v);
+                }
+            }
+        }
         let rows: Vec<_> = session.rows().iter().take(400).copied().collect();
         let invite = args.iter().any(|a| a == "--invite");
         let with_files = args.iter().any(|a| a == "--attachments");
@@ -208,6 +269,9 @@ fn main() -> Result<(), String> {
                     return session
                         .envelope(r.id)
                         .is_some_and(|e| e.attachments.iter().any(|a| a.filename.ends_with(".png")));
+                }
+                if args.iter().any(|a| a == "--iure-tab") {
+                    return session.envelope(r.id).is_some_and(|e| e.subject.starts_with("[Iurefficient] Ticket"));
                 }
                 if invite {
                     return session.envelope(r.id).is_some_and(|e| e.subject.starts_with("Invitación:"));

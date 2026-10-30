@@ -73,6 +73,11 @@ impl Headers {
         self.0.iter().filter(move |(k, _)| *k == n).map(|(_, v)| v.as_str())
     }
 
+    /// Nombres de las cabeceras (en minúsculas, en orden).
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|(k, _)| k.as_str())
+    }
+
     /// `true` si existe.
     pub fn has(&self, name: &str) -> bool {
         self.get(name).is_some()
