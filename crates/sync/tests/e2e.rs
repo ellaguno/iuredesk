@@ -433,7 +433,7 @@ async fn pop3_incremental_with_delete_policy() {
     let ib = inbox(&e.store);
     assert_eq!(e.store.count(ib).unwrap().total, 3);
     assert!(p.uidls().is_empty(), "sin copia en el servidor");
-    while e.events.try_recv().is_ok() {}
+    while matches!(e.events.try_recv(), Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_))) {}
     p.deliver("u9", &msg(9, 0));
     p.deliver("u10", &msg(10, 0));
     e.handle.sync_now_wait("t1").await.unwrap();
@@ -443,9 +443,13 @@ async fn pop3_incremental_with_delete_policy() {
     let mut count = 0;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while count < 2 && std::time::Instant::now() < deadline {
-        while let Ok(ev) = e.events.try_recv() {
-            if let SyncEvent::NewMail { count: c, .. } = ev {
-                count += c;
+        // Con la máquina cargada el canal de avisos puede rezagarse (`Lagged`): se sigue leyendo
+        // en vez de cortar, que era lo que dejaba la prueba en 0 de vez en cuando.
+        loop {
+            match e.events.try_recv() {
+                Ok(SyncEvent::NewMail { count: c, .. }) => count += c,
+                Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {}
+                Err(_) => break,
             }
         }
         if count < 2 {
