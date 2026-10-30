@@ -73,6 +73,9 @@ pub struct Wizard {
     pub reauth: Option<Account>,
     /// Formulario de «Configurar manualmente».
     pub manual: Option<ManualSetup>,
+    /// Dirección (normalizada) para la que se escribieron el formulario manual y la contraseña:
+    /// «Atrás» los conserva y solo otra dirección empieza de cero (UX-4).
+    pub(crate) typed_for: Option<String>,
     /// Id de la cuenta que ya tiene esta dirección (paso [`WizardStep::Exists`]).
     pub existing: Option<String>,
     /// Por qué falló el último inicio de sesión con el navegador (decide los botones).
@@ -106,6 +109,12 @@ impl Wizard {
     /// Enlace del inicio de sesión en curso, si ya está listo.
     pub fn oauth_link(&self) -> Option<String> {
         self.oauth_link.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// ¿Hay algo escrito que se perdería al cerrar el asistente (formulario manual, contraseña) o
+    /// un trabajo en curso? Entonces solo se cierra con su botón, no con Esc ni un clic fuera.
+    pub fn has_work_to_lose(&self) -> bool {
+        self.manual.is_some() || !self.password.is_empty() || self.job.is_some()
     }
 
     /// `true` si el botón principal se puede pulsar.

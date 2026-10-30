@@ -135,8 +135,16 @@ impl Background {
     {
         let reply = self.reply();
         let id = reply.id;
+        let task = self.rt.spawn(fut);
+        // Un pánico dentro del futuro no debe dejar la UI esperando para siempre (UX-4: la prueba
+        // del formulario manual se quedaba «Probando…» y solo quedaba «Atrás»).
         self.rt.spawn(async move {
-            let out = fut.await;
+            let out = task.await.unwrap_or_else(|_| {
+                JobOutput::Engine(crate::session::EngineJob::Failed(crate::lang::Text::new(
+                    "Something went wrong in the background. Try again.",
+                    "Algo falló en segundo plano. Inténtalo de nuevo.",
+                )))
+            });
             reply.send(out);
         });
         id
@@ -208,6 +216,24 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert_eq!(got.len(), 1);
+        assert_eq!(bg.pending(), 0);
+    }
+
+    /// UX-4: un futuro que entra en pánico también responde (antes la prueba se quedaba colgada).
+    #[test]
+    fn panicking_future_still_reports() {
+        let mut bg = Background::new().unwrap();
+        #[allow(clippy::panic)]
+        let id = bg.spawn(async { panic!("boom") });
+        let start = std::time::Instant::now();
+        let mut got = Vec::new();
+        while got.is_empty() && start.elapsed().as_secs() < 10 {
+            got.extend(bg.poll());
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, id);
+        assert!(matches!(got[0].output, JobOutput::Engine(crate::session::EngineJob::Failed(_))));
         assert_eq!(bg.pending(), 0);
     }
 }

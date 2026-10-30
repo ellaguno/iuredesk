@@ -65,7 +65,10 @@ pub fn modal(app: &mut DeskApp, ctx: &Context) {
         ui.add_space(10.0);
         body(app, ui);
     });
-    if resp.should_close() || close {
+    // UX-4: con algo escrito (formulario manual, contraseña) o una prueba en curso, Esc —que
+    // también suelta el foco de un campo— o un clic fuera no borran todo; solo la ✕ cierra.
+    let keep = app.session.wizard.as_ref().is_some_and(|w| w.has_work_to_lose());
+    if close || (resp.should_close() && !keep) {
         app.session.wizard_close();
     }
 }
@@ -110,12 +113,14 @@ fn body(app: &mut DeskApp, ui: &mut Ui) {
             ui.add_space(12.0);
             let mut submit = false;
             if let Some(w) = app.session.wizard.as_mut() {
-                ui.label(RichText::new(pick("Email address", "Correo electrónico")).color(c.text));
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut w.email)
-                        .hint_text(pick("you@example.com", "tu@ejemplo.com"))
-                        .desired_width(f32::INFINITY),
-                );
+                let l = ui.label(RichText::new(pick("Email address", "Correo electrónico")).color(c.text));
+                let r = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut w.email)
+                            .hint_text(pick("you@example.com", "tu@ejemplo.com"))
+                            .desired_width(f32::INFINITY),
+                    )
+                    .labelled_by(l.id);
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     submit = true;
                 }
