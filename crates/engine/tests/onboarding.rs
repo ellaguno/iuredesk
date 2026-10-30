@@ -521,3 +521,41 @@ fn back_from_manual_keeps_the_form_for_the_same_address() {
     assert!(w.password.is_empty());
     assert_eq!(w.manual.as_ref().unwrap().incoming.host, "mail.otro.example");
 }
+
+/// Proveedor de tokens que anota cada `invalidate`.
+#[derive(Default)]
+struct RecordingTokens(std::sync::Mutex<Vec<String>>);
+
+impl iuredesk_oauth::TokenProvider for RecordingTokens {
+    fn access_token<'a>(
+        &'a self,
+        _: &'a Account,
+        _: iuredesk_oauth::TokenAudience,
+    ) -> iuredesk_oauth::BoxFuture<'a, Result<String, iuredesk_oauth::Error>> {
+        Box::pin(async { Ok("viejo".to_string()) })
+    }
+    fn invalidate(&self, account_id: &str) {
+        self.0.lock().unwrap().push(account_id.to_string());
+    }
+}
+
+/// Tras volver a iniciar sesión con OAuth, el token de acceso en memoria (con los permisos
+/// viejos, p. ej. sin contactos) se descarta para que se pida uno con los permisos nuevos.
+#[test]
+fn oauth_reauth_invalidates_the_cached_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _) = session(dir.path(), &[account("acct1-x", "ana@gmail.com")]);
+    let tokens = Arc::new(RecordingTokens::default());
+    s.set_token_provider(tokens.clone());
+    s.reauth_account("acct1-x");
+    assert_eq!(step(&s), Some(WizardStep::Provider));
+    s.wizard.as_mut().unwrap().oauth_ready = true;
+    let url = token_server(
+        200,
+        r#"{"access_token":"nuevo","token_type":"Bearer","expires_in":3600,"refresh_token":"r1","scope":"openid email"}"#,
+    );
+    s.wizard_oauth_with(Ok(fake_google(&url)), Some(browser_returning("code=abc")), Duration::from_secs(20));
+    wait(&mut s, "inicio de sesión", |s| step(s) != Some(WizardStep::Working));
+    assert_eq!(step(&s), Some(WizardStep::Done), "{:?}", s.wizard.as_ref().and_then(|w| w.message.clone()));
+    assert!(tokens.0.lock().unwrap().iter().any(|id| id == "acct1-x"), "{:?}", tokens.0.lock().unwrap());
+}
