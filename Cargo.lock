@@ -3700,6 +3700,7 @@ dependencies = [
  "iuredesk-sync",
  "iurefficient-connect",
  "mail-parser",
+ "proptest",
  "reqwest",
  "serde",
  "serde_json",
@@ -3985,6 +3986,7 @@ dependencies = [
  "open",
  "rfd",
  "tempfile",
+ "zbus 5.19.0",
 ]
 
 [[package]]

@@ -12,6 +12,7 @@
 )]
 
 pub mod assist;
+pub mod attachments;
 pub mod background;
 pub mod body;
 pub mod calendar;
@@ -47,7 +48,7 @@ pub use iuredesk_pim_sync::SeriesScope;
 pub use iuredesk_rules;
 pub use iuredesk_sync;
 pub use lang::{Text, pick};
-pub use prefs::{DensityPref, Prefs, ShortcutScheme, StartPref, ThemePref};
+pub use prefs::{ContextLayout, DensityPref, Prefs, ShortcutScheme, StartPref, ThemePref};
 pub use session::{
     AccountRow, AccountSync, CalState, Event, Fetched, FolderSel, IurePanel, IureSetup, LeadSuggestions, ListRow,
     LoginState, Module, Notice, NoticeKind, OfflineTransport, Outcome, PimBackend, Session, SessionConfig, SyncStatus,

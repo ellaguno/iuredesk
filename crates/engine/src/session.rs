@@ -218,6 +218,9 @@ pub enum Outcome {
     /// ventanas (`rules`, `vacation`, `snooze`, `followup`, `rule_from_message`, `unsubscribe`,
     /// `open_url:<url>`).
     Rules(String),
+    /// UX-3: cambio de la vista que solo la UI sabe hacer (`mail.open_window`,
+    /// `view.reading_focus`, `view.context_panel`).
+    View(String),
 }
 
 /// Resultados de trabajos de fondo que interpreta la sesión.
@@ -1128,7 +1131,9 @@ impl Session {
     pub fn is_enabled(&self, id: &str) -> bool {
         let base = id.split_once(':').map_or(id, |(b, _)| b);
         match base {
-            "mail.reply" | "mail.reply_all" | "mail.forward" => self.focused.is_some(),
+            "mail.reply" | "mail.reply_all" | "mail.forward" | "mail.open_window" | "view.reading_focus" => {
+                self.focused.is_some()
+            }
             "mail.edit_draft" => self.focused.is_some_and(|m| self.is_draft(m)),
             "notes.delete" | "notes.open_editor" => self.note_focus.is_some(),
             "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
@@ -1244,6 +1249,20 @@ impl Session {
                     )));
                 }
                 Ok(Outcome::Done)
+            }
+            "mail.open_window" | "view.reading_focus" | "view.context_panel" => Ok(Outcome::View(base.to_string())),
+            "view.zoom_in" | "view.zoom_out" | "view.zoom_reset" => {
+                let dir = match base {
+                    "view.zoom_in" => 1,
+                    "view.zoom_out" => -1,
+                    _ => 0,
+                };
+                let pct = self.prefs.step_reading_zoom(dir);
+                self.save_prefs();
+                Ok(Outcome::Notice(Notice::info(
+                    format!("Message zoom: {pct} %"),
+                    format!("Zoom del mensaje: {pct} %"),
+                )))
             }
             "app.palette" => Ok(Outcome::OpenPalette),
             "app.add_account" => {

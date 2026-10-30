@@ -801,6 +801,31 @@ fn mail(app: &mut DeskApp, ui: &mut Ui) {
         app.session.prefs.show_today = today;
         app.session.save_prefs();
     }
+    // UX-3: dónde va el contexto (Iurefficient, contacto).
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(pick("Context panel", "Panel contextual")).color(c.text));
+        let cur = app.session.prefs.context_layout;
+        egui::ComboBox::from_id_salt("context-layout").selected_text(cur.label()).show_ui(ui, |ui| {
+            for l in iuredesk_engine::ContextLayout::ALL {
+                if ui.selectable_label(cur == l, l.label()).clicked() && cur != l {
+                    app.session.prefs.context_layout = l;
+                    app.session.save_prefs();
+                }
+            }
+        });
+    });
+    muted(
+        ui,
+        pick(
+            "Automatic: a column on wide windows, a compact strip under the header below 1300 px.",
+            "Automático: columna en ventanas anchas y franja compacta bajo la cabecera por debajo de 1300 px.",
+        ),
+    );
+    let mut collapsed = app.session.prefs.context_collapsed;
+    if ui.checkbox(&mut collapsed, pick("Collapse the context column", "Plegar la columna de contexto")).changed() {
+        app.session.prefs.context_collapsed = collapsed;
+        app.session.save_prefs();
+    }
     if send_prefs {
         app.session.apply_send_prefs();
     }

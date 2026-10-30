@@ -4,7 +4,12 @@
 //!  [--module today|mail|calendar|contacts|notes|tasks|assistant|onboarding|provider|manual|duplicate] [--at HH:MM] [--palette[=texto]]
 //!  [--html] [--month] [--view day|agenda|week|work_week|month] [--editor] [--invite] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]
 //!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]
-//!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]`
+//!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]
+//!  [--reader] [--focus] [--context-collapsed] [--strip] [--attachments [--attachments-menu]]`
+//!
+//! UX-3: `--reader` abre el mensaje en su ventana (sin pantalla, egui la dibuja dentro de la
+//! principal); `--attachments` elige un mensaje con adjuntos y `--attachments-menu` abre el menú
+//! del primero.
 //!
 //! Por omisión la ventana lleva la barra de título integrada con botones al estilo Adwaita;
 //! `--native-decorations` la muestra como queda con la barra del sistema (sin botones).
@@ -195,9 +200,15 @@ fn main() -> Result<(), String> {
         let html = args.iter().any(|a| a == "--html");
         let rows: Vec<_> = session.rows().iter().take(400).copied().collect();
         let invite = args.iter().any(|a| a == "--invite");
+        let with_files = args.iter().any(|a| a == "--attachments");
         let pick = rows
             .iter()
             .find(|r| {
+                if with_files {
+                    return session
+                        .envelope(r.id)
+                        .is_some_and(|e| e.attachments.iter().any(|a| a.filename.ends_with(".png")));
+                }
                 if invite {
                     return session.envelope(r.id).is_some_and(|e| e.subject.starts_with("Invitación:"));
                 }
@@ -329,6 +340,15 @@ fn main() -> Result<(), String> {
     if let Some(q) = args.iter().find_map(|a| a.strip_prefix("--palette")) {
         app.palette.open_with(q.strip_prefix('=').unwrap_or(""));
     }
+    // UX-3
+    if args.iter().any(|a| a == "--context-collapsed") {
+        app.session.prefs.context_collapsed = true;
+    }
+    if args.iter().any(|a| a == "--strip") {
+        app.session.prefs.context_layout = iuredesk_engine::ContextLayout::Strip;
+    }
+    let reader = args.iter().any(|a| a == "--reader");
+    let focus = args.iter().any(|a| a == "--focus");
 
     let mut harness = Harness::builder()
         .with_size(vec2(w, h))
@@ -361,6 +381,40 @@ fn main() -> Result<(), String> {
         }
     }
     harness.run_steps(2);
+    // UX-3: con la lista ya cargada, abrir la ventana de lectura o el modo enfocado.
+    let later = |h: &mut Harness<'_, DeskApp>| {
+        let start = Instant::now();
+        let mut quiet = 0;
+        while start.elapsed() < Duration::from_secs(60) {
+            h.run_steps(1);
+            if h.state().is_settled() {
+                quiet += 1;
+                if quiet > 6 {
+                    break;
+                }
+            } else {
+                quiet = 0;
+                std::thread::sleep(Duration::from_millis(15));
+            }
+        }
+        h.run_steps(2);
+    };
+    if reader {
+        harness.state_mut().demo_reader_window();
+        later(&mut harness);
+    }
+    if focus {
+        let ctx = harness.ctx.clone();
+        harness.state_mut().run(&ctx, "view.reading_focus");
+        later(&mut harness);
+    }
+    if args.iter().any(|a| a == "--attachments-menu") {
+        use egui_kittest::kittest::Queryable;
+        if let Some(n) = harness.query_all_by_label_contains("Adjunto ").next() {
+            n.click_secondary();
+        }
+        later(&mut harness);
+    }
     let mut image = harness.render()?;
     if let Some(ch) = flag("--crop-height").and_then(|v| v.parse::<u32>().ok()) {
         let (iw, ih) = image.dimensions();

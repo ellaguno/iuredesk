@@ -46,6 +46,7 @@ reqwest = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macros"] }
 
 [dev-dependencies]
+proptest = { workspace = true }
 tempfile = { workspace = true }
 iuredesk-imap = { workspace = true, features = ["test-server"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macros", "net", "io-util"] }

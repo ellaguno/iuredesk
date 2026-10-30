@@ -96,6 +96,8 @@ fn key_label(key: &str, shift: bool) -> String {
         "Enter" => "Enter".into(),
         "Escape" => "Esc".into(),
         "Slash" => "/".into(),
+        "Plus" => "+".into(),
+        "Minus" => "-".into(),
         "Comma" => ",".into(),
         "Period" => ".".into(),
         other => other.to_string(),
@@ -218,6 +220,41 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
     c("mail.move", "Move to folder…", "Mover a carpeta…", "folder", Group::Mail, "move file mover carpeta"),
     c("mail.search", "Search mail", "Buscar en el correo", "search", Group::Mail, "find buscar encontrar"),
+    // UX-3: leer cómodo (ventana propia, modo enfocado, zoom) y panel contextual plegable.
+    c(
+        "mail.open_window",
+        "Open in window",
+        "Abrir en ventana",
+        "open",
+        Group::Mail,
+        "window separate pop out new ventana separada aparte abrir",
+    ),
+    c(
+        "view.reading_focus",
+        "Focused reading",
+        "Lectura enfocada",
+        "maximize",
+        Group::View,
+        "focus expand maximize reading full enfocar ampliar maximizar lectura",
+    ),
+    c(
+        "view.context_panel",
+        "Show / hide the context panel",
+        "Mostrar / ocultar el panel contextual",
+        "sparkle",
+        Group::View,
+        "iurefficient context sidebar collapse panel contexto plegar ocultar",
+    ),
+    c("view.zoom_in", "Zoom in message", "Acercar el mensaje", "zoom-in", Group::View, "zoom bigger larger text"),
+    c("view.zoom_out", "Zoom out message", "Alejar el mensaje", "zoom-out", Group::View, "zoom smaller text"),
+    c(
+        "view.zoom_reset",
+        "Reset message zoom",
+        "Restablecer el zoom del mensaje",
+        "fit",
+        Group::View,
+        "zoom reset 100 restablecer",
+    ),
     // F7.1
     c(
         "mail.edit_draft",
@@ -512,6 +549,14 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
         "nav.tasks" => Some(Chord::cmd("Num4")),
         "nav.notes" => Some(Chord::cmd("Num5")),
         "nav.assistant" => Some(Chord::cmd("Num6")),
+        // UX-3: como Outlook, Mayús+Intro abre el mensaje en su ventana; Ctrl +/−/0 es el zoom del
+        // cuerpo (solo en el correo: en lo demás queda el zoom de egui).
+        "mail.open_window" => Some(Chord::shift("Enter")),
+        "view.reading_focus" => Some(Chord::key("F11")),
+        "view.context_panel" => Some(Chord::cmd_shift("I")),
+        "view.zoom_in" => Some(Chord::cmd("Plus")),
+        "view.zoom_out" => Some(Chord::cmd("Minus")),
+        "view.zoom_reset" => Some(Chord::cmd("Num0")),
         _ => None,
     };
     if common.is_some() {

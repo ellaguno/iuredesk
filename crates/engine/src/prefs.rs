@@ -185,6 +185,68 @@ pub struct Prefs {
     /// Mostrar en Contactos los contactos sin ningún dato.
     #[serde(default)]
     pub show_empty_contacts: bool,
+    /// UX-3: ancho del panel de lectura (puntos) que dejó el usuario; `None` = automático.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading_width: Option<u32>,
+    /// UX-3: zoom del cuerpo del mensaje en % ([`READING_ZOOM_RANGE`]).
+    #[serde(default = "default_reading_zoom")]
+    pub reading_zoom_pct: u32,
+    /// UX-3: panel contextual (Iurefficient, contacto) plegado a un riel delgado.
+    #[serde(default)]
+    pub context_collapsed: bool,
+    /// UX-3: dónde va el panel contextual.
+    #[serde(default)]
+    pub context_layout: ContextLayout,
+    /// UX-3: tamaño de la ventana de lectura propia (puntos), recordado al cerrarla.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reader_size: Option<[u32; 2]>,
+}
+
+/// UX-3: dónde se muestra el panel contextual.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextLayout {
+    /// Columna a la derecha si la ventana mide al menos [`CONTEXT_STRIP_BELOW`] puntos; si no,
+    /// franja bajo la cabecera del mensaje.
+    #[default]
+    Auto,
+    /// Siempre columna a la derecha (si cabe).
+    Side,
+    /// Siempre franja compacta bajo la cabecera del mensaje.
+    Strip,
+}
+
+impl ContextLayout {
+    pub const ALL: [ContextLayout; 3] = [ContextLayout::Auto, ContextLayout::Side, ContextLayout::Strip];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ContextLayout::Auto => crate::lang::pick("Automatic", "Automático"),
+            ContextLayout::Side => crate::lang::pick("Column on the right", "Columna a la derecha"),
+            ContextLayout::Strip => crate::lang::pick("Strip under the header", "Franja bajo la cabecera"),
+        }
+    }
+
+    /// ¿Franja (y no columna) con una ventana de este ancho?
+    pub fn strip_at(self, window_width: f32) -> bool {
+        match self {
+            ContextLayout::Auto => window_width < CONTEXT_STRIP_BELOW,
+            ContextLayout::Side => false,
+            ContextLayout::Strip => true,
+        }
+    }
+}
+
+/// Por debajo de este ancho de ventana (puntos), el panel contextual automático va en franja.
+pub const CONTEXT_STRIP_BELOW: f32 = 1300.0;
+
+/// Zoom aceptado del cuerpo del mensaje (%).
+pub const READING_ZOOM_RANGE: std::ops::RangeInclusive<u32> = 50..=300;
+/// Paso del zoom (%).
+pub const READING_ZOOM_STEP: u32 = 10;
+
+fn default_reading_zoom() -> u32 {
+    100
 }
 
 fn default_font() -> String {
@@ -203,6 +265,23 @@ impl Prefs {
     pub fn text_scale(&self) -> f32 {
         let pct = self.text_scale_pct.clamp(*TEXT_SCALE_RANGE.start(), *TEXT_SCALE_RANGE.end());
         pct as f32 / 100.0
+    }
+
+    /// Zoom del cuerpo acotado, como factor (1.0 = 100 %).
+    pub fn reading_zoom(&self) -> f32 {
+        self.reading_zoom_pct.clamp(*READING_ZOOM_RANGE.start(), *READING_ZOOM_RANGE.end()) as f32 / 100.0
+    }
+
+    /// Sube (`+1`), baja (`-1`) o restablece (`0`) el zoom del cuerpo; devuelve el nuevo %.
+    pub fn step_reading_zoom(&mut self, dir: i32) -> u32 {
+        let cur = self.reading_zoom_pct.clamp(*READING_ZOOM_RANGE.start(), *READING_ZOOM_RANGE.end());
+        let next = match dir.signum() {
+            0 => 100,
+            1 => cur.saturating_add(READING_ZOOM_STEP),
+            _ => cur.saturating_sub(READING_ZOOM_STEP),
+        };
+        self.reading_zoom_pct = next.clamp(*READING_ZOOM_RANGE.start(), *READING_ZOOM_RANGE.end());
+        self.reading_zoom_pct
     }
 }
 
@@ -244,6 +323,11 @@ impl Default for Prefs {
             text_scale_pct: default_text_scale(),
             crisp_text: false,
             show_empty_contacts: false,
+            reading_width: None,
+            reading_zoom_pct: default_reading_zoom(),
+            context_collapsed: false,
+            context_layout: ContextLayout::Auto,
+            reader_size: None,
         }
     }
 }
@@ -312,6 +396,36 @@ mod tests {
         assert_eq!((old.font.as_str(), old.text_scale_pct, old.crisp_text), ("inter", 100, false));
         assert_eq!(Prefs { text_scale_pct: 500, ..Default::default() }.text_scale(), 1.3);
         assert_eq!(Prefs { text_scale_pct: 0, ..Default::default() }.text_scale(), 0.9);
+    }
+
+    #[test]
+    fn reading_layout_round_trip_and_zoom_steps() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("prefs.json");
+        let prefs = Prefs {
+            reading_width: Some(720),
+            reading_zoom_pct: 130,
+            context_collapsed: true,
+            context_layout: ContextLayout::Strip,
+            reader_size: Some([900, 700]),
+            ..Default::default()
+        };
+        prefs.save(&p).unwrap();
+        assert_eq!(Prefs::load(&p), prefs);
+        std::fs::write(&p, br#"{"theme":"dark"}"#).unwrap();
+        let old = Prefs::load(&p);
+        assert_eq!(
+            (old.reading_zoom_pct, old.context_collapsed, old.context_layout),
+            (100, false, ContextLayout::Auto)
+        );
+        let mut z = Prefs { reading_zoom_pct: 290, ..Default::default() };
+        assert_eq!(z.step_reading_zoom(1), 300);
+        assert_eq!(z.step_reading_zoom(1), 300, "tope");
+        assert_eq!(z.step_reading_zoom(0), 100);
+        z.reading_zoom_pct = 0;
+        assert_eq!(z.step_reading_zoom(-1), 50, "basura acotada");
+        assert!(ContextLayout::Auto.strip_at(1280.0) && !ContextLayout::Auto.strip_at(1440.0));
+        assert!(!ContextLayout::Side.strip_at(800.0) && ContextLayout::Strip.strip_at(2000.0));
     }
 
     #[test]

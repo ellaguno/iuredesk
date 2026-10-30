@@ -21,6 +21,12 @@ chrono = { workspace = true }
 open = { workspace = true }
 # Selector de archivos para adjuntar (portal XDG en Linux).
 rfd = { workspace = true }
+# UX-3: miniaturas y «Copiar imagen» de los adjuntos (Rust puro; ya lo trae html-view).
+image = { workspace = true }
+
+# UX-3: «Abrir con…» por el portal XDG y «Mostrar en la carpeta» (FileManager1), D-Bus en Rust.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { workspace = true }
 
 [dev-dependencies]
 iuredesk-accounts = { workspace = true }

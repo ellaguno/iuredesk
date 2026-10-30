@@ -167,35 +167,27 @@ fn ocr_window(app: &mut DeskApp, ctx: &Context) {
     }
 }
 
-/// Menú de un adjunto (clic o clic derecho en la ficha).
-pub fn attachment_menu(app: &mut DeskApp, resp: &egui::Response, msg: MessageId, name: &str) {
-    let mut act: Option<SuiteAction> = None;
+/// Acciones de la suite en el menú de un adjunto (UX-3: el menú lo arma `attach_ui`).
+pub fn attachment_items(ui: &mut Ui, msg: MessageId, name: &str, act: &mut Option<SuiteAction>) {
     let lower = name.to_ascii_lowercase();
     let ocr_ok = [".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"].iter().any(|e| lower.ends_with(e));
-    let items = |ui: &mut Ui, act: &mut Option<SuiteAction>| {
-        if icons::menu_item(ui, Some(Icon::Notes), pick("Open in IureEditor", "Abrir en IureEditor")).clicked() {
-            *act = Some(SuiteAction::OpenAttachment { msg, name: name.to_string() });
-            ui.close();
-        }
-        if ocr_ok && icons::menu_item(ui, Some(Icon::Search), pick("OCR with IureOCR", "OCR con IureOCR")).clicked() {
-            *act = Some(SuiteAction::OcrAttachment { msg, name: name.to_string() });
-            ui.close();
-        }
-        if icons::menu_item(
-            ui,
-            Some(Icon::Folder),
-            pick("Save in Iurefficient (IureDav)", "Guardar en Iurefficient (IureDav)"),
-        )
-        .clicked()
-        {
-            *act = Some(SuiteAction::SaveAttachment { msg, name: name.to_string() });
-            ui.close();
-        }
-    };
-    egui::Popup::menu(resp).show(|ui| items(ui, &mut act));
-    resp.context_menu(|ui| items(ui, &mut act));
-    if let Some(a) = act {
-        app.suite.hub.run(a);
+    if icons::menu_item(ui, Some(Icon::Notes), pick("Open in IureEditor", "Abrir en IureEditor")).clicked() {
+        *act = Some(SuiteAction::OpenAttachment { msg, name: name.to_string() });
+        ui.close();
+    }
+    if ocr_ok && icons::menu_item(ui, Some(Icon::Search), pick("OCR with IureOCR", "OCR con IureOCR")).clicked() {
+        *act = Some(SuiteAction::OcrAttachment { msg, name: name.to_string() });
+        ui.close();
+    }
+    if icons::menu_item(
+        ui,
+        Some(Icon::Folder),
+        pick("Save in Iurefficient (IureDav)", "Guardar en Iurefficient (IureDav)"),
+    )
+    .clicked()
+    {
+        *act = Some(SuiteAction::SaveAttachment { msg, name: name.to_string() });
+        ui.close();
     }
 }
 

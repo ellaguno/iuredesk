@@ -14,6 +14,7 @@
 
 mod app;
 mod assistant;
+mod attach_ui;
 mod calendar;
 mod compose;
 mod diagnostics;
@@ -28,6 +29,7 @@ mod meeting;
 mod onboarding;
 mod opened;
 mod pim;
+mod reader;
 mod reminders;
 mod rich_edit;
 mod rules_ui;
@@ -58,6 +60,11 @@ pub fn capture_opened_urls() {
 #[doc(hidden)]
 pub fn opened_urls() -> Vec<String> {
     CAPTURED_URLS.with(|c| c.borrow().clone().unwrap_or_default())
+}
+
+/// Si una prueba captura lo abierto, guarda `what` y devuelve `true` (no se lanza nada).
+pub(crate) fn capture(what: String) -> bool {
+    CAPTURED_URLS.with(|c| c.borrow_mut().as_mut().map(|v| v.push(what))).is_some()
 }
 
 /// Abre un enlace con el manejador del sistema (solo `http`, `https` y `mailto`; en Linux,

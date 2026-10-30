@@ -118,10 +118,13 @@ pub struct DeskApp {
     pub(crate) diag: crate::diagnostics::DiagState,
     /// R1.2: archivos abiertos desde el sistema.
     pub(crate) opened: crate::opened::OpenedUi,
+    /// UX-3: adjuntos (abrir con el sistema, guardar, miniaturas).
+    pub(crate) attach: crate::attach_ui::AttachUi,
 }
 
 impl DeskApp {
     pub fn new(session: Session, options: Options) -> Self {
+        let attach = crate::attach_ui::AttachUi::new(&session);
         let (ai, suite, import) = (
             crate::assistant::AiUi::new(&session),
             crate::suite_ui::SuiteUi::new(&session),
@@ -159,6 +162,7 @@ impl DeskApp {
             confirm: None,
             diag: Default::default(),
             opened: Default::default(),
+            attach,
         };
         if let Some(m) = app.options.mailto.clone()
             && let Some(d) = app.session.compose_mailto(&m)
@@ -271,7 +275,8 @@ impl DeskApp {
             || self.ai.modal()
             || self.suite.modal()
             || self.import.modal()
-            || self.rules.modal();
+            || self.rules.modal()
+            || self.attach.modal();
         // Escribiendo en el redactor, los atajos de la aplicación no se disparan.
         let composing = !self.composers.is_empty() && ctx.egui_wants_keyboard_input();
         if !modal && !composing {
@@ -302,6 +307,8 @@ impl DeskApp {
         crate::opened::frame(self, &ctx);
         crate::reminders::show(self, &ctx);
         crate::compose::show_all(self, &ctx);
+        crate::reader::show_all(self, &ctx);
+        crate::attach_ui::frame(self, &ctx);
         crate::settings::show(self, &ctx);
         self.confirm_dialog(&ctx);
         crate::rules_ui::show(self, &ctx);
@@ -450,6 +457,34 @@ impl DeskApp {
             && self.ai.hub.is_idle()
             && self.import.hub.is_idle()
             && !self.suite.hub.busy()
+            && !self.attach.is_busy()
+    }
+
+    /// UX-3: mensajes abiertos en ventanas propias (pruebas).
+    pub fn reader_windows(&self) -> Vec<iuredesk_model::MessageId> {
+        crate::reader::open_messages(self)
+    }
+
+    /// UX-3: abre el mensaje enfocado en su ventana (capturas).
+    pub fn demo_reader_window(&mut self) {
+        if let Some(m) = self.session.focused() {
+            crate::reader::open(self, m);
+        }
+    }
+
+    /// UX-3: lectura enfocada (capturas y pruebas).
+    pub fn reading_focus(&self) -> bool {
+        self.mail.focus
+    }
+
+    /// UX-3: carpeta de la caché de adjuntos (pruebas).
+    pub fn set_attachment_cache(&mut self, root: std::path::PathBuf) {
+        self.attach.set_cache_root(root);
+    }
+
+    /// UX-3: hay una confirmación de adjunto peligroso abierta (pruebas).
+    pub fn attachment_confirm_open(&self) -> bool {
+        self.attach.modal()
     }
 
     /// Asistente en el paso del correo con datos escritos (capturas).
@@ -753,6 +788,7 @@ impl DeskApp {
             Outcome::Assist(id) => crate::assistant::command(self, ctx, &id),
             Outcome::Confirm { text, yes, command } => self.confirm = Some((text, yes, command)),
             Outcome::Rules(id) => crate::rules_ui::command(self, ctx, &id),
+            Outcome::View(id) => crate::mail::view_command(self, ctx, &id),
         }
     }
 
@@ -766,19 +802,25 @@ impl DeskApp {
         let scheme = self.session.scheme();
         let typing = ctx.egui_wants_keyboard_input();
         let in_calendar = self.session.module == Module::Calendar;
+        let in_mail = self.session.module == Module::Mail;
         let mut fire: Option<&'static str> = None;
         ctx.input_mut(|i| {
             let mut consumed = None;
             for (idx, e) in i.events.iter().enumerate() {
                 let egui::Event::Key { key, pressed: true, modifiers, .. } = e else { continue };
+                // UX-3: Ctrl+= también acerca (teclados donde «+» lleva Mayús).
+                let key = if *key == Key::Equals { Key::Plus } else { *key };
                 for (cmd, chord) in command::bindings(scheme) {
                     if cmd == "app.palette"
                         || (typing && !chord.has_modifier())
                         || (cmd.starts_with("cal.") && !in_calendar)
+                        // El zoom del mensaje solo en el correo (en lo demás, el de egui).
+                        || (cmd.starts_with("view.zoom") && !in_mail)
+                        || ((cmd == "mail.open_window" || cmd == "view.reading_focus") && !in_mail)
                     {
                         continue;
                     }
-                    if chord_matches(&chord, *key, *modifiers) {
+                    if chord_matches(&chord, key, *modifiers) {
                         fire = Some(cmd);
                         consumed = Some(idx);
                         break;
@@ -1067,7 +1109,7 @@ pub(crate) fn keyboard_shortcut(c: &Chord) -> Option<egui::KeyboardShortcut> {
 }
 
 /// ¿La tecla y los modificadores son exactamente la combinación?
-fn chord_matches(c: &Chord, key: Key, m: Modifiers) -> bool {
+pub(crate) fn chord_matches(c: &Chord, key: Key, m: Modifiers) -> bool {
     // Los dígitos se nombran «Num1» en el motor; egui los reconoce como «Digit1».
     let name = match c.key.strip_prefix("Num") {
         Some(d) if d.len() == 1 => format!("Digit{d}"),
