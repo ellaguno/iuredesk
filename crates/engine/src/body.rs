@@ -65,25 +65,49 @@ fn parse_plain(raw: &[u8]) -> MessageBody {
     let text = msg.body_text(0).map(|t| clip_chars(&t, MAX_TEXT_CHARS)).unwrap_or_default();
     let mut inline = Vec::new();
     let mut attachments = Vec::new();
+    for (part, cid) in classify(&msg) {
+        match cid {
+            Some(cid) => inline.push((cid, part.contents().to_vec())),
+            None => attachments.push(AttachmentInfo {
+                name: part.attachment_name().unwrap_or("adjunto").to_string(),
+                size: part.len(),
+                mime: part_mime(part),
+            }),
+        }
+    }
+    MessageBody { text, html, inline, attachments, note: None, security: None }
+}
+
+/// Tipo MIME declarado de una parte.
+pub(crate) fn part_mime(part: &mail_parser::MessagePart<'_>) -> String {
+    part.content_type()
+        .map(|c| match c.subtype() {
+            Some(s) => format!("{}/{s}", c.ctype()),
+            None => c.ctype().to_string(),
+        })
+        .unwrap_or_else(|| "application/octet-stream".into())
+}
+
+/// Partes adjuntas en orden, con su `cid` si van en línea (`None` = se lista como adjunto). La
+/// misma regla sirve para mostrar la lista y para extraer el adjunto `n` (UX-3).
+pub(crate) fn classify<'a>(
+    msg: &'a mail_parser::Message<'a>,
+) -> Vec<(&'a mail_parser::MessagePart<'a>, Option<String>)> {
+    let mut out = Vec::new();
+    let mut inline = 0usize;
     for part in msg.attachments().take(500) {
         let size = part.len();
         if let Some(cid) = part.content_id() {
             let cid = cid.trim().trim_start_matches('<').trim_end_matches('>').to_string();
-            if inline.len() < MAX_INLINE && size <= MAX_INLINE_BYTES && !cid.is_empty() {
-                inline.push((cid, part.contents().to_vec()));
+            if inline < MAX_INLINE && size <= MAX_INLINE_BYTES && !cid.is_empty() {
+                inline += 1;
+                out.push((part, Some(cid)));
                 continue;
             }
         }
-        let mime = part
-            .content_type()
-            .map(|c| match c.subtype() {
-                Some(s) => format!("{}/{s}", c.ctype()),
-                None => c.ctype().to_string(),
-            })
-            .unwrap_or_else(|| "application/octet-stream".into());
-        attachments.push(AttachmentInfo { name: part.attachment_name().unwrap_or("adjunto").to_string(), size, mime });
+        out.push((part, None));
     }
-    MessageBody { text, html, inline, attachments, note: None, security: None }
+    out
 }
 
 /// ¿Es una línea de atribución de una respuesta («El lun…, Ana escribió:», «On …, Ana wrote:»)?

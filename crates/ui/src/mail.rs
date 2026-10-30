@@ -17,7 +17,7 @@ use iurefficient_ui::{
 
 use crate::app::DeskApp;
 use crate::html::{HtmlCache, HtmlKey, HtmlState};
-use crate::widgets::{hairline, human_size, pane_title, tool_button, wide_primary};
+use crate::widgets::{hairline, pane_title, tool_button, wide_primary};
 
 /// Estado de la vista de correo.
 pub struct MailState {
@@ -37,6 +37,16 @@ pub struct MailState {
     show_quoted: HashSet<MessageId>,
     /// F7.1: «Nueva carpeta…» / «Renombrar…» abierto.
     pub(crate) folder_dialog: Option<FolderDialog>,
+    /// UX-3: lectura enfocada (sin carpetas ni lista; Esc vuelve).
+    pub(crate) focus: bool,
+    /// UX-3: franja contextual desplegada (con las tarjetas completas).
+    pub(crate) strip_open: bool,
+    /// UX-3: ventanas de lectura propias.
+    pub(crate) readers: Vec<crate::reader::ReaderWindow>,
+    pub(crate) next_reader: u64,
+    /// UX-3: ancho del panel de lectura en el cuadro anterior y si el usuario lo está arrastrando.
+    reading_w: Option<f32>,
+    reading_dragging: bool,
 }
 
 /// Qué pide el diálogo de carpeta.
@@ -82,6 +92,12 @@ impl Default for MailState {
             conv: None,
             card: None,
             show_quoted: HashSet::new(),
+            focus: false,
+            strip_open: false,
+            readers: Vec::new(),
+            next_reader: 0,
+            reading_w: None,
+            reading_dragging: false,
         }
     }
 }
@@ -99,44 +115,120 @@ pub fn folder_icon(r: FolderRole) -> Icon {
     }
 }
 
+/// Ancho del riel del panel contextual plegado.
+const CONTEXT_RAIL: f32 = 40.0;
+
 /// La vista de correo completa.
 pub fn show(app: &mut DeskApp, ui: &mut Ui) {
-    split::left(ui, "folders", PaneKind::Sidebar, 244.0, 190.0..=380.0, |ui| folders(app, ui));
     let ctx = ui.ctx().clone();
+    // UX-3: lectura enfocada sin mensaje no tiene sentido; Esc vuelve a la vista normal.
+    if app.mail.focus && app.session.focused().is_none() {
+        app.mail.focus = false;
+    }
+    if app.mail.focus
+        && !ctx.egui_wants_keyboard_input()
+        && !egui::Popup::is_any_open(&ctx)
+        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        app.mail.focus = false;
+    }
+    let focus = app.mail.focus;
+    if !focus {
+        split::left(ui, "folders", PaneKind::Sidebar, 244.0, 190.0..=380.0, |ui| folders(app, ui));
+    }
     folder_dialog(app, &ctx);
 
     let focused = app.session.focused();
     let card = focused.map(|id| context_card(app, id)).unwrap_or_default();
     let iure = focused.map(|id| (id, app.session.iure_panel(id))).filter(|(_, p)| p.visible());
+    // Sin sesión de Iurefficient ni datos del contacto, el panel no aparece.
+    let has_context = !card.is_empty() || iure.is_some();
     // Ancho mínimo de la lista: la densa lleva columnas (De, Asunto, Recibido).
     let dense = app.session.prefs.density == DensityPref::Dense;
     let list_min = if dense { 560.0 } else { 400.0 };
     let avail = ui.available_width();
-    // El panel contextual solo aparece si deja sitio a la lista y a la lectura.
-    let wide = avail - 264.0 >= list_min + 460.0;
-    if wide && (!card.is_empty() || iure.is_some()) {
-        split::right(ui, "context", PaneKind::Detail, 264.0, 220.0..=380.0, |ui| {
-            context_panel(app, ui, &card, iure.as_ref())
-        });
+    let collapsed = app.session.prefs.context_collapsed;
+    let strip = app.session.prefs.context_layout.strip_at(ctx.content_rect().width());
+    // La columna solo si deja sitio a la lista (salvo en lectura enfocada) y a la lectura.
+    let side_w = if collapsed { CONTEXT_RAIL } else { 264.0 };
+    let fits = avail - side_w >= if focus { 460.0 } else { list_min + 460.0 };
+    let side = has_context && !strip && fits;
+    if side {
+        if collapsed {
+            context_rail(app, ui, &card, iure.as_ref());
+        } else {
+            split::right(ui, "context", PaneKind::Detail, 264.0, 220.0..=380.0, |ui| {
+                context_panel(app, ui, &card, iure.as_ref())
+            });
+        }
+    }
+    let inline = if has_context && !side { Some((&card, iure.as_ref())) } else { None };
+    if focus {
+        split::center(ui, PaneKind::Detail, |ui| reading_pane(app, ui, inline));
+        return;
     }
     let avail = ui.available_width();
     let reading_w = avail - list_min;
     // La lista conserva siempre su mínimo: el panel de lectura no puede comérsela aunque su
     // contenido pida más ancho.
     let max_reading = (avail - list_min).max(340.0);
+    // UX-3: el ancho que dejó el usuario (si cabe).
+    let start_w = app.session.prefs.reading_width.map(|w| w as f32).unwrap_or(reading_w);
     let frame = split::frame(ui, PaneKind::Detail);
-    egui::Panel::right("reading")
+    let resp = egui::Panel::right("reading")
         .frame(frame)
         .resizable(true)
-        .default_size(reading_w.clamp(340.0, max_reading))
+        .default_size(start_w.clamp(340.0, max_reading))
         .size_range(340.0..=max_reading)
         .show(ui, |ui| {
             ui.set_max_width(ui.available_width());
-            reading_pane(app, ui, if wide { None } else { Some((&card, iure.as_ref())) })
+            reading_pane(app, ui, inline)
         });
+    remember_reading_width(app, &ctx, resp.response.rect.width());
     split::center(ui, PaneKind::Content, |ui| message_list(app, ui));
 }
 
+/// UX-3: guarda el ancho del panel de lectura cuando el usuario termina de arrastrar su borde
+/// (no cuando cambia por el tamaño de la ventana).
+fn remember_reading_width(app: &mut DeskApp, ctx: &egui::Context, w: f32) {
+    let (down, released) = ctx.input(|i| (i.pointer.primary_down(), i.pointer.primary_released()));
+    if down && app.mail.reading_w.is_some_and(|prev| (prev - w).abs() > 0.5) {
+        app.mail.reading_dragging = true;
+    }
+    if released && std::mem::take(&mut app.mail.reading_dragging) {
+        let v = w.round().max(1.0) as u32;
+        if app.session.prefs.reading_width != Some(v) {
+            app.session.prefs.reading_width = Some(v);
+            app.session.save_prefs();
+        }
+    }
+    app.mail.reading_w = Some(w);
+}
+
+/// UX-3: comandos de la vista que solo sabe hacer la UI.
+pub(crate) fn view_command(app: &mut DeskApp, ctx: &egui::Context, id: &str) {
+    match id {
+        "mail.open_window" => {
+            if let Some(m) = app.session.focused() {
+                crate::reader::open(app, m);
+            }
+        }
+        "view.reading_focus" => {
+            app.session.module = iuredesk_engine::Module::Mail;
+            app.mail.focus = !app.mail.focus && app.session.focused().is_some();
+        }
+        "view.context_panel" => {
+            // En franja se despliega o pliega la franja; en columna, la columna ↔ riel.
+            if app.session.prefs.context_layout.strip_at(ctx.content_rect().width()) {
+                app.mail.strip_open = !app.mail.strip_open;
+            } else {
+                app.session.prefs.context_collapsed = !app.session.prefs.context_collapsed;
+                app.session.save_prefs();
+            }
+        }
+        _ => {}
+    }
+}
 fn context_card(app: &mut DeskApp, id: MessageId) -> ContextCard {
     let generation = app.session.list_generation();
     if let Some((cid, g, card)) = &app.mail.card
@@ -884,12 +976,17 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         mail.expanded.clear();
     }
     let mut edit_draft = false;
+    let mut open_window = None;
     if let Some(i) = out.activated
         && let Some(r) = rows.get(i)
     {
         session.set_selection(vec![r.id], Some(r.id));
         // F7.1: doble clic / Intro en un borrador lo reabre en el redactor.
         edit_draft = session.is_draft(r.id);
+        // UX-3: en lo demás, como en Outlook, abre el mensaje en su propia ventana.
+        if !edit_draft {
+            open_window = Some(r.id);
+        }
     }
     if let Some(i) = out.context {
         let _ = i;
@@ -898,6 +995,9 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
     }
     if edit_draft {
         app.run(&ctx, "mail.edit_draft");
+    }
+    if let Some(id) = open_window {
+        crate::reader::open(app, id);
     }
 }
 
@@ -1001,6 +1101,7 @@ fn message_menu(app: &mut DeskApp, resp: &egui::Response) {
             ("mail.toggle_read", Icon::Check, "Mark read / unread", "Marcar leído / no leído"),
             ("mail.toggle_flag", Icon::Flag, "Flag / unflag", "Marcar / quitar seguimiento"),
             ("mail.move", Icon::Folder, "Move to…", "Mover a…"),
+            ("mail.open_window", Icon::Open, "Open in window", "Abrir en ventana"),
         ] {
             if icons::menu_item(ui, Some(ic), pick(en, es)).clicked() {
                 chosen = Some(id);
@@ -1058,14 +1159,46 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCar
         return;
     };
     let (base, _) = iuredesk_model::normalize_subject(&subject);
-    ui.add(
-        egui::Label::new(
-            RichText::new(if base.is_empty() { subject.clone() } else { base })
-                .font(theme::bold_font(&ctx, 19.0))
-                .color(c.text),
-        )
-        .wrap(),
-    );
+    let mut view_cmd: Option<&'static str> = None;
+    ui.horizontal_top(|ui| {
+        let w = (ui.available_width() - 64.0).max(120.0);
+        ui.allocate_ui_with_layout(vec2(w, 0.0), Layout::top_down(Align::Min), |ui| {
+            ui.set_width(w);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(if base.is_empty() { subject.clone() } else { base })
+                        .font(theme::bold_font(&ctx, 19.0))
+                        .color(c.text),
+                )
+                .wrap(),
+            );
+        });
+        // UX-3: leer en grande (Esc vuelve) o en una ventana propia.
+        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let mac = cfg!(target_os = "macos");
+            let scheme = app.session.scheme();
+            let tip = |label: &str, id: &str| match iuredesk_engine::command::shortcut(id, scheme) {
+                Some(k) => format!("{label}  ({})", k.label(mac)),
+                None => label.to_string(),
+            };
+            let open_tip = tip(pick("Open in window", "Abrir en ventana"), "mail.open_window");
+            if icons::icon_button(ui, Icon::Open, &open_tip, true).clicked() {
+                view_cmd = Some("mail.open_window");
+            }
+            let (ic, label) = if app.mail.focus {
+                (Icon::Restore, pick("Back to the list (Esc)", "Volver a la lista (Esc)"))
+            } else {
+                (Icon::Maximize, pick("Focused reading", "Lectura enfocada"))
+            };
+            if icons::icon_button(ui, ic, &tip(label, "view.reading_focus"), true).clicked() {
+                view_cmd = Some("view.reading_focus");
+            }
+        });
+    });
+    if let Some(cmd) = view_cmd {
+        app.run(&ctx, cmd);
+    }
     if conv.len() > 1 {
         ui.label(
             RichText::new(format!(
@@ -1082,21 +1215,17 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCar
         crate::rules_ui::reading_chips(app, ui, &env);
     }
     crate::assistant::reading_bar(app, ui, id);
+    // UX-3: con poco ancho, el contexto va en una franja compacta bajo la cabecera.
+    if let Some((card, iure)) = inline_card {
+        ui.add_space(4.0);
+        context_strip(app, ui, card, iure);
+    }
     ui.add_space(4.0);
     hairline(ui);
 
     let last = conv.last().map(|e| e.id);
-    egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("reading-scroll").show(ui, |ui| {
+    egui::ScrollArea::both().auto_shrink([false, false]).id_salt("reading-scroll").show(ui, |ui| {
         ui.add_space(8.0);
-        if let Some((card, iure)) = inline_card
-            && (!card.is_empty() || iure.is_some())
-        {
-            context_inline(ui, card);
-            if let Some((id, p)) = iure {
-                crate::iure::panel(app, ui, *id, p);
-            }
-            ui.add_space(8.0);
-        }
         crate::assistant::reading_cards(app, ui, id);
         let n = conv.len();
         for (k, env) in conv.iter().enumerate() {
@@ -1169,6 +1298,12 @@ fn action_bar(app: &mut DeskApp, ui: &mut Ui) {
                 ("mail.toggle_read", Icon::Check, "Mark as read / unread", "Marcar como leído / no leído"),
                 ("mail.move", Icon::Folder, "Move to folder…", "Mover a carpeta…"),
                 ("mail.toggle_conversations", Icon::List, "Group by conversation", "Agrupar por conversación"),
+                ("mail.open_window", Icon::Open, "Open in window", "Abrir en ventana"),
+                ("view.reading_focus", Icon::Maximize, "Focused reading", "Lectura enfocada"),
+                ("view.zoom_in", Icon::ZoomIn, "Zoom in message", "Acercar el mensaje"),
+                ("view.zoom_out", Icon::ZoomOut, "Zoom out message", "Alejar el mensaje"),
+                ("view.zoom_reset", Icon::Fit, "Reset message zoom", "Restablecer el zoom del mensaje"),
+                ("view.context_panel", Icon::Sparkle, "Show / hide context", "Mostrar / ocultar el contexto"),
                 ("app.palette", Icon::Search, "All commands…", "Todos los comandos…"),
             ] {
                 if icons::menu_item(ui, Some(ic), pick(en, es)).clicked() {
@@ -1187,7 +1322,7 @@ fn action_bar(app: &mut DeskApp, ui: &mut Ui) {
     }
 }
 
-fn message_card(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope, expanded: bool) {
+pub(crate) fn message_card(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope, expanded: bool) {
     let ctx = ui.ctx().clone();
     let c = theme::colors(ui);
     let zone = app.session.zone();
@@ -1296,13 +1431,15 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
     let full = app.mail.show_quoted.contains(&env.id);
     let html_cut = body.html.as_deref().and_then(iuredesk_engine::body::strip_quoted_html);
     let html_view = if full { body.html.clone() } else { html_cut.clone().or_else(|| body.html.clone()) };
+    // UX-3: zoom del cuerpo (Ctrl +/−/0): el HTML se pinta con menos ancho CSS y más escala.
+    let zoom = app.session.prefs.reading_zoom();
     if let Some(html) = &html_view {
         // Los boletines suelen medir 600 px: por debajo se pinta a 600 y se reduce al mostrar.
-        let width = HtmlCache::width_for(ui.available_width().max(600.0));
+        let width = HtmlCache::width_for((ui.available_width() / zoom).max(600.0));
         let key = HtmlKey {
             id: env.id,
             width,
-            ppp_x100: (ctx.pixels_per_point() * 100.0).round() as u32,
+            ppp_x100: (ctx.pixels_per_point() * zoom * 100.0).round() as u32,
             dark: ui.visuals().dark_mode,
             remote: app.html.remote_ready(env.id),
             full: full || html_cut.is_none(),
@@ -1333,10 +1470,12 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
                     }
                     ui.add_space(8.0);
                 }
-                let natural = vec2(size_px[0] as f32 / scale, size_px[1] as f32 / scale);
-                let fit = (ui.available_width() / natural.x).clamp(0.3, 1.0);
+                // `scale` = píxeles por px CSS; en pantalla, cada px CSS mide `zoom` puntos.
+                let natural = vec2(size_px[0] as f32 / scale, size_px[1] as f32 / scale) * zoom;
+                // Acercado, lo ancho se desplaza en horizontal en vez de reducirse otra vez.
+                let fit = if zoom > 1.0 { 1.0 } else { (ui.available_width() / natural.x).clamp(0.3, 1.0) };
                 let size = natural * fit;
-                let scale = scale / fit;
+                let scale = size_px[0].max(1) as f32 / size.x.max(1.0);
                 let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
                 // Franjas de arriba abajo (un boletín largo no cabe en una sola textura).
                 let full_h = size_px[1].max(1) as f32;
@@ -1387,35 +1526,44 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
     } else {
         quoted_text(app, ui, env.id, &body.text);
     }
+    // UX-3: clic abre con la app del sistema; clic derecho, el resto. Si el cuerpo aún no está en
+    // el equipo (solo los datos del índice), se descarga al pedirlo.
+    use crate::attach_ui::Item;
     if !body.attachments.is_empty() {
         ui.add_space(10.0);
-        ui.horizontal_wrapped(|ui| {
-            for a in &body.attachments {
-                let r = attachment_chip(ui, &a.name, a.size);
-                crate::suite_ui::attachment_menu(app, &r, env.id, &a.name);
-            }
-        });
+        let items: Vec<Item> = body
+            .attachments
+            .iter()
+            .map(|a| Item { name: a.name.clone(), size: a.size, mime: a.mime.clone() })
+            .collect();
+        crate::attach_ui::show(app, ui, env.id, &items, body.note.is_none());
     } else if env.has_attachments {
         ui.add_space(10.0);
-        ui.horizontal_wrapped(|ui| {
-            for a in &env.attachments {
-                let r = attachment_chip(ui, &a.filename, usize::try_from(a.size).unwrap_or(usize::MAX));
-                crate::suite_ui::attachment_menu(app, &r, env.id, &a.filename);
-            }
-        });
+        let items: Vec<Item> = env
+            .attachments
+            .iter()
+            .filter(|a| a.content_id.is_none())
+            .map(|a| Item {
+                name: a.filename.clone(),
+                size: usize::try_from(a.size).unwrap_or(usize::MAX),
+                mime: a.mime_type.clone(),
+            })
+            .collect();
+        crate::attach_ui::show(app, ui, env.id, &items, false);
     }
 }
 
 /// Texto plano con la historia citada plegada tras «… mostrar texto citado» (como Gmail).
 fn quoted_text(app: &mut DeskApp, ui: &mut Ui, id: MessageId, text: &str) {
+    let zoom = app.session.prefs.reading_zoom();
     let (visible, quoted) = iuredesk_engine::body::split_quoted(text);
     match quoted {
-        None => plain_text(ui, text),
+        None => plain_text(ui, text, zoom),
         Some(q) => {
-            plain_text(ui, &visible);
+            plain_text(ui, &visible, zoom);
             quoted_toggle(app, ui, id);
             if app.mail.show_quoted.contains(&id) {
-                plain_text(ui, &q);
+                plain_text(ui, &q, zoom);
             }
         }
     }
@@ -1444,9 +1592,9 @@ fn quoted_toggle(app: &mut DeskApp, ui: &mut Ui, id: MessageId) {
     ui.add_space(4.0);
 }
 
-fn plain_text(ui: &mut Ui, text: &str) {
+fn plain_text(ui: &mut Ui, text: &str, zoom: f32) {
     let c = theme::colors(ui);
-    let size = theme::density(ui.ctx()).body_size() + 0.5;
+    let size = (theme::density(ui.ctx()).body_size() + 0.5) * zoom;
     // Las líneas citadas («> …») se atenúan, como en los clientes de escritorio.
     let mut job = egui::text::LayoutJob::default();
     for line in text.lines().take(5_000) {
@@ -1464,40 +1612,217 @@ fn plain_text(ui: &mut Ui, text: &str) {
     ui.add(egui::Label::new(job).selectable(true).wrap());
 }
 
-fn attachment_chip(ui: &mut Ui, name: &str, size: usize) -> egui::Response {
-    let c = theme::colors(ui);
-    let r = egui::Frame::new()
-        .fill(c.surface_alt)
-        .stroke(Stroke::new(1.0, c.separator))
-        .corner_radius(6)
-        .inner_margin(egui::Margin::symmetric(8, 5))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
-                icons::paint(ui.painter(), r, Icon::Attachment, c.text_muted, c.accent);
-                ui.label(RichText::new(name).color(c.text));
-                ui.label(
-                    RichText::new(human_size(size)).color(c.text_muted).size(theme::density(ui.ctx()).small_size()),
-                );
-            });
-        })
-        .response
-        .interact(Sense::click());
-    iurefficient_ui::a11y::button(&r, &format!("{} {name}", pick("Attachment", "Adjunto")));
-    r.on_hover_text(pick("Open, OCR or save in Iurefficient", "Abrir, OCR o guardar en Iurefficient"))
-}
-
 // ---------------------------------------------------------------------------------------------
 // Panel contextual
 
+/// Atajo de un comando como texto («Ctrl+Shift+I»), para las ayudas.
+fn shortcut_hint(app: &DeskApp, id: &str) -> String {
+    iuredesk_engine::command::shortcut(id, app.session.scheme())
+        .map(|k| format!("  ({})", k.label(cfg!(target_os = "macos"))))
+        .unwrap_or_default()
+}
+
+/// Resumen del contexto en pocas palabras (riel y franja).
+fn iure_summary(p: &IurePanel) -> String {
+    if !matches!(p.status, iuredesk_engine::iure::IureStatus::Ready { .. }) {
+        return p.status.label().get().to_string();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let n = |k: usize, en: &str, ens: &str, es: &str, ess: &str| {
+        format!("{k} {}", if k == 1 { pick(en, es) } else { pick(ens, ess) })
+    };
+    if !p.links.is_empty() {
+        parts.push(n(p.links.len(), "link", "links", "vínculo", "vínculos"));
+    }
+    if let Some(c) = &p.context {
+        if !c.deals.is_empty() {
+            parts.push(n(c.deals.len(), "deal", "deals", "oportunidad", "oportunidades"));
+        }
+        if !c.cases.is_empty() {
+            parts.push(n(c.cases.len(), "case", "cases", "caso", "casos"));
+        }
+        if !c.tickets.is_empty() {
+            parts.push(n(c.tickets.len(), "ticket", "tickets", "ticket", "tickets"));
+        }
+        if parts.is_empty() && !c.people.is_empty() {
+            parts.push(n(c.people.len(), "person", "people", "persona", "personas"));
+        }
+    }
+    if parts.is_empty() { pick("Nothing linked yet", "Nada vinculado aún").to_string() } else { parts.join(" · ") }
+}
+
+/// Elementos del contexto (insignia del riel).
+fn iure_count(p: &IurePanel) -> usize {
+    let c = p.context.as_ref().map_or(0, |c| c.deals.len() + c.cases.len() + c.tickets.len());
+    p.links.len().saturating_add(c)
+}
+
+/// Columna completa, con su botón para plegarla al riel.
 fn context_panel(app: &mut DeskApp, ui: &mut Ui, card: &ContextCard, iure: Option<&(MessageId, IurePanel)>) {
+    let ctx = ui.ctx().clone();
+    let c = theme::colors(ui);
+    let mut collapse = false;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(pick("Context", "Contexto")).color(c.text_muted).size(theme::density(&ctx).small_size()),
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let tip =
+                format!("{}{}", pick("Collapse panel", "Plegar el panel"), shortcut_hint(app, "view.context_panel"));
+            if icons::icon_button(ui, Icon::ChevronRight, &tip, true).clicked() {
+                collapse = true;
+            }
+        });
+    });
+    ui.add_space(4.0);
     egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("context-scroll").show(ui, |ui| {
         context_inline(ui, card);
         if let Some((id, p)) = iure {
             crate::iure::panel(app, ui, *id, p);
         }
     });
+    if collapse {
+        app.run(&ctx, "view.context_panel");
+    }
+}
+
+/// Riel delgado del panel plegado: iconos con insignias; cualquier clic lo despliega.
+fn context_rail(app: &mut DeskApp, ui: &mut Ui, card: &ContextCard, iure: Option<&(MessageId, IurePanel)>) {
+    let ctx = ui.ctx().clone();
+    let frame = split::frame(ui, PaneKind::Sidebar).inner_margin(egui::Margin::symmetric(4, 8));
+    let mut expand = false;
+    egui::Panel::right("context-rail").frame(frame).exact_size(CONTEXT_RAIL).resizable(false).show(ui, |ui| {
+        let c = theme::colors(ui);
+        ui.vertical_centered(|ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            let tip = format!(
+                "{}{}",
+                pick("Show context panel", "Mostrar el panel contextual"),
+                shortcut_hint(app, "view.context_panel")
+            );
+            if icons::icon_button(ui, Icon::ChevronLeft, &tip, true).clicked() {
+                expand = true;
+            }
+            if let Some(p) = &card.contact {
+                let role = [p.title.as_str(), p.org.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>();
+                let tip = if role.is_empty() {
+                    p.full_name.clone()
+                } else {
+                    format!("{} — {}", p.full_name, role.join(" · "))
+                };
+                let r = icons::icon_button(ui, Icon::Person, &tip, true);
+                if r.clicked() {
+                    expand = true;
+                }
+            }
+            if let Some((_, p)) = iure {
+                let tip = format!("Iurefficient — {}", iure_summary(p));
+                let r = icons::icon_button(ui, Icon::Sparkle, &tip, true);
+                let n = iure_count(p);
+                if n > 0 {
+                    let center = r.rect.right_top() + vec2(-3.0, 4.0);
+                    ui.painter().circle_filled(center, 7.0, c.brand);
+                    ui.painter().text(
+                        center,
+                        egui::Align2::CENTER_CENTER,
+                        if n > 9 { "9+".to_string() } else { n.to_string() },
+                        egui::FontId::proportional(9.0),
+                        c.on_accent,
+                    );
+                }
+                if r.clicked() {
+                    expand = true;
+                }
+            }
+        });
+    });
+    if expand {
+        app.run(&ctx, "view.context_panel");
+    }
+}
+
+/// Franja compacta bajo la cabecera del mensaje: el contacto y el resumen de Iurefficient en una
+/// línea; desplegada, las tarjetas completas.
+fn context_strip(app: &mut DeskApp, ui: &mut Ui, card: &ContextCard, iure: Option<&(MessageId, IurePanel)>) {
+    let ctx = ui.ctx().clone();
+    let c = theme::colors(ui);
+    let open = app.mail.strip_open;
+    let mut toggle = false;
+    egui::Frame::new()
+        .fill(c.surface_alt)
+        .stroke(Stroke::new(1.0, c.separator))
+        .corner_radius(8)
+        .inner_margin(egui::Margin::symmetric(10, 5))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let row = ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let w = (ui.available_width() - 30.0).max(80.0);
+                ui.allocate_ui_with_layout(vec2(w, 22.0), Layout::left_to_right(Align::Center), |ui| {
+                    ui.set_width(w);
+                    if let Some(p) = &card.contact {
+                        avatar(ui, &p.full_name, p.primary_email().unwrap_or(""), 20.0);
+                        ui.add(egui::Label::new(RichText::new(&p.full_name).strong().color(c.text)).selectable(false));
+                        if !p.org.is_empty() {
+                            ui.add(
+                                egui::Label::new(RichText::new(&p.org).color(c.text_muted))
+                                    .truncate()
+                                    .selectable(false),
+                            );
+                        }
+                    }
+                    if let Some((_, p)) = iure {
+                        if card.contact.is_some() {
+                            ui.label(RichText::new("·").color(c.text_muted));
+                        }
+                        let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
+                        ui.painter().circle_filled(r.center(), 4.5, c.brand);
+                        ui.add(
+                            egui::Label::new(RichText::new("Iurefficient").strong().color(c.text)).selectable(false),
+                        );
+                        ui.add(
+                            egui::Label::new(RichText::new(iure_summary(p)).color(c.text_muted))
+                                .truncate()
+                                .selectable(false),
+                        );
+                    }
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let tip = format!(
+                        "{}{}",
+                        if open {
+                            pick("Hide details", "Ocultar detalles")
+                        } else {
+                            pick("Show details", "Ver detalles")
+                        },
+                        shortcut_hint(app, "view.context_panel")
+                    );
+                    if icons::icon_button(ui, if open { Icon::ChevronUp } else { Icon::ChevronDown }, &tip, true)
+                        .clicked()
+                    {
+                        toggle = true;
+                    }
+                });
+            });
+            let r = row.response.interact(Sense::click());
+            iurefficient_ui::a11y::button(&r, pick("Context of the message", "Contexto del mensaje"));
+            if r.clicked() {
+                toggle = true;
+            }
+            if open {
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical().max_height(300.0).id_salt("context-strip-scroll").show(ui, |ui| {
+                    context_inline(ui, card);
+                    if let Some((id, p)) = iure {
+                        crate::iure::panel(app, ui, *id, p);
+                    }
+                });
+            }
+        });
+    if toggle {
+        let _ = &ctx;
+        app.mail.strip_open = !app.mail.strip_open;
+    }
 }
 
 fn context_inline(ui: &mut Ui, card: &ContextCard) {

@@ -269,6 +269,92 @@ pub fn render_rfc822(e: &MessageEnvelope, body: &str) -> Vec<u8> {
     s.into_bytes()
 }
 
+/// UX-3: contenido de los adjuntos del buzón de ejemplo (pequeño: el buzón grande lleva miles).
+/// Un plano en PNG (240×150) y un PDF de una página, en base64 por líneas de 76.
+const SAMPLE_PNG_B64: &[&str] = &[
+    "iVBORw0KGgoAAAANSUhEUgAAAPAAAACWCAIAAABvmpKCAAACxElEQVR42u3dMaqDQBQFULeQJjsI",
+    "ZC2SXWRpWZ5gkUKENAqBFBYZQdGZNwde+y/kziGxeH9s+veYnGH8JEeOnBxyGgXJAVrRcoCWIwdo",
+    "OXKAlgO0guQArWg5QMuRA7QcObuAvtwfxuQ2QJtqQP//Av/+vZ+57TnJk/A4sSYnCRJooIFWNNBA",
+    "Aw000EDrGWiggQYaaKAVDTTQQOsHaKD1DDTQQAMNdOmgtx+Dw1iTs+arQc/JnH227RQNNNAODGig",
+    "gdYz0EADDTTQQCsa6MpB355dpAEa6C5M0UADDTTQQAMNNNBAA33EvRwzgjCHsfgslpNq3LYDGmig",
+    "gQYaaKCBBhpooIEGGmiggQYaaKCBBhpooIEGGmiggQYa6MLv5bCcZDnJth3QQAMNNNBAAw000EAD",
+    "DTTQQAMNNNBAAw000EADDTTQQAPtbjt32wGdz70cDkPO4C1YcuQALQdooOUArWg5QDswOUDLkQO0",
+    "HKCBlgO0ouUALUcO0HLkZHMvh8OQ03s1shw5QMsBGugznv/M9gEaaKCBluORw4HJAVqOHKDlAA30",
+    "iTn+6xtooPUMNNDu5bCcdECOlwbZtgNaz0ADDTTQQAOtaKCBBlo/QAOtZ6CBBhpooIFWNNBAA60f",
+    "oIHWs3s5wiwnXV9tpLFtB3Qbph+ggQYaaKCBBhpooIEGGmiggQYaaKCBBhpooIEGGmiggQYaaPdy",
+    "VLmcNCMI08/vs9i2AxpooIEGGmiggQYaaKCBBhpooIEGGmiggQYaaKCBBhpooIEGGmj3clhOsm0H",
+    "NNBAAw000EADDbS77dxtB3RpoPUMNNBAAw000IoGGmig9QM00EADDXRdoC0nFbGcpGfbdkADDTTQ",
+    "QCsaaKCB1g/QQAMNNNBAL0Ebk9UAbYD2UyinwByg5QCtaDnZglainEg5QMsBWtFygJYjB2g5coCW",
+    "U3HOBE1QboTBqsX/AAAAAElFTkSuQmCC",
+];
+const SAMPLE_PDF_B64: &[&str] = &[
+    "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2Jq",
+    "CjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2Jq",
+    "CjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA1OTUg",
+    "ODQyXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4g",
+    "Pj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA2MiA+PgpzdHJlYW0KQlQgL0YxIDE4IFRm",
+    "IDcyIDc2MCBUZCAoRG9jdW1lbnRvIGRlIGVqZW1wbG8gLSBJdXJlRGVzaykgVGogRVQKZW5kc3Ry",
+    "ZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZv",
+    "bnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAw",
+    "MDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAow",
+    "MDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzNTMgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2",
+    "IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MjMKJSVFT0YK",
+];
+
+/// Tipo MIME de un adjunto de ejemplo por su extensión.
+fn sample_mime(name: &str) -> &'static str {
+    match name.rsplit_once('.').map(|(_, e)| e) {
+        Some("pdf") => "application/pdf",
+        Some("png") => "image/png",
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("zip") => "application/zip",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Como [`render_rfc822`], pero con los adjuntos del sobre de verdad (`multipart/mixed`), para que
+/// se puedan abrir, guardar y ver en miniatura en el buzón de ejemplo (UX-3).
+pub fn render_rfc822_with_files(e: &MessageEnvelope, body: &str) -> Vec<u8> {
+    if e.attachments.is_empty() {
+        return render_rfc822(e, body);
+    }
+    let plain = render_rfc822(e, "");
+    let head_end = plain.windows(4).position(|w| w == b"\r\n\r\n").unwrap_or(plain.len());
+    let head = String::from_utf8_lossy(plain.get(..head_end).unwrap_or(&[])).replace(
+        "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit",
+        "Content-Type: multipart/mixed; boundary=\"iuredesk-mix\"",
+    );
+    let mut s = head;
+    s.push_str(
+        "\r\n\r\n--iuredesk-mix\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n",
+    );
+    s.push_str(body);
+    for a in e.attachments.iter().take(8) {
+        let name = a.filename.replace(['"', '\r', '\n'], "_");
+        let mime = sample_mime(&name);
+        s.push_str(&format!(
+            "\r\n--iuredesk-mix\r\nContent-Type: {mime}; name=\"{name}\"\r\nContent-Disposition: attachment; filename=\"{name}\"\r\n"
+        ));
+        let b64 = match mime {
+            "image/png" => Some(SAMPLE_PNG_B64),
+            "application/pdf" => Some(SAMPLE_PDF_B64),
+            _ => None,
+        };
+        match b64 {
+            Some(lines) => {
+                s.push_str("Content-Transfer-Encoding: base64\r\n\r\n");
+                s.push_str(&lines.join("\r\n"));
+            }
+            None => {
+                s.push_str("Content-Transfer-Encoding: 7bit\r\n\r\n");
+                s.push_str(&format!("Archivo de ejemplo de IureDesk: {name}"));
+            }
+        }
+    }
+    s.push_str("\r\n--iuredesk-mix--\r\n");
+    s.into_bytes()
+}
 /// Mensaje RFC 822 `multipart/alternative` con texto plano y HTML.
 pub fn render_rfc822_html(e: &MessageEnvelope, text: &str, html: &str) -> Vec<u8> {
     let plain = render_rfc822(e, "");
@@ -549,7 +635,7 @@ pub fn populate_in(store: &Store, seed: u64, now: DateTime<Utc>, offset: FixedOf
                 }
             }
             for (env, body) in msgs.into_iter().zip(bodies) {
-                let raw = render_rfc822(&env, &body);
+                let raw = render_rfc822_with_files(&env, &body);
                 batch.push(NewMessage { envelope: env, raw: Some(raw), body_text: Some(body) });
             }
             if batch.len() >= 500 {
