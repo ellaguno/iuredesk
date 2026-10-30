@@ -1,4 +1,5 @@
-//! Apple Events de macOS que winit 0.30 no entrega (capa L3, sin interfaz), R1.4.
+//! Apple Events de macOS que winit 0.30 no entrega y clics en notificaciones (capa L3, sin
+//! interfaz), R1.4 y R1.5.
 //!
 //! En macOS el sistema no pasa por argumento lo que el usuario abre con IureDesk: lo manda como
 //! Apple Event a la app (en marcha o recién lanzada).
@@ -11,9 +12,16 @@
 //! ([`drain`]) que la app vacía en cada cuadro, así que lo que llega antes de que exista la
 //! interfaz (arranque en frío) no se pierde. [`set_waker`] despierta a la interfaz al llegar algo.
 //!
+//! R1.5: [`install`] también pone el delegado de `UNUserNotificationCenter` (solo dentro del
+//! `.app`): al hacer clic en un aviso, el enlace guardado en su `userInfo` bajo
+//! [`NOTIFICATION_LINK_KEY`] (`iuredesk://message/<id>` o `iuredesk://event/<uid>`, ver
+//! [`notification_link`]) entra en la misma bandeja; y los avisos se muestran aunque IureDesk esté
+//! al frente. `iuredesk-desktop` guarda el enlace con `set_notification_link` (solo macOS).
+//!
 //! **Excepción acotada** (decisión del dueño 2026-10-29, `docs/excepciones.md`): este es el único
 //! crate del workspace con `unsafe`, y solo en `src/macos.rs` (registrar un selector en
-//! `NSAppleEventManager` y en `NSNotificationCenter` y declarar la clase que lo implementa). Fuera
+//! `NSAppleEventManager` y en `NSNotificationCenter`, declarar las clases que lo implementan y el
+//! delegado de notificaciones, y poner el `userInfo` del aviso). Fuera
 //! de macOS el crate es Rust seguro (`forbid(unsafe_code)`) y [`install`] no hace nada.
 #![cfg_attr(not(target_os = "macos"), forbid(unsafe_code))]
 #![cfg_attr(target_os = "macos", deny(unsafe_op_in_unsafe_fn))]
@@ -42,6 +50,41 @@ pub const MAX_LEN: usize = 8 * 1024;
 
 /// Función que despierta a la interfaz (p. ej. `egui::Context::request_repaint`).
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
+
+/// Clave del `userInfo` de un aviso de macOS con el enlace que abre su clic.
+pub const NOTIFICATION_LINK_KEY: &str = "iuredesk-link";
+
+/// `UNNotificationDismissActionIdentifier` (su valor es este texto; así no se lee un `extern
+/// static`): el usuario cerró el aviso sin abrirlo.
+pub const DISMISS_ACTION: &str = "com.apple.UNNotificationDismissActionIdentifier";
+
+/// Destinos que puede abrir el clic en un aviso.
+const NOTIFICATION_TARGETS: &[&str] = &["iuredesk://message/", "iuredesk://event/"];
+
+/// Enlace válido para guardar en (o leer de) el `userInfo` de un aviso: solo
+/// `iuredesk://message/<id>` o `iuredesk://event/<uid>` (esquema sin distinguir mayúsculas), no
+/// vacío tras el prefijo, de ≤ [`MAX_LEN`] bytes y sin caracteres de control. Lo demás, `None`.
+pub fn notification_link(link: &str) -> Option<String> {
+    let link = link.trim();
+    if link.len() > MAX_LEN || link.chars().any(char::is_control) {
+        return None;
+    }
+    let ok = NOTIFICATION_TARGETS.iter().any(|p| {
+        link.get(..p.len()).is_some_and(|head| head.eq_ignore_ascii_case(p))
+            && link.get(p.len()..).is_some_and(|rest| !rest.trim_start_matches('/').is_empty())
+    });
+    ok.then(|| link.to_string())
+}
+
+/// Clic en un aviso: `action` es el `actionIdentifier` de la respuesta y `value`, lo guardado bajo
+/// [`NOTIFICATION_LINK_KEY`]. Si no se descartó y el enlace es válido, entra en `inbox`.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn deliver_click(inbox: &Inbox, action: &str, value: Option<&str>) -> bool {
+    if action == DISMISS_ACTION {
+        return false;
+    }
+    value.and_then(notification_link).is_some_and(|link| inbox.push(&link))
+}
 
 /// Errores de [`install`].
 #[derive(Debug, thiserror::Error)]
@@ -119,8 +162,13 @@ impl Inbox {
 /// La bandeja que llenan los manejadores de macOS.
 static INBOX: Inbox = Inbox::new();
 
-/// Registra los manejadores de Apple Events (macOS; en los demás sistemas no hace nada y
-/// devuelve `Ok`). Llamar una vez, en el hilo principal, antes de `eframe::run_native`; las
+/// macOS: guarda en el `userInfo` del aviso el enlace que abre su clic (si [`notification_link`]
+/// lo acepta; si no, el clic solo trae la app al frente).
+#[cfg(target_os = "macos")]
+pub use macos::set_notification_link;
+
+/// Registra los manejadores de Apple Events y, dentro del `.app`, el delegado de notificaciones
+/// (macOS; en los demás sistemas no hace nada y devuelve `Ok`). Llamar una vez, en el hilo principal, antes de `eframe::run_native`; las
 /// llamadas siguientes no hacen nada.
 pub fn install() -> Result<(), MacEventsError> {
     #[cfg(target_os = "macos")]
@@ -133,7 +181,8 @@ pub fn install() -> Result<(), MacEventsError> {
     }
 }
 
-/// Enlaces (`mailto:`, `iuredesk://`) y rutas absolutas recibidos desde la última llamada.
+/// Enlaces (`mailto:`, `iuredesk://`, clics en avisos) y rutas absolutas recibidos desde la última
+/// llamada.
 pub fn drain() -> Vec<String> {
     INBOX.drain()
 }
@@ -228,6 +277,60 @@ mod tests {
             assert!(h.join().is_ok());
         }
         assert_eq!(inbox.drain().len(), MAX_PENDING);
+    }
+
+    #[test]
+    fn enlace_de_aviso_valido() {
+        assert_eq!(
+            notification_link("iuredesk://message/a@b.example").as_deref(),
+            Some("iuredesk://message/a@b.example")
+        );
+        assert_eq!(notification_link(" iuredesk://event/uid-1 \n").as_deref(), Some("iuredesk://event/uid-1"));
+        assert_eq!(notification_link("IureDesk://Message/X").as_deref(), Some("IureDesk://Message/X"));
+        assert!(notification_link(&format!("iuredesk://message/{}", "a".repeat(MAX_LEN - 19))).is_some());
+    }
+
+    #[test]
+    fn enlace_de_aviso_hostil() {
+        for bad in [
+            "",
+            "iuredesk://message/",
+            "iuredesk://message///",
+            "iuredesk://event",
+            "iuredesk://open",
+            "iuredesk://compose?to=a@b",
+            "mailto:a@b",
+            "https://malo.example/iuredesk://message/x",
+            "file:///etc/passwd",
+            "iuredesk://message/x\u{0}y",
+            "iuredesk://message/x\r\nmás",
+            "iuredesk://mes",
+            "ñiuredesk://message/x",
+        ] {
+            assert!(notification_link(bad).is_none(), "{bad:?}");
+        }
+        assert!(notification_link(&format!("iuredesk://message/{}", "a".repeat(MAX_LEN))).is_none());
+    }
+
+    #[test]
+    fn clic_en_aviso_va_a_la_bandeja() {
+        let inbox = Inbox::new();
+        let default = "com.apple.UNNotificationDefaultActionIdentifier";
+        assert!(deliver_click(&inbox, default, Some("iuredesk://message/a@b")));
+        assert!(deliver_click(&inbox, "otra-accion", Some("iuredesk://event/u1")));
+        assert!(!deliver_click(&inbox, DISMISS_ACTION, Some("iuredesk://message/c@d")));
+        assert!(!deliver_click(&inbox, default, None));
+        assert!(!deliver_click(&inbox, default, Some("https://malo.example")));
+        assert_eq!(inbox.drain(), vec!["iuredesk://message/a@b".to_string(), "iuredesk://event/u1".to_string()]);
+    }
+
+    #[test]
+    fn clics_acotados() {
+        let inbox = Inbox::new();
+        for i in 0..MAX_PENDING + 5 {
+            let _ = deliver_click(&inbox, "x", Some(&format!("iuredesk://event/{i}")));
+        }
+        assert_eq!(inbox.len(), MAX_PENDING);
     }
 
     #[test]

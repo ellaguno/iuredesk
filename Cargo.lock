@@ -3663,6 +3663,7 @@ version = "0.1.0-alpha.3"
 dependencies = [
  "block2 0.6.2",
  "dirs",
+ "iuredesk-macos-events",
  "memory-stats",
  "notify-rust",
  "objc2 0.6.5",
@@ -3806,8 +3807,10 @@ dependencies = [
 name = "iuredesk-macos-events"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "block2 0.6.2",
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
+ "objc2-user-notifications 0.3.2",
  "thiserror 2.0.21",
 ]
 

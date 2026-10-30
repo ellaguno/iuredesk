@@ -78,7 +78,10 @@ El identificador es el mismo en todo: `com.iurefficient.IureDesk` (id de AppStre
   expone: los recoge `iuredesk-macos-events` (R1.4, único `unsafe` del workspace, ver
   `docs/excepciones.md`), que registra `kAEGetURL` y `kAEOpenDocuments` en `NSAppleEventManager`
   antes del bucle de eventos y los pasa por el mismo camino que los argumentos (también en frío:
-  lo que llega antes de la ventana espera en una bandeja). Solo se ha comprobado que compila para
+  lo que llega antes de la ventana espera en una bandeja). El clic en un aviso del sistema lo
+  recibe el delegado de `UNUserNotificationCenter` del mismo crate (R1.5): el aviso lleva su
+  destino (`iuredesk://message/<id>` o `iuredesk://event/<uid>`) en el `userInfo` y entra en la
+  misma bandeja; con la app al frente los avisos también se muestran. Solo se ha comprobado que compila para
   `aarch64-apple-darwin` y `x86_64-apple-darwin`; falta la prueba manual de abajo.
 
   **Prueba manual en un Mac (dueño)**, con el `.app` del `.dmg` instalado en `/Applications`:
@@ -92,10 +95,15 @@ El identificador es el mismo en todo: `com.iurefficient.IureDesk` (id de AppStre
      invitación/eventos y los contactos (prueba con la app cerrada y abierta).
   4. `open "iuredesk://compose?to=luis@example.com"` y, con un mensaje sincronizado,
      `open "iuredesk://message/<Message-ID>"`: abren el redactor y el mensaje.
-  5. Si algo no llega: `log stream --predicate 'process == "iuredesk"'` mientras repites el paso y
-     anota qué pasó; no debe haber cierres ni diálogos. (El clic en un aviso del sistema solo trae
-     la app al frente: abrir su destino necesita el delegado de `UNUserNotificationCenter`, que no
-     entra en esta excepción.)
+  5. Avisos (permite las notificaciones de IureDesk la primera vez que lo pida, o en Ajustes del
+     Sistema → Notificaciones): con una cuenta que reciba correo, mándate un mensaje y espera el
+     aviso. Con IureDesk **al frente** el aviso también debe salir. Pon otra app al frente y haz
+     clic en el aviso: IureDesk pasa al frente con ese mensaje abierto (su carpeta y pestaña).
+     Repite con el recordatorio de un evento (abre el editor del evento) y, con IureDesk
+     **cerrado** (Cmd+Q), haz clic en un aviso que siga en el Centro de notificaciones: debe abrir
+     la app y el mensaje. Cerrar el aviso con la «x» no abre nada.
+  6. Si algo no llega: `log stream --predicate 'process == "iuredesk"'` mientras repites el paso y
+     anota qué pasó; no debe haber cierres ni diálogos.
 
 Pruebas (`cargo test -p xtask package`): `windows_registration` expande los `!define` e
 `!insertmacro` de `default-apps.nsh` y comprueba cada clave, que las órdenes llevan comillas, que no

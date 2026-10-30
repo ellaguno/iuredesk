@@ -19,7 +19,7 @@ XDG (no GTK), Blitz para HTML (no webview).
 ## Nunca fallar
 - Sin `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!`, `unimplemented!` fuera de pruebas;
   `unsafe_code = "forbid"`. Cada crate de producción empieza con el `#![deny(...)]` de los demás.
-  Única excepción: `crates/macos-events/src/macos.rs` (Apple Events de macOS, decisión del dueño
+  Única excepción: `crates/macos-events/src/macos.rs` (eventos de Apple y clics en notificaciones, decisión del dueño
   2026-10-29, `docs/excepciones.md`); `cargo xtask layers` falla con `unsafe` en cualquier otro sitio.
 - Errores como `Result` con el tipo de error del crate (`thiserror`). Lo no terminado devuelve error.
 - Todo dato externo (correos, servidores, archivos, MCP) es hostil: `get()` en vez de `[i]`,

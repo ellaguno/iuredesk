@@ -2,12 +2,14 @@
 //!
 //! - [`notify`]: notificaciones del sistema con clic que abre el elemento (Linux: D-Bus con
 //!   `notify-rust`/zbus; Windows: avisos de WinRT con el `AppUserModelID` del instalador;
-//!   macOS: `UNUserNotificationCenter` por objc2, solo dentro del `.app`).
+//!   macOS: `UNUserNotificationCenter` por objc2, solo dentro del `.app`; el clic lo recibe
+//!   `iuredesk-macos-events`).
 //! - [`autostart`]: «Abrir IureDesk al iniciar sesión» (Linux: `~/.config/autostart`; Windows:
 //!   `HKCU\…\Run`; macOS: `~/Library/LaunchAgents`).
 //! - [`memory`]: memoria del proceso en Windows y macOS (en Linux la lee la UI de `/proc`).
 //!
-//! Todo con las bibliotecas del SO por enlaces en Rust (sin C ni `unsafe` propio); lo que un
+//! Todo con las bibliotecas del SO por enlaces en Rust (sin C ni `unsafe` propio; el de macOS
+//! vive en `iuredesk-macos-events`); lo que un
 //! sistema no permite devuelve `None` o un error con texto humano, nunca se cae.
 #![deny(
     clippy::unwrap_used,
