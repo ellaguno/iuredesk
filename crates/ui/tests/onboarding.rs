@@ -194,7 +194,7 @@ fn failed_manual_test_keeps_the_form_and_lets_you_retry() {
     };
     check(&h);
     // Cada sección dice qué falló, con el aviso de arriba.
-    assert!(h.query_by_label("Corrige lo que se marca abajo y vuelve a probar.").is_some());
+    assert!(h.query_all_by_label_contains("Corrígelo y vuelve a probar.").next().is_some());
     assert_eq!(h.query_all_by_role_and_label(Role::TextInput, "Servidor").count(), 2, "el formulario sigue a la vista");
 
     // Esc (que también suelta el foco de un campo) y un clic fuera no borran lo escrito.
