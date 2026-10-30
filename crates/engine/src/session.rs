@@ -508,6 +508,11 @@ impl Session {
         s.restart_sync();
         if s.sample {
             s.iure_start(IureSetup::Sample);
+        } else if s.sync_options.is_some() {
+            // App real: usar la sesión compartida de la suite (cuenta activa + llavero de
+            // iurefficient-connect, la que deja iureapps o cualquier app). Antes solo se conectaba
+            // al iniciar sesión a mano, y al reabrir IureDesk parecía desconectado.
+            s.iure_start(IureSetup::System);
         }
         Ok(s)
     }

@@ -1,2 +1,6 @@
 [alias]
 xtask = "run --quiet --package xtask --"
+
+# Limita la compilación para no saturar el equipo del dueño (RAM/CPU), decisión 2026-10-30.
+[build]
+jobs = 4
