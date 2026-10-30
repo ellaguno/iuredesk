@@ -448,8 +448,15 @@ impl Session {
     /// Abre el asistente para volver a iniciar sesión en una cuenta (contraseña nueva o permiso
     /// OAuth caducado).
     pub fn reauth_account(&mut self, id: &str) {
-        let Some(account) = self.accounts.iter().find(|a| a.id == id).cloned() else { return };
+        let Some(mut account) = self.accounts.iter().find(|a| a.id == id).cloned() else { return };
         self.wizard_close();
+        // Gmail y Microsoft dados de alta con contraseña de app: si esta versión trae su inicio de
+        // sesión (OAuth), se ofrece ése y la cuenta pasa a usarlo (Google solo comparte calendario
+        // y contactos con OAuth).
+        if let Some(auth) = reauth_upgrade(&account, crate::onboarding::oauth_available) {
+            account.incoming.auth = auth;
+            account.outgoing.auth = auth;
+        }
         let mut w = crate::onboarding::Wizard {
             email: account.email.clone(),
             name: account.display_name.clone(),
@@ -477,5 +484,65 @@ impl Session {
         w.reauth = Some(account);
         w.step = crate::onboarding::WizardStep::Provider;
         self.wizard = Some(w);
+    }
+}
+
+/// Método con el que volver a iniciar sesión: Gmail y Microsoft 365 sin OAuth pasan a OAuth cuando
+/// esta versión lo trae (`available`). `None` = se queda como está.
+pub(crate) fn reauth_upgrade(
+    account: &iuredesk_model::account::Account,
+    available: impl Fn(iuredesk_model::account::OAuthProvider) -> bool,
+) -> Option<iuredesk_model::account::AuthMethod> {
+    use iuredesk_model::account::{AccountKind, AuthMethod, OAuthProvider};
+    let provider = match account.kind {
+        AccountKind::Gmail => OAuthProvider::Google,
+        AccountKind::Microsoft365 => OAuthProvider::Microsoft,
+        _ => return None,
+    };
+    if matches!(account.incoming.auth, AuthMethod::OAuth2 { .. }) || !available(provider) {
+        return None;
+    }
+    Some(AuthMethod::OAuth2 { provider })
+}
+
+#[cfg(test)]
+mod reauth_tests {
+    use super::reauth_upgrade;
+    use iuredesk_model::account::*;
+
+    fn acct(kind: AccountKind, auth: AuthMethod) -> Account {
+        let srv = |protocol| ServerConfig {
+            protocol,
+            host: "h".into(),
+            port: 993,
+            security: Security::Tls,
+            auth,
+            username: "a@b.c".into(),
+        };
+        Account {
+            id: "a".into(),
+            display_name: "A".into(),
+            email: "a@b.c".into(),
+            kind,
+            incoming: srv(Protocol::Imap),
+            outgoing: srv(Protocol::Smtp),
+            caldav_url: None,
+            carddav_url: None,
+            identities: vec![],
+        }
+    }
+
+    #[test]
+    fn gmail_with_app_password_moves_to_google_sign_in() {
+        // Regresión (dueño, alpha.4): «Volver a iniciar sesión» seguía pidiendo contraseña de app.
+        let g = acct(AccountKind::Gmail, AuthMethod::AppPassword);
+        assert_eq!(reauth_upgrade(&g, |_| true), Some(AuthMethod::OAuth2 { provider: OAuthProvider::Google }));
+        assert_eq!(reauth_upgrade(&g, |_| false), None, "sin client id se queda con contraseña de app");
+        let m = acct(AccountKind::Microsoft365, AuthMethod::Password);
+        assert_eq!(reauth_upgrade(&m, |_| true), Some(AuthMethod::OAuth2 { provider: OAuthProvider::Microsoft }));
+        let i = acct(AccountKind::ICloud, AuthMethod::AppPassword);
+        assert_eq!(reauth_upgrade(&i, |_| true), None);
+        let o = acct(AccountKind::Gmail, AuthMethod::OAuth2 { provider: OAuthProvider::Google });
+        assert_eq!(reauth_upgrade(&o, |_| true), None);
     }
 }

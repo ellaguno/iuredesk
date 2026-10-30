@@ -200,6 +200,17 @@ impl Session {
     ) -> Option<Notice> {
         let w = self.wizard.as_mut().filter(|w| w.job == Some(id))?;
         let both = incoming.is_ok() && outgoing.is_ok();
+        // El aviso de arriba dice qué falló (el formulario puede no verse entero sin desplazarse).
+        let mut why_en = Vec::new();
+        let mut why_es = Vec::new();
+        if let Err(t) = &incoming {
+            why_en.push(format!("Incoming: {}", t.en));
+            why_es.push(format!("Entrante: {}", t.es));
+        }
+        if let Err(t) = &outgoing {
+            why_en.push(format!("Outgoing: {}", t.en));
+            why_es.push(format!("Saliente: {}", t.es));
+        }
         if let Some(m) = w.manual.as_mut() {
             let status = |r: std::result::Result<(), Text>| match r {
                 Ok(()) => ProbeStatus::Ok,
@@ -211,8 +222,8 @@ impl Session {
         if !both {
             w.job = None;
             w.message = Some(Notice::error(Text::new(
-                "Fix what is marked below and test again.",
-                "Corrige lo que se marca abajo y vuelve a probar.",
+                format!("{} Fix it and test again.", why_en.join(" · ")),
+                format!("{} Corrígelo y vuelve a probar.", why_es.join(" · ")),
             )));
             return None;
         }

@@ -238,7 +238,7 @@ fn mx_of_a_known_hosting_proposes_its_servers() {
     let d = Discoverer::new(FakeHttp::default(), dns);
     let r = run(&d, "ellaguno@confiabilidad.com.mx").unwrap();
     let best = r.best().unwrap();
-    assert_eq!(best.incoming.host, "mail.confiabilidad.com.mx");
+    assert_eq!(best.incoming.host, "mail.carrierzone.com");
     assert_eq!(best.confidence(), Confidence::Low);
     assert!(r.notes.iter().any(|n| n.es.contains("Network Solutions")));
 }

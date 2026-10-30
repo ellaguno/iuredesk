@@ -2142,6 +2142,12 @@ impl Session {
                 let account = w.saved.clone()?;
                 let aid = w.reserved?;
                 w.password.clear();
+                // Tras volver a iniciar sesión con OAuth, el token de acceso en memoria es el
+                // anterior (quizá sin el permiso nuevo, p. ej. contactos): se descarta para que la
+                // sincronización pida uno con los permisos recién otorgados.
+                if oauth && let Some(t) = &self.live.tokens {
+                    t.invalidate(&account.id);
+                }
                 match self.finish_account(&account, aid) {
                     Ok(()) => {
                         if let Some(w) = self.wizard.as_mut() {
@@ -2164,7 +2170,6 @@ impl Session {
             Err(t) => {
                 w.step = WizardStep::Provider;
                 w.message = Some(Notice::error(t));
-                let _ = oauth;
                 None
             }
         }

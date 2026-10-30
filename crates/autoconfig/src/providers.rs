@@ -360,14 +360,16 @@ pub struct Hosting {
 
 /// Hospedajes conocidos (servidores según su documentación pública).
 pub static HOSTINGS: &[Hosting] = &[
-    // Network Solutions / Web.com / Register.com: el MX es `mx*.carrierzone.com` y los servidores
-    // se publican con el dominio del cliente (`mail.<dominio>`).
+    // Network Solutions / Web.com / Register.com: el MX es `mx*.carrierzone.com`. `mail.<dominio>`
+    // no siempre existe en el DNS (caso real: confiabilidad.com.mx) y su certificado es
+    // `*.carrierzone.com`, así que se propone el servidor común: IMAP 993 SSL y SMTP 587 STARTTLS
+    // (también responde en 1025).
     Hosting {
         id: "carrierzone",
         name: "Network Solutions / Web.com",
         mx_suffixes: &["carrierzone.com"],
-        imap: Host { host: "mail.{domain}", port: 993, security: Security::Tls },
-        smtp: Host { host: "mail.{domain}", port: 465, security: Security::Tls },
+        imap: Host { host: "mail.carrierzone.com", port: 993, security: Security::Tls },
+        smtp: Host { host: "mail.carrierzone.com", port: 587, security: Security::StartTls },
     },
     Hosting {
         id: "godaddy",
@@ -494,9 +496,11 @@ mod tests {
         let e = EmailAddress::parse("ellaguno@confiabilidad.com.mx").unwrap();
         let h = hosting_by_mx("mx1.carrierzone.com").unwrap();
         let c = h.candidate(&e);
-        assert_eq!(c.incoming.host, "mail.confiabilidad.com.mx");
+        // Regresión (dueño): `mail.confiabilidad.com.mx` no existe en el DNS.
+        assert_eq!(c.incoming.host, "mail.carrierzone.com");
         assert_eq!(c.incoming.port, 993);
-        assert_eq!(c.outgoing.as_ref().map(|o| o.host.as_str()), Some("mail.confiabilidad.com.mx"));
+        assert_eq!(c.incoming.username, "ellaguno@confiabilidad.com.mx");
+        assert_eq!(c.outgoing.as_ref().map(|o| (o.host.as_str(), o.port)), Some(("mail.carrierzone.com", 587)));
         assert_eq!(c.confidence(), crate::Confidence::Low);
         assert!(hosting_by_mx("mx.example.com").is_none());
         assert!(hosting_by_mx("notcarrierzone.com").is_none());

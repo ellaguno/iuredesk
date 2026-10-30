@@ -3504,7 +3504,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "iuredesk"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "dirs",
  "eframe",
@@ -3526,7 +3526,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-accounts"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3549,7 +3549,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-assistant"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -3570,7 +3570,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-autoconfig"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "hickory-resolver",
  "iuredesk-model",
@@ -3585,7 +3585,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-compose"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3610,7 +3610,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-crypto"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -3644,7 +3644,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-dav"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3659,7 +3659,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-desktop"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "block2 0.6.2",
  "dirs",
@@ -3677,7 +3677,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-engine"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3713,7 +3713,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-graph"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "iuredesk-compose",
@@ -3728,7 +3728,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-html-view"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -3750,7 +3750,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-imap"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3765,7 +3765,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-import"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3791,7 +3791,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-integrations"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "anyhow",
  "dirs",
@@ -3806,7 +3806,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-macos-events"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "block2 0.6.2",
  "objc2 0.6.5",
@@ -3817,7 +3817,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-mcp"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3839,7 +3839,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-model"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -3851,7 +3851,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-net"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "rustls",
  "thiserror 2.0.21",
@@ -3862,7 +3862,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-oauth"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3883,7 +3883,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-pim-sync"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3906,7 +3906,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-pop3"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "iuredesk-model",
@@ -3920,7 +3920,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-rules"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3943,7 +3943,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-store"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "chrono",
  "iuredesk-model",
@@ -3960,7 +3960,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-sync"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3983,7 +3983,7 @@ dependencies = [
 
 [[package]]
 name = "iuredesk-ui"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "chrono",
  "egui",
@@ -9594,7 +9594,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 dependencies = [
  "base64 0.22.1",
  "flate2",
