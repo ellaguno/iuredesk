@@ -29,6 +29,8 @@ winit = { version = "0.30", default-features = false, features = ["wayland-csd-a
 dirs = { workspace = true }
 # R1.2: notificaciones del sistema (D-Bus, WinRT, UserNotifications) e icono de la ventana.
 iuredesk-desktop = { workspace = true }
+# R1.4: Apple Events de abrir enlace/archivo en macOS (no-op en los demás sistemas).
+iuredesk-macos-events = { workspace = true }
 png = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

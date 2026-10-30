@@ -74,10 +74,28 @@ El identificador es el mismo en todo: `com.iurefficient.IureDesk` (id de AppStre
   (`.eml` `com.apple.mail.email`, `.ics` `com.apple.ical.ics`, `.vcf` `public.vcard`; rol
   *Viewer*, rango *Alternate*) y `LSApplicationCategoryType` productividad. No hace falta
   `NSUserNotificationAlertStyle` (los avisos usan `UNUserNotificationCenter`).
-  **Pendiente**: macOS entrega los enlaces y archivos como Apple Events
-  (`application:openURLs:`), no por argumento; winit 0.30 no los expone y un delegado propio con
-  objc2 necesita `unsafe` (decisión del dueño). Hasta entonces `mailto:`, `.eml` o `iuredesk://`
-  traen la app pero no abren el destino.
+  macOS entrega los enlaces y archivos como Apple Events, no por argumento, y winit 0.30 no los
+  expone: los recoge `iuredesk-macos-events` (R1.4, único `unsafe` del workspace, ver
+  `docs/excepciones.md`), que registra `kAEGetURL` y `kAEOpenDocuments` en `NSAppleEventManager`
+  antes del bucle de eventos y los pasa por el mismo camino que los argumentos (también en frío:
+  lo que llega antes de la ventana espera en una bandeja). Solo se ha comprobado que compila para
+  `aarch64-apple-darwin` y `x86_64-apple-darwin`; falta la prueba manual de abajo.
+
+  **Prueba manual en un Mac (dueño)**, con el `.app` del `.dmg` instalado en `/Applications`:
+  1. Con IureDesk **cerrado**, en Terminal: `open "mailto:ana@example.com?subject=Hola"` (o elige
+     IureDesk en Mail → Ajustes → General → Lector de correo y haz clic en un `mailto:` de Safari).
+     Debe abrir la app con el redactor ya lleno (arranque en frío).
+  2. Con IureDesk **abierto**, repite con otra dirección: se abre otro redactor y la ventana pasa
+     al frente (sin segunda instancia en el Dock).
+  3. En el Finder, clic derecho en un `.eml` → Abrir con → IureDesk: sale la ventana de solo
+     lectura del mensaje. Arrastra a la vez un `.ics` y un `.vcf` al icono del Dock: se abren la
+     invitación/eventos y los contactos (prueba con la app cerrada y abierta).
+  4. `open "iuredesk://compose?to=luis@example.com"` y, con un mensaje sincronizado,
+     `open "iuredesk://message/<Message-ID>"`: abren el redactor y el mensaje.
+  5. Si algo no llega: `log stream --predicate 'process == "iuredesk"'` mientras repites el paso y
+     anota qué pasó; no debe haber cierres ni diálogos. (El clic en un aviso del sistema solo trae
+     la app al frente: abrir su destino necesita el delegado de `UNUserNotificationCenter`, que no
+     entra en esta excepción.)
 
 Pruebas (`cargo test -p xtask package`): `windows_registration` expande los `!define` e
 `!insertmacro` de `default-apps.nsh` y comprueba cada clave, que las órdenes llevan comillas, que no
@@ -186,7 +204,7 @@ Una de dos:
 Sin firma, SmartScreen avisará al instalar.
 
 ## Pendiente
-- macOS: recibir los Apple Events de abrir URL/archivo (ver «Integración con el escritorio»).
+- macOS: hacer la prueba manual de los Apple Events (ver «Integración con el escritorio»).
 - Probar los instaladores de Windows y macOS en equipos reales (avisos, «Aplicaciones
   predeterminadas», desinstalación).
 - Flatpak; `.msi` (WiX) si algún cliente lo exige; binario universal de macOS.

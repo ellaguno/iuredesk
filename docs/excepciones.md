@@ -15,7 +15,11 @@ PLAN.md D1. Cada excepción tiene su línea en `xtask/purity-allow.txt`. Solo la
 Criterio del dueño (2026-10-26): las herramientas de **desarrollo/compilación** (Python, generadores, macros) son aceptables; el **producto final** no debe requerir nada fuera de Rust y del SO.
 
 Pendiente al llegar a Windows y macOS (Fase 7): revisar `windows-sys`/`windows-targets` (Win32) y
-`objc2` (Cocoa), que son bindings del SO.
+`objc2` (Cocoa), que son bindings del SO. `cargo xtask purity aarch64-apple-darwin` (y
+`x86_64-apple-darwin`) da hoy un solo hallazgo: `objc-sys` 0.3 (`links = "objc_0_3"`, el runtime
+`libobjc` del SO), que llega por `objc2` 0.5 de `eframe` → `accesskit_macos`; `objc2` 0.6, que usan
+`iuredesk-desktop` e `iuredesk-macos-events`, ya no lo trae. Queda para que el dueño lo apruebe
+(2026-10-29).
 
 ## JavaScript y TypeScript
 
@@ -34,6 +38,40 @@ La política «solo Rust» se refiere al código de IureProject. Excepciones aco
 COM de Microsoft Project (`CoCreateInstance`, `IDispatch::Invoke`) solo existe como API `unsafe`.
 Cada bloque lleva su justificación (`// SAFETY:`). El oráculo es una herramienta de pruebas que
 corre en la VM del laboratorio; no se distribuye ni lo usa ningún crate de la aplicación.
+
+## `unsafe` acotado en `iuredesk-macos-events` (decisión del dueño 2026-10-29)
+
+**Qué:** `unsafe_code` sigue en `forbid` en todo el workspace (`[workspace.lints]`) salvo en
+`crates/macos-events` (`iuredesk-macos-events`, L3), que no hereda esos lints (un `forbid` no se
+puede relajar) y los copia a mano con `unsafe_code = "deny"`, `unsafe_op_in_unsafe_fn = "deny"` y
+`clippy::undocumented_unsafe_blocks = "deny"`. Dentro del crate, `src/lib.rs` es `forbid` fuera de
+macOS y solo el módulo `src/macos.rs` (compilado únicamente en macOS) tiene `allow(unsafe_code)`.
+
+**Por qué:** macOS no pasa por argumento lo que el usuario abre con la app, sino como Apple Events:
+`kAEGetURL` (`mailto:`, `iuredesk://`, también los enlaces de la suite) y `kAEOpenDocuments`
+(`.eml`/`.ics`/`.vcf` desde el Finder o «Abrir con»). winit 0.30 no los reenvía y registrar un
+manejador en Cocoa exige pasar un objeto y un selector (`Sel`) que el compilador no puede comprobar.
+Sin esto, en macOS esos enlaces y archivos traían la app pero no abrían nada (R1.3).
+
+**Alcance exacto** (todo en `crates/macos-events/src/macos.rs`, cada bloque con `// SAFETY:`):
+1. `define_class!` de `IureDeskAppleEventHandler` (subclase de `NSObject` sin variables ni `Drop`)
+   con tres métodos: `handleGetURL:withReplyEvent:`, `handleOpenDocuments:withReplyEvent:` y
+   `willFinishLaunching:`;
+2. `msg_send![super(this), init]` al crearlo;
+3. `NSAppleEventManager::setEventHandler_andSelector_forEventClass_andEventID` (`GURL`/`GURL` y
+   `aevt`/`odoc`);
+4. `NSNotificationCenter::addObserver_selector_name_object` para
+   `NSApplicationWillFinishLaunchingNotification` (ahí se vuelven a registrar, por encima de los de
+   AppKit, antes de que se despachen los eventos del arranque).
+
+El manejador vive lo que el proceso (no se libera nunca, así que no queda colgando). Lo recibido
+pasa a una bandeja acotada en Rust seguro (64 elementos de ≤ 8 KiB, sin caracteres de control) que
+la app vacía en cada cuadro. No se toca el delegado de winit. Dependencias: `objc2` 0.6 y
+`objc2-foundation` 0.3 (bindings del SO en Rust; `objc2-core-services` solo aporta alias `u32`).
+
+**Guarda:** `cargo xtask layers` (y `ci`) falla si otro crate no hereda `[workspace.lints]` o si
+aparece la palabra clave `unsafe` en cualquier `.rs` del workspace fuera de
+`crates/macos-events/src/macos.rs` (`xtask/src/unsafety.rs`).
 
 ## `ring` (2026-10-24, decidido por el dueño del proyecto)
 
