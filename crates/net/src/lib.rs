@@ -236,7 +236,8 @@ mod tests {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = l.local_addr().unwrap().port();
         drop(l);
-        let e = connect("127.0.0.1", port, false, Duration::from_secs(2)).await.unwrap_err();
+        // Windows reintenta el SYN a un puerto cerrado unos 2 s antes de dar «rechazada».
+        let e = connect("127.0.0.1", port, false, Duration::from_secs(10)).await.unwrap_err();
         assert!(matches!(e, NetError::ConnectionRefused { .. }), "{e:?}");
         let e = connect("no-existe.invalid", 993, true, Duration::from_secs(5)).await.unwrap_err();
         assert!(matches!(e, NetError::HostNotFound { .. } | NetError::Timeout), "{e:?}");

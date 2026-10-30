@@ -43,7 +43,10 @@ fn second_instance_forwards_args_and_exits() {
     let out = run(&[]);
     assert!(out.status.success());
     let got = got.lock().unwrap().clone();
-    let eml = work.path().join("factura.eml");
+    // macOS: /var es un enlace a /private/var y el directorio actual del hijo llega ya resuelto.
+    // (En Windows `canonicalize` añadiría el prefijo \\?\, así que solo se resuelve en macOS.)
+    let base = if cfg!(target_os = "macos") { work.path().canonicalize().unwrap() } else { work.path().to_path_buf() };
+    let eml = base.join("factura.eml");
     assert_eq!(got, vec![vec![eml.to_string_lossy().into_owned(), "mailto:ana@example.com".into()], vec![]]);
     drop(bridge);
 }
