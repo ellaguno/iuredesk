@@ -20,6 +20,8 @@ pub enum Section {
     General,
     Appearance,
     Mail,
+    /// UX-5: imágenes remotas y rastreo.
+    Privacy,
     /// Reglas, categorías y respuesta automática (F5.3).
     Rules,
     /// Etiquetas y sus colores (F5.3).
@@ -30,11 +32,12 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Section; 8] = [
+    const ALL: [Section; 9] = [
         Section::Accounts,
         Section::General,
         Section::Appearance,
         Section::Mail,
+        Section::Privacy,
         Section::Rules,
         Section::Labels,
         Section::Integrations,
@@ -47,6 +50,7 @@ impl Section {
             Section::General => pick("General", "General"),
             Section::Appearance => pick("Appearance", "Apariencia"),
             Section::Mail => pick("Mail", "Correo"),
+            Section::Privacy => pick("Privacy", "Privacidad"),
             Section::Rules => pick("Rules", "Reglas"),
             Section::Labels => pick("Labels", "Etiquetas"),
             Section::Integrations => pick("Integrations", "Integraciones"),
@@ -60,6 +64,7 @@ impl Section {
             Section::General => Icon::Settings,
             Section::Appearance => Icon::Sun,
             Section::Mail => Icon::Mail,
+            Section::Privacy => Icon::Lock,
             Section::Rules => Icon::Filter,
             Section::Labels => Icon::Tag,
             Section::Integrations => Icon::Sparkle,
@@ -141,6 +146,7 @@ pub fn show(app: &mut DeskApp, ctx: &Context) {
                         Section::General => general(app, ui, &mut run),
                         Section::Appearance => appearance(app, ui, &mut run),
                         Section::Mail => mail(app, ui),
+                        Section::Privacy => crate::remote_images_ui::settings_section(app, ui),
                         Section::Rules => crate::rules_ui::settings_section(app, ui),
                         Section::Labels => crate::rules_ui::labels_section(app, ui),
                         Section::Integrations => {

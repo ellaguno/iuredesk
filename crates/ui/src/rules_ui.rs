@@ -8,7 +8,7 @@ use egui::{Context, RichText, Ui};
 use iuredesk_engine::iuredesk_rules::category::Category;
 use iuredesk_engine::iuredesk_rules::vacation::Vacation;
 use iuredesk_engine::iuredesk_rules::{Action, Condition, Field, FolderRef, Rule, TextOp};
-use iuredesk_engine::{IureKind, Notice, RulePlace, Text};
+use iuredesk_engine::{Notice, RulePlace, Text};
 use iuredesk_model::{AccountId, MessageId};
 use iurefficient_ui::{Icon, icons, pick, primary_button, section_label, segmented, theme};
 
@@ -200,73 +200,147 @@ pub(crate) fn category_tabs(app: &mut DeskApp, ui: &mut Ui) {
         return;
     }
     let counts = app.session.category_counts();
+    let iure_tab = app.session.iure_tab();
+    let iure_shown = app.session.iure_tab_shown();
+    let (_, iure_unread) = app.session.iure_tab_counts();
     let current = app.session.category_tab();
     let c = theme::colors(ui);
     let d = theme::density(ui.ctx());
     let mut chosen = None;
+    let mut chose_iure = false;
     egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 10, top: 0, bottom: 0 }).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            for (k, cat) in Category::ALL.into_iter().enumerate() {
-                let (total, unread) = counts.get(k).copied().unwrap_or((0, 0));
-                if cat != Category::Primary && total == 0 && cat != current {
-                    continue;
-                }
-                let label = bi(cat.label());
-                let font =
-                    if cat == current { theme::bold_font(ui.ctx(), d.body_size()) } else { theme::body_font(ui.ctx()) };
-                let ink = if cat == current { c.text } else { c.text_muted };
-                let g = ui.painter().layout_no_wrap(label.clone(), font, ink);
-                let badge = (unread > 0).then(|| unread.min(999).to_string());
-                let bw = badge.as_ref().map_or(0.0, |b| 10.0 + 7.0 * b.len() as f32);
-                let w = 12.0 + 16.0 + 6.0 + g.size().x + bw + 12.0;
-                let (rect, resp) =
-                    ui.allocate_exact_size(egui::vec2(w, d.control_height() + 6.0), egui::Sense::click());
-                let col = crate::widgets::rgb(cat.color());
-                if resp.hovered() {
-                    ui.painter().rect_filled(rect, 4.0, c.hover);
-                }
-                let ir = egui::Rect::from_center_size(
-                    egui::pos2(rect.left() + 20.0, rect.center().y),
-                    egui::vec2(16.0, 16.0),
-                );
-                icons::paint(ui.painter(), ir, category_icon(cat), if cat == current { col } else { ink }, col);
-                ui.painter().galley(egui::pos2(ir.right() + 6.0, rect.center().y - g.size().y / 2.0), g.clone(), ink);
-                if let Some(b) = &badge {
-                    let br = egui::Rect::from_min_size(
-                        egui::pos2(ir.right() + 6.0 + g.size().x + 6.0, rect.center().y - 8.0),
-                        egui::vec2(bw - 4.0, 16.0),
-                    );
-                    ui.painter().rect_filled(br, 8.0, col);
-                    ui.painter().text(
-                        br.center(),
-                        egui::Align2::CENTER_CENTER,
-                        b,
-                        theme::small_font(ui.ctx()),
-                        egui::Color32::WHITE,
-                    );
-                }
-                if cat == current {
-                    let bar = egui::Rect::from_min_max(
-                        egui::pos2(rect.left() + 4.0, rect.bottom() - 3.0),
-                        egui::pos2(rect.right() - 4.0, rect.bottom()),
-                    );
-                    ui.painter().rect_filled(bar, 1.5, col);
-                }
-                let name = match &badge {
-                    Some(b) => format!("{label}, {b} {}", pick("unread", "sin leer")),
-                    None => label.clone(),
-                };
-                iurefficient_ui::a11y::toggle(&resp, &name, cat == current);
-                if resp.clicked() {
-                    chosen = Some(cat);
-                }
-            }
-        });
+        // UX-5: con la pestaña Iurefficient las pestañas pueden no caber: se desplazan en vez de
+        // ensanchar la lista (que entonces se cortaba a la derecha).
+        let w = ui.available_width();
+        egui::ScrollArea::horizontal()
+            .id_salt("category-tabs")
+            .max_width(w)
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    // UX-5: «Iurefficient», la primera: todo lo que tiene relación (filtro transversal).
+                    if iure_shown && iure_tab_button(ui, iure_tab, iure_unread) {
+                        chose_iure = true;
+                    }
+                    for (k, cat) in Category::ALL.into_iter().enumerate() {
+                        let (total, unread) = counts.get(k).copied().unwrap_or((0, 0));
+                        if cat != Category::Primary && total == 0 && (iure_tab || cat != current) {
+                            continue;
+                        }
+                        let label = bi(cat.label());
+                        let current = if iure_tab { None } else { Some(current) };
+                        let cat_on = Some(cat) == current;
+                        let font =
+                            if cat_on { theme::bold_font(ui.ctx(), d.body_size()) } else { theme::body_font(ui.ctx()) };
+                        let ink = if cat_on { c.text } else { c.text_muted };
+                        let g = ui.painter().layout_no_wrap(label.clone(), font, ink);
+                        let badge = (unread > 0).then(|| unread.min(999).to_string());
+                        let bw = badge.as_ref().map_or(0.0, |b| 10.0 + 7.0 * b.len() as f32);
+                        let w = 12.0 + 16.0 + 6.0 + g.size().x + bw + 12.0;
+                        let (rect, resp) =
+                            ui.allocate_exact_size(egui::vec2(w, d.control_height() + 6.0), egui::Sense::click());
+                        let col = crate::widgets::rgb(cat.color());
+                        if resp.hovered() {
+                            ui.painter().rect_filled(rect, 4.0, c.hover);
+                        }
+                        let ir = egui::Rect::from_center_size(
+                            egui::pos2(rect.left() + 20.0, rect.center().y),
+                            egui::vec2(16.0, 16.0),
+                        );
+                        icons::paint(ui.painter(), ir, category_icon(cat), if cat_on { col } else { ink }, col);
+                        ui.painter().galley(
+                            egui::pos2(ir.right() + 6.0, rect.center().y - g.size().y / 2.0),
+                            g.clone(),
+                            ink,
+                        );
+                        if let Some(b) = &badge {
+                            let br = egui::Rect::from_min_size(
+                                egui::pos2(ir.right() + 6.0 + g.size().x + 6.0, rect.center().y - 8.0),
+                                egui::vec2(bw - 4.0, 16.0),
+                            );
+                            ui.painter().rect_filled(br, 8.0, col);
+                            ui.painter().text(
+                                br.center(),
+                                egui::Align2::CENTER_CENTER,
+                                b,
+                                theme::small_font(ui.ctx()),
+                                egui::Color32::WHITE,
+                            );
+                        }
+                        if cat_on {
+                            let bar = egui::Rect::from_min_max(
+                                egui::pos2(rect.left() + 4.0, rect.bottom() - 3.0),
+                                egui::pos2(rect.right() - 4.0, rect.bottom()),
+                            );
+                            ui.painter().rect_filled(bar, 1.5, col);
+                        }
+                        let name = match &badge {
+                            Some(b) => format!("{label}, {b} {}", pick("unread", "sin leer")),
+                            None => label.clone(),
+                        };
+                        iurefficient_ui::a11y::toggle(&resp, &name, cat_on);
+                        if resp.clicked() {
+                            chosen = Some(cat);
+                        }
+                    }
+                })
+            });
     });
     if let Some(cat) = chosen {
         app.session.set_category_tab(cat);
+    } else if chose_iure {
+        app.session.set_iure_tab();
     }
+}
+
+/// UX-5: pestaña «Iurefficient» (solo el símbolo, con «Iurefficient» al pasar y para lectores
+/// de pantalla) y su contador de no leídos. Devuelve `true` si se pulsó.
+fn iure_tab_button(ui: &mut Ui, on: bool, unread: usize) -> bool {
+    let c = theme::colors(ui);
+    let d = theme::density(ui.ctx());
+    let dark = ui.visuals().dark_mode;
+    let brand = crate::iure_badge::fill(dark);
+    let badge = (unread > 0).then(|| unread.min(999).to_string());
+    let bw = badge.as_ref().map_or(0.0, |b| 10.0 + 7.0 * b.len() as f32);
+    let w = 12.0 + 15.0 + if badge.is_some() { 6.0 + bw - 4.0 } else { 0.0 } + 12.0;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, d.control_height() + 6.0), egui::Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, 4.0, c.hover);
+    }
+    let mr =
+        egui::Rect::from_center_size(egui::pos2(rect.left() + 12.0 + 7.0, rect.center().y), egui::vec2(14.0, 15.0));
+    let ink = if on || resp.hovered() { crate::iure_badge::mark_color(dark) } else { c.text_muted };
+    crate::iure_badge::paint_mark(ui.painter(), mr, ink);
+    if let Some(b) = &badge {
+        let br =
+            egui::Rect::from_min_size(egui::pos2(mr.right() + 6.0, rect.center().y - 8.0), egui::vec2(bw - 4.0, 16.0));
+        ui.painter().rect_filled(br, 8.0, brand);
+        ui.painter().text(
+            br.center(),
+            egui::Align2::CENTER_CENTER,
+            b,
+            theme::small_font(ui.ctx()),
+            egui::Color32::WHITE,
+        );
+    }
+    if on {
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + 4.0, rect.bottom() - 3.0),
+            egui::pos2(rect.right() - 4.0, rect.bottom()),
+        );
+        ui.painter().rect_filled(bar, 1.5, brand);
+    }
+    let name = match &badge {
+        Some(b) => format!("Iurefficient, {b} {}", pick("unread", "sin leer")),
+        None => "Iurefficient".to_string(),
+    };
+    iurefficient_ui::a11y::toggle(&resp, &name, on);
+    let resp = resp.on_hover_text(pick(
+        "Iurefficient — messages related to your CRM (they also stay in their category)",
+        "Iurefficient — correos con relación en tu CRM (siguen también en su categoría)",
+    ));
+    resp.clicked()
 }
 
 /// Botón «Solo Iurefficient» de la cabecera de la lista (solo con Iurefficient conectado).
@@ -292,25 +366,6 @@ pub(crate) fn iure_filter_button(app: &mut DeskApp, ui: &mut Ui) {
     if r.clicked() {
         app.session.set_iure_only(!on);
     }
-}
-
-fn iure_icon(k: IureKind) -> Icon {
-    match k {
-        IureKind::Contact => Icon::Person,
-        IureKind::Client => Icon::Contacts,
-        IureKind::Case => Icon::Folder,
-        IureKind::Opportunity => Icon::Money,
-        IureKind::Lead => Icon::Bolt,
-        IureKind::Ticket => Icon::Comment,
-    }
-}
-
-/// Pinta la insignia Iurefficient (fondo del color de la marca e icono por tipo).
-pub(crate) fn paint_iure_badge(p: &egui::Painter, rect: egui::Rect, kind: IureKind, brand: egui::Color32) {
-    p.rect_filled(rect, 4.0, brand);
-    let side = rect.height() - 3.0;
-    let ir = egui::Rect::from_center_size(rect.center(), egui::vec2(side, side));
-    icons::paint(p, ir, iure_icon(kind), egui::Color32::WHITE, egui::Color32::WHITE);
 }
 
 /// Chips de etiquetas: con texto (o puntos de color si `dots`). Devuelve el ancho usado.
@@ -360,8 +415,9 @@ pub(crate) fn reading_chips(app: &mut DeskApp, ui: &mut Ui, env: &iuredesk_model
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         if let Some(b) = &badge {
-            let (r, resp) = ui.allocate_exact_size(egui::vec2(18.0, 16.0), egui::Sense::hover());
-            paint_iure_badge(ui.painter(), r, b.kind, c.brand);
+            let dark = ui.visuals().dark_mode;
+            let (r, resp) = ui.allocate_exact_size(crate::iure_badge::capsule_size(16.0), egui::Sense::hover());
+            crate::iure_badge::paint_capsule(ui.painter(), r, b.kind, dark);
             ui.label(RichText::new(b.tip.get()).color(c.brand).size(theme::density(ui.ctx()).small_size()));
             iurefficient_ui::a11y::label(&resp, b.tip.get());
         }

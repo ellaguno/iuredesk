@@ -7,6 +7,7 @@
 //!   `vacation`) y cliente ManageSieve (RFC 5804) para que corran en el servidor cuando se puede.
 //! - [`snooze`]: «Posponer» con horas de cualquier usuario («Más tarde», «Mañana»…).
 //! - [`followup`]: «Recordarme si no responden en N días».
+//! - [`iure_mail`]: correo que envía la propia instancia de Iurefficient (avisos, menciones).
 //! - [`focus`]: «Enfocados / Otros» por heurísticas locales (sin IA).
 //! - [`unsubscribe`]: baja en un clic (RFC 8058) o por correo (`mailto:`).
 //! - [`vacation`]: respuesta automática local con protección contra bucles (RFC 3834).
@@ -28,6 +29,7 @@ pub mod eval;
 pub mod facts;
 pub mod focus;
 pub mod followup;
+pub mod iure_mail;
 pub mod managesieve;
 pub mod rule;
 pub mod sieve;

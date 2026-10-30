@@ -200,6 +200,15 @@ pub struct Prefs {
     /// UX-3: tamaño de la ventana de lectura propia (puntos), recordado al cerrarla.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reader_size: Option<[u32; 2]>,
+    /// UX-5: cuándo se cargan solas las imágenes remotas.
+    #[serde(default)]
+    pub remote_images: crate::remote_images::RemoteImages,
+    /// UX-5: remitentes cuyas imágenes se muestran siempre (minúsculas).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_senders: Vec<String>,
+    /// UX-5: dominios cuyas imágenes se muestran siempre (minúsculas; incluye subdominios).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_domains: Vec<String>,
 }
 
 /// UX-3: dónde se muestra el panel contextual.
@@ -328,6 +337,9 @@ impl Default for Prefs {
             context_collapsed: false,
             context_layout: ContextLayout::Auto,
             reader_size: None,
+            remote_images: crate::remote_images::RemoteImages::Ask,
+            image_senders: Vec::new(),
+            image_domains: Vec::new(),
         }
     }
 }

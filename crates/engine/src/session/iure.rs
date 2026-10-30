@@ -196,6 +196,9 @@ pub(crate) struct Iure {
     busy: usize,
     pending_compose: Vec<crate::compose::ComposeDraft>,
     prefetch: Prefetch,
+    /// UX-5: tareas abiertas de la lista «Iurefficient» (título, texto en minúsculas) por
+    /// generación de datos, para la cápsula de los correos que mencionan.
+    task_refs: Option<(u64, Vec<(String, String)>)>,
 }
 
 /// F7.1: ritmo de la consulta previa de contexto (sin red; probado aparte).
@@ -272,6 +275,7 @@ impl Default for Iure {
             busy: 0,
             pending_compose: Vec::new(),
             prefetch: Prefetch::default(),
+            task_refs: None,
         }
     }
 }
@@ -550,9 +554,62 @@ impl Session {
         }
     }
 
+    /// UX-5: anfitrión de la instancia configurada (con sesión, o la última conocida).
+    pub(crate) fn iure_host(&self) -> Option<String> {
+        if let Some(h) = self.iure.status.host() {
+            return Some(h.to_string());
+        }
+        if let Some((h, _, _)) = &self.iure.who {
+            return Some(h.clone());
+        }
+        matches!(self.iure.backend, Backend::Sample).then(|| "demo.iurefficient.com".to_string())
+    }
+
+    /// UX-5: título de una tarea abierta de la lista «Iurefficient» que se refiere a este correo
+    /// (su `Message-ID` o su asunto en el título o las notas: «Responder: …», «Correo de … — «…»»).
+    /// Sin red; el índice se rehace cuando cambian los datos.
+    pub(crate) fn iure_task_for(&mut self, env: &MessageEnvelope) -> Option<String> {
+        let gen_now = self.data_gen;
+        if self.iure.task_refs.as_ref().is_none_or(|(g, _)| *g != gen_now) {
+            let mut refs = Vec::new();
+            if let Ok(lists) = self.store.task_lists() {
+                for l in lists.into_iter().filter(|l| l.remote_path == IURE_TASKS_PATH) {
+                    for t in self.store.tasks(l.id).unwrap_or_default().into_iter().filter(|t| !t.is_done()).take(2_000)
+                    {
+                        let text: String = format!("{}\n{}", t.summary, t.description)
+                            .chars()
+                            .take(4_000)
+                            .collect::<String>()
+                            .to_lowercase();
+                        refs.push((t.summary.chars().take(200).collect::<String>(), text));
+                    }
+                }
+            }
+            self.iure.task_refs = Some((gen_now, refs));
+        }
+        let refs = &self.iure.task_refs.as_ref()?.1;
+        if refs.is_empty() {
+            return None;
+        }
+        let mid = env
+            .message_id
+            .as_deref()
+            .map(|m| m.trim().trim_start_matches('<').trim_end_matches('>').to_lowercase())
+            .filter(|m| m.len() >= 6);
+        let (base, _) = iuredesk_model::normalize_subject(&env.subject);
+        let base = base.trim().to_lowercase();
+        // Un asunto corto («Hola», «Factura») daría falsos positivos.
+        let base = (base.chars().count() >= 12).then_some(base);
+        refs.iter()
+            .find(|(_, text)| {
+                mid.as_deref().is_some_and(|m| text.contains(m)) || base.as_deref().is_some_and(|b| text.contains(b))
+            })
+            .map(|(title, _)| title.clone())
+    }
+
     /// F5.3: cambia cuando hay vínculos o contextos nuevos (para rehacer las insignias).
-    pub(crate) fn iure_badge_gen(&self) -> (u64, usize) {
-        (self.iure.links_gen, self.iure.contexts.len())
+    pub(crate) fn iure_badge_gen(&self) -> (u64, u64, usize) {
+        (self.iure.links_gen, self.data_gen, self.iure.contexts.len())
     }
 
     /// F5.3: hay sesión de Iurefficient (o el ejemplo).
@@ -1176,7 +1233,12 @@ impl Session {
                 match result {
                     Ok(c) => {
                         self.iure_on_success();
+                        let related = !c.is_empty();
                         self.iure.contexts.insert(key, CtxEntry::Ready(c, Instant::now()));
+                        // UX-5: una relación nueva cambia la pestaña «Iurefficient» y su contador.
+                        if related {
+                            self.iure_relations_changed();
+                        }
                     }
                     Err(e) => {
                         self.iure_on_error(&e);

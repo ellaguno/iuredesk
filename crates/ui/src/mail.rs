@@ -818,6 +818,7 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         }
         row.style(RowStyle { unread, flagged: env.flags.flagged, muted: false });
         let col = *row.colors();
+        let dark = col.dark;
         let who = if sent_like.contains(&env.folder) {
             let to = env.to.first().map(|m| m.display().to_string()).unwrap_or_default();
             format!("{} {to}", pick("To:", "Para:"))
@@ -825,11 +826,14 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             env.sender_display().to_string()
         };
         let date = list_date(env.date, now, zone);
-        let subject = if env.subject.trim().is_empty() {
-            pick("(no subject)", "(sin asunto)").to_string()
+        // UX-5: con la cápsula, la etiqueta «[Iurefficient]» del asunto sobra.
+        let shown = if badge.is_some() {
+            iuredesk_engine::iuredesk_rules::iure_mail::display_subject(&env.subject)
         } else {
-            env.subject.clone()
+            env.subject.as_str()
         };
+        let subject =
+            if shown.trim().is_empty() { pick("(no subject)", "(sin asunto)").to_string() } else { shown.to_string() };
         if unread {
             row.describe(pick("unread", "no leído"));
         }
@@ -851,12 +855,13 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             let cell = row.cell(2);
             let mut x = cell.left();
             if let Some(b) = &badge {
-                let br = Rect::from_min_size(pos2(x, cell.center().y - 7.0), vec2(16.0, 14.0));
-                crate::rules_ui::paint_iure_badge(row.painter(), br, b.kind, col.brand);
-                if hover.is_some_and(|h| br.contains(h)) {
+                // UX-5: en densa, solo el símbolo de Iurefficient en el color de la marca.
+                let br = Rect::from_min_size(pos2(x, cell.center().y - 6.0), vec2(11.0, 12.0));
+                crate::iure_badge::paint_dot(row.painter(), br, dark);
+                if hover.is_some_and(|h| br.expand(3.0).contains(h)) {
                     badge_tip = Some(b.tip.get().to_string());
                 }
-                x += 20.0;
+                x += 17.0;
             }
             x += crate::rules_ui::paint_label_chips(row.painter(), &ctx, pos2(x, cell.center().y), 40.0, &labels, true);
             if x > cell.left() {
@@ -904,12 +909,14 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         let who_rect = Rect::from_min_max(line1.min, pos2(line1.right() - date_w - 8.0 - count_w, line1.bottom()));
         // F5.3: insignia Iurefficient a la izquierda de la fecha.
         let who_rect = if let Some(b) = &badge {
-            let br = Rect::from_min_size(pos2(who_rect.right() - 18.0, line1.center().y - 8.0), vec2(20.0, 16.0));
-            crate::rules_ui::paint_iure_badge(row.painter(), br, b.kind, col.brand);
+            // UX-5: cápsula (símbolo + tipo) a la izquierda de la fecha.
+            let size = crate::iure_badge::capsule_size(17.0);
+            let br = Rect::from_min_size(pos2(who_rect.right() - size.x + 2.0, line1.center().y - size.y / 2.0), size);
+            crate::iure_badge::paint_capsule(row.painter(), br, b.kind, dark);
             if hover.is_some_and(|h| br.contains(h)) {
                 badge_tip = Some(b.tip.get().to_string());
             }
-            Rect::from_min_max(who_rect.min, pos2(who_rect.right() - 24.0, who_rect.bottom()))
+            Rect::from_min_max(who_rect.min, pos2(br.left() - 6.0, who_rect.bottom()))
         } else {
             who_rect
         };
@@ -1450,26 +1457,9 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
             Some(HtmlState::Ready { tiles, size_px, links, blocked, scale }) => {
                 let (tiles, size_px, links, blocked, scale) =
                     (tiles.clone(), *size_px, links.clone(), blocked.clone(), *scale);
-                if !blocked.is_empty() && !app.html.remote_ready(env.id) {
-                    let loading = app.html.remote_loading(env.id);
-                    let r = Banner::new(
-                        Severity::Info,
-                        if loading {
-                            pick("Downloading remote images…", "Descargando imágenes remotas…")
-                        } else {
-                            pick(
-                                "Remote images blocked to protect your privacy.",
-                                "Imágenes remotas bloqueadas para proteger tu privacidad.",
-                            )
-                        },
-                    )
-                    .action(pick("Show", "Mostrar"))
-                    .show(ui);
-                    if r.action && !loading {
-                        app.html.allow_remote(&mut app.session, env.id, blocked);
-                    }
-                    ui.add_space(8.0);
-                }
+                // UX-5: aviso con «Mostrar siempre de este remitente / dominio», o carga sola
+                // según Ajustes → Privacidad.
+                crate::remote_images_ui::banner(app, ui, env.id, html, blocked);
                 // `scale` = píxeles por px CSS; en pantalla, cada px CSS mide `zoom` puntos.
                 let natural = vec2(size_px[0] as f32 / scale, size_px[1] as f32 / scale) * zoom;
                 // Acercado, lo ancho se desplaza en horizontal en vez de reducirse otra vez.
