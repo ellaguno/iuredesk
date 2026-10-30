@@ -457,6 +457,29 @@ async fn pop3_incremental_with_delete_policy() {
         }
     }
     assert_eq!(count, 2);
+    // Regresión (sin copia en el servidor): a la tercera pasada `known` ya olvidó los UIDL borrados
+    // y la pasada se tomaba por «la primera»: no avisaba de correo nuevo.
+    for _ in 0..2 {
+        e.handle.sync_now_wait("t1").await.unwrap();
+    }
+    while matches!(e.events.try_recv(), Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_))) {}
+    p.deliver("u11", &msg(11, 0));
+    e.handle.sync_now_wait("t1").await.unwrap();
+    let mut late = 0;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while late == 0 && std::time::Instant::now() < deadline {
+        loop {
+            match e.events.try_recv() {
+                Ok(SyncEvent::NewMail { count: c, .. }) => late += c,
+                Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {}
+                Err(_) => break,
+            }
+        }
+        if late == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+    assert_eq!(late, 1, "sin copia en el servidor también se avisa del correo nuevo");
     // Cuerpos completos e hilos.
     let any = e.store.list_envelopes(ib, 0, 1).unwrap();
     assert!(any[0].blob.is_some());

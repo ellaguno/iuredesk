@@ -88,7 +88,10 @@ impl Pop3Account {
         let inbox = self.inbox()?;
         let key = pop3_key(ctx.acct);
         let mut known: Pop3Known = state::load(&ctx.store, &key).unwrap_or_default();
-        let initial = known.is_empty();
+        // «Primera descarga» = ni UIDL conocidos ni correo en la bandeja. Sin copia en el servidor
+        // los UIDL se olvidan al borrar, así que `known` vacío no basta: antes cada pasada parecía
+        // la primera y nunca se avisaba de correo nuevo.
+        let initial = known.is_empty() && ctx.store.count(inbox.id).map(|c| c.total == 0).unwrap_or(true);
         let mut c = self.connect().await?;
         let uidl = c.uidl().await?;
         let now = Utc::now().timestamp();
