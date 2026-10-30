@@ -2,7 +2,8 @@
 //!
 //! - `ci`: fmt, clippy -D warnings, pruebas, layers, purity, licenses, assets.
 //! - `bench [--quick]`: bancos de rendimiento en release (`docs/rendimiento.md`).
-//! - `layers`: ninguna capa depende de una superior; nada bajo la UI depende de egui/eframe/winit/rfd.
+//! - `layers`: ninguna capa depende de una superior; nada bajo la UI depende de egui/eframe/winit/rfd;
+//!   y `unsafe` solo en `iuredesk-macos-events/src/macos.rs` (ver `unsafety.rs`, R1.4).
 //! - `purity`: política "solo Rust" (PLAN.md D1): ningún crate enlaza bibliotecas en C/C++ salvo
 //!   las excepciones de `docs/excepciones.md`.
 //! - `licenses`: solo licencias permisivas (el proyecto es Apache-2.0).
@@ -32,6 +33,7 @@
 mod icons;
 mod package;
 mod sign;
+mod unsafety;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -45,8 +47,12 @@ fn main() -> ExitCode {
     let task = std::env::args().nth(1).unwrap_or_else(|| "ci".into());
     let r = match task.as_str() {
         "ci" => ci(),
-        "layers" => metadata(None).and_then(|m| layers(&m)),
-        "purity" => purity_all(),
+        "layers" => metadata(None).and_then(|m| layers(&m).and_then(|()| unsafety::check(&m))),
+        // `cargo xtask purity <triple>`: revisar otro SO (p. ej. aarch64-apple-darwin) sin compilar.
+        "purity" => match std::env::args().nth(2) {
+            Some(t) => metadata(Some(&t)).and_then(|m| purity(&m, Some(&t))),
+            None => purity_all(),
+        },
         "licenses" => metadata(None).and_then(|m| licenses(&m)),
         "notices" => match std::env::args().nth(2) {
             // `cargo xtask notices <triple>`: comprobar los avisos de otro SO sin compilar.
@@ -87,6 +93,7 @@ fn ci() -> Res {
     cargo(&["test", "--workspace", "-q"])?;
     let m = metadata(None)?;
     layers(&m)?;
+    unsafety::check(&m)?;
     purity_all()?;
     licenses(&m)?;
     notices_file(&root().join("target/THIRD-PARTY-NOTICES.txt"))?;
@@ -164,6 +171,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("iuredesk-import", 3),
     ("iuredesk-rules", 3),
     ("iuredesk-desktop", 3),
+    ("iuredesk-macos-events", 3),
     ("iuredesk-engine", 4),
     ("iuredesk-integrations", 4),
     ("iuredesk-mcp", 4),

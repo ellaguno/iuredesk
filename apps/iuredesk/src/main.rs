@@ -9,6 +9,9 @@
 //!   `…/compose?to=…` llevan al mensaje, al evento o al redactor.
 //! - **Una sola instancia** (R1.2): si IureDesk ya está abierto con el mismo almacén, se le pasan
 //!   los argumentos por el puente IPC (que trae su ventana al frente) y este proceso termina.
+//! - **macOS** (R1.4): el sistema no pasa enlaces ni archivos por argumento sino como Apple Events
+//!   (`kAEGetURL`, `kAEOpenDocuments`); `iuredesk-macos-events` los recoge desde antes del primer
+//!   cuadro y entran por el mismo camino que los argumentos.
 //! - `--minimized`: arranca minimizado (lo usa «Abrir IureDesk al iniciar sesión»).
 //! - `--mcp`: servidor MCP por stdio (Claude, Copilot). Si la ventana está abierta, cada llamada
 //!   corre dentro de ella por el puente IPC; si no, abre el almacén solo durante la llamada.
@@ -290,9 +293,12 @@ fn main() -> ExitCode {
     let options = eframe::NativeOptions { viewport, ..Default::default() };
     let minimize = cli.minimized;
     let ctx_slot = Arc::clone(&wake.ctx);
+    // R1.4: antes del bucle de eventos, para no perder el enlace o archivo con que se lanzó.
+    apple_events(&wake);
+    let app_wake = wake.clone();
     let creator = move |cc: &eframe::CreationContext<'_>| -> Result<Box<dyn eframe::App>, _> {
         let _ = ctx_slot.set(cc.egui_ctx.clone());
-        Ok(Box::new(App { app, _bridge: bridge, minimize }))
+        Ok(Box::new(App { app, _bridge: bridge, minimize, wake: app_wake }))
     };
     match eframe::run_native("IureDesk", options, Box::new(creator)) {
         Ok(()) => ExitCode::SUCCESS,
@@ -301,6 +307,22 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// macOS: registra los manejadores de Apple Events (enlaces `mailto:`/`iuredesk://` y archivos
+/// `.eml`/`.ics`/`.vcf`); lo que llega despierta a la ventana y se lee en cada cuadro. En los demás
+/// sistemas no hace nada.
+fn apple_events(wake: &Wake) {
+    if let Err(e) = iuredesk_macos_events::install() {
+        eprintln!("IureDesk: no se pueden recibir enlaces ni archivos del sistema ({e})");
+        return;
+    }
+    let ctx = Arc::clone(&wake.ctx);
+    iuredesk_macos_events::set_waker(Arc::new(move || {
+        if let Some(c) = ctx.get() {
+            c.request_repaint();
+        }
+    }));
 }
 
 /// Puente IPC para `iuredesk --mcp` (redb admite un solo proceso): las herramientas corren dentro
@@ -381,12 +403,19 @@ struct App {
     _bridge: Option<iuredesk_mcp::BridgeHandle>,
     /// `--minimized`: minimizar en el primer cuadro.
     minimize: bool,
+    /// Bandeja de lo que llega con la ventana abierta (aquí entran los Apple Events de macOS).
+    wake: Wake,
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if std::mem::take(&mut self.minimize) {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+        // R1.4: enlaces y archivos que macOS mandó como Apple Events (vacío en otros sistemas).
+        let from_os = iuredesk_macos_events::drain();
+        if !from_os.is_empty() {
+            self.wake.push(from_os);
         }
         self.app.ui(ui);
     }

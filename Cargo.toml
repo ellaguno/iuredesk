@@ -20,6 +20,7 @@ members = [
     "crates/import",
     "crates/rules",
     "crates/desktop",
+    "crates/macos-events",
     "crates/engine",
     "crates/assistant",
     "crates/html-view",
@@ -57,6 +58,7 @@ iuredesk-mcp = { path = "crates/mcp-server" }
 iuredesk-import = { path = "crates/import" }
 iuredesk-rules = { path = "crates/rules" }
 iuredesk-desktop = { path = "crates/desktop" }
+iuredesk-macos-events = { path = "crates/macos-events" }
 iuredesk-engine = { path = "crates/engine" }
 iuredesk-assistant = { path = "crates/assistant" }
 iuredesk-html-view = { path = "crates/html-view" }

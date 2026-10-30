@@ -1,0 +1,33 @@
+[package]
+name = "iuredesk-macos-events"
+description = "macOS: recibe los Apple Events de abrir enlace (kAEGetURL) y abrir documentos (kAEOpenDocuments) que winit no entrega"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+thiserror = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true, features = [
+    # `objc2-core-services` solo aporta los alias `AEEventClass`/`AEKeyword` (u32) de la firma.
+    "NSAppleEventDescriptor", "NSAppleEventManager", "NSNotification", "NSURL", "objc2-core-services",
+] }
+
+# R1.4 (decisión del dueño 2026-10-29): el ÚNICO crate del workspace con `unsafe`, solo en macOS
+# (`src/macos.rs`). No hereda `[workspace.lints]` porque `forbid(unsafe_code)` no se puede
+# relajar; aquí va `deny` y `src/lib.rs` lo vuelve `forbid` fuera de macOS. El resto de lints del
+# workspace se copian a mano. `cargo xtask layers` comprueba que ningún otro crate haga esto.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "allow"
+type_complexity = "allow"
+undocumented_unsafe_blocks = "deny"
