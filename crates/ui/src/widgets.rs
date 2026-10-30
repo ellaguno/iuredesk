@@ -161,6 +161,10 @@ pub fn secret_field(ui: &mut Ui, value: &mut String, id_salt: &str, hint: &str, 
     };
     let inner = ui.horizontal(|ui| {
         let r = ui.add(egui::TextEdit::singleline(value).password(!visible).hint_text(hint).desired_width(w));
+        // Nombre accesible: el texto de ayuda (UX-4; antes el campo no tenía nombre).
+        let (enabled, name) = (r.enabled(), hint.to_string());
+        let role = if visible { egui::Role::TextInput } else { egui::Role::PasswordInput };
+        r.widget_info(|| egui::WidgetInfo::labeled(role, enabled, name.clone()));
         let tip = if visible {
             iurefficient_ui::pick("Hide password", "Ocultar contraseña")
         } else {

@@ -1684,8 +1684,14 @@ impl Session {
                 if let Some(w) = self.wizard.as_mut()
                     && w.job == Some(id)
                 {
-                    w.step = WizardStep::Provider;
                     w.job = None;
+                    w.cancel = None;
+                    // Del formulario manual no se sale (UX-4): se corrige y se vuelve a probar.
+                    w.step = if w.step == WizardStep::Manual { WizardStep::Manual } else { WizardStep::Provider };
+                    if let Some(m) = w.manual.as_mut() {
+                        m.incoming_test = None;
+                        m.outgoing_test = None;
+                    }
                 }
                 Some(Notice::error(t))
             }
@@ -1864,11 +1870,31 @@ impl Session {
             w.discovery = None;
             w.message = None;
             w.job = None;
-            w.manual = None;
             w.existing = None;
             w.oauth_issue = None;
+            // UX-4: lo escrito (formulario manual, contraseña) se conserva para esta dirección;
+            // `wizard_forget_other_email` lo descarta si se cambia la dirección.
+            if let Some(m) = w.manual.as_mut() {
+                m.incoming_test = None;
+                m.outgoing_test = None;
+            }
+            if w.typed_for.is_none() {
+                w.manual = None;
+                w.password.clear();
+            }
+        }
+    }
+
+    /// Descarta el formulario manual y la contraseña si se escribieron para otra dirección, y
+    /// recuerda la dirección actual como dueña de lo que se escriba ahora.
+    pub(crate) fn wizard_forget_other_email(&mut self) {
+        let Some(w) = self.wizard.as_mut() else { return };
+        let email = w.email.trim().to_lowercase();
+        if w.typed_for.as_ref().is_some_and(|e| *e != email) {
+            w.manual = None;
             w.password.clear();
         }
+        w.typed_for = Some(email);
     }
 
     /// Busca el proveedor del correo escrito (en segundo plano).
@@ -1886,6 +1912,7 @@ impl Session {
         if self.wizard_check_existing() {
             return;
         }
+        self.wizard_forget_other_email();
         let job = self.bg.spawn(async move {
             let r = iuredesk_autoconfig::discover(&email).await.map_err(|e| {
                 Text::new(

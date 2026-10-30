@@ -34,6 +34,7 @@ impl Session {
     /// Abre «Configurar manualmente» con lo que haya encontrado el descubrimiento (o
     /// `mail.<dominio>`). Conserva el formulario si ya se estaba llenando.
     pub fn wizard_manual(&mut self) {
+        self.wizard_forget_other_email();
         let Some(w) = self.wizard.as_mut() else { return };
         if let Some(c) = w.cancel.take() {
             c.cancel();

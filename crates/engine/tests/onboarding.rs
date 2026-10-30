@@ -426,3 +426,98 @@ fn manual_back_returns_to_where_you_came_from() {
     s.wizard_manual_back();
     assert_eq!(step(&s), Some(WizardStep::Email));
 }
+
+/// Puerto local sin nadie escuchando: la conexión se rechaza al instante.
+fn closed_port() -> u16 {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    l.local_addr().unwrap().port()
+}
+
+/// UX-4 (informe del dueño): si «Probar conexión» falla, el formulario manual y la contraseña
+/// siguen ahí, cada sección dice qué falló, y se corrige y se vuelve a probar.
+#[test]
+fn a_failed_manual_test_keeps_everything_typed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _) = session(dir.path(), &[]);
+    s.wizard_begin();
+    s.wizard.as_mut().unwrap().email = "ellaguno@confiabilidad.com.mx".into();
+    s.wizard_manual();
+    let (pin, pout) = (closed_port(), closed_port());
+    {
+        let w = s.wizard.as_mut().unwrap();
+        w.password = "secreto".into();
+        let m = w.manual.as_mut().unwrap();
+        m.set_protocol(Protocol::Pop3);
+        for (srv, port) in [(&mut m.incoming, pin), (&mut m.outgoing, pout)] {
+            srv.host = "127.0.0.1".into();
+            srv.port = port;
+            srv.security = Security::Plain;
+            srv.username = "ellaguno".into();
+        }
+        m.same_password = false;
+        m.outgoing_password = "otra".into();
+        m.caldav_url = "https://dav.example/cal".into();
+    }
+    let typed = s.wizard.as_ref().unwrap().manual.clone().unwrap();
+    s.wizard_manual_test();
+    wait(&mut s, "prueba fallida", |s| s.wizard.as_ref().and_then(|w| w.manual.as_ref()).is_some_and(|m| !m.testing()));
+    let w = s.wizard.as_ref().unwrap();
+    assert_eq!(w.step, WizardStep::Manual);
+    assert_eq!(w.password, "secreto");
+    assert!(w.message.is_some());
+    let m = w.manual.as_ref().unwrap();
+    assert!(matches!(m.incoming_test, Some(ProbeStatus::Failed(_))), "{:?}", m.incoming_test);
+    assert!(matches!(m.outgoing_test, Some(ProbeStatus::Failed(_))), "{:?}", m.outgoing_test);
+    let mut kept = m.clone();
+    kept.incoming_test = None;
+    kept.outgoing_test = None;
+    assert_eq!(kept, typed, "lo escrito no cambia");
+    // Se corrige y se vuelve a probar.
+    assert!(w.can_continue());
+    s.wizard.as_mut().unwrap().manual.as_mut().unwrap().incoming.username = "ellaguno@confiabilidad.com.mx".into();
+    s.wizard_manual_test();
+    assert!(s.wizard.as_ref().unwrap().manual.as_ref().unwrap().testing());
+    wait(&mut s, "segunda prueba", |s| s.wizard.as_ref().and_then(|w| w.manual.as_ref()).is_some_and(|m| !m.testing()));
+    let w = s.wizard.as_ref().unwrap();
+    assert_eq!(w.step, WizardStep::Manual);
+    assert_eq!(w.manual.as_ref().unwrap().incoming.username, "ellaguno@confiabilidad.com.mx");
+}
+
+/// UX-4: «Atrás» no borra el formulario manual; con la misma dirección vuelve tal cual (también
+/// a media prueba), con otra empieza de cero.
+#[test]
+fn back_from_manual_keeps_the_form_for_the_same_address() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _) = session(dir.path(), &[]);
+    s.wizard_begin();
+    s.wizard.as_mut().unwrap().email = "ellaguno@confiabilidad.com.mx".into();
+    s.wizard_manual();
+    {
+        let w = s.wizard.as_mut().unwrap();
+        w.password = "secreto".into();
+        w.manual.as_mut().unwrap().incoming.host = "127.0.0.1".into();
+        w.manual.as_mut().unwrap().incoming.port = closed_port();
+        w.manual.as_mut().unwrap().outgoing.host = "127.0.0.1".into();
+        w.manual.as_mut().unwrap().outgoing.port = closed_port();
+    }
+    // «Atrás» a media prueba: el resultado tardío se ignora y el formulario no queda bloqueado.
+    s.wizard_manual_test();
+    s.wizard_manual_back();
+    assert_eq!(step(&s), Some(WizardStep::Email));
+    s.wizard.as_mut().unwrap().email = " Ellaguno@Confiabilidad.com.mx ".into();
+    s.wizard_manual();
+    let w = s.wizard.as_ref().unwrap();
+    assert_eq!(w.step, WizardStep::Manual);
+    assert_eq!(w.password, "secreto");
+    let m = w.manual.as_ref().unwrap();
+    assert_eq!(m.incoming.host, "127.0.0.1");
+    assert!(!m.testing(), "sin «Probando…» colgado");
+    assert!(w.can_continue());
+    // Otra dirección: formulario nuevo y sin contraseña.
+    s.wizard_manual_back();
+    s.wizard.as_mut().unwrap().email = "ana@otro.example".into();
+    s.wizard_manual();
+    let w = s.wizard.as_ref().unwrap();
+    assert!(w.password.is_empty());
+    assert_eq!(w.manual.as_ref().unwrap().incoming.host, "mail.otro.example");
+}
