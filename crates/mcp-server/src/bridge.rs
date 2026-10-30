@@ -84,8 +84,12 @@ pub struct BridgeOptions {
     pub context: Option<ToolContext>,
 }
 
-/// Carpeta de ejecución del usuario para el puente.
+/// Carpeta de ejecución del usuario para el puente. `IUREDESK_RUNTIME_DIR` la fija en todos los
+/// sistemas (pruebas, instalaciones portátiles); `XDG_RUNTIME_DIR` solo existe en Linux.
 pub fn runtime_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("IUREDESK_RUNTIME_DIR").filter(|d| !d.is_empty()) {
+        return PathBuf::from(d);
+    }
     dirs::runtime_dir().or_else(dirs::cache_dir).unwrap_or_else(std::env::temp_dir).join("iuredesk")
 }
 

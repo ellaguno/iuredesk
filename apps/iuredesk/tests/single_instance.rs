@@ -30,6 +30,8 @@ fn second_instance_forwards_args_and_exits() {
             .current_dir(work.path())
             .env("IUREDESK_DATA_DIR", data.path())
             .env("XDG_RUNTIME_DIR", runtime.path())
+            // Windows y macOS no tienen XDG_RUNTIME_DIR: la ruta del puente se fija igual en todos.
+            .env("IUREDESK_RUNTIME_DIR", runtime.path().join("iuredesk"))
             .output()
             .unwrap();
         assert!(start.elapsed() < Duration::from_secs(20), "no debe abrir otra ventana");
