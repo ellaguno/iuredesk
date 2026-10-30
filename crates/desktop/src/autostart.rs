@@ -183,7 +183,9 @@ pub fn set_at(path: &Path, program: &Path, enabled: bool, minimized: bool) -> Re
     if !enabled {
         return write_file(path, None);
     }
-    let content = if cfg!(target_os = "macos") || path.extension().is_some_and(|e| e == "plist") {
+    // El formato lo decide el archivo (macOS usa siempre un `.plist` en LaunchAgents), no el SO:
+    // así las pruebas del `.desktop` valen igual en macOS.
+    let content = if path.extension().is_some_and(|e| e == "plist") {
         launch_agent(program, minimized)
     } else {
         desktop_entry(program, minimized)
