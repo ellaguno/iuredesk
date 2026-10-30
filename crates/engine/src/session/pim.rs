@@ -50,6 +50,29 @@ impl Session {
         self.pim.generation = self.pim.generation.wrapping_add(1);
         self.pim.errors.clear();
         self.pim.failed_pass.clear();
+        // Google solo da calendario y contactos con «Iniciar sesión con Google» (OAuth): con una
+        // contraseña de app el servidor la rechaza. Se dice claro en vez de intentarlo y fallar.
+        let gmail_password: Vec<AccountId> = self
+            .accounts
+            .iter()
+            .filter(|a| {
+                a.kind == iuredesk_model::account::AccountKind::Gmail
+                    && !matches!(a.incoming.auth, iuredesk_model::account::AuthMethod::OAuth2 { .. })
+            })
+            .filter_map(|a| self.local_account_id(a))
+            .collect();
+        for id in gmail_password {
+            self.pim.errors.insert(
+                id,
+                super::AccountSync::Error {
+                    text: Text::new(
+                        "Calendar and contacts: Google only shares them when you sign in with Google. Use «Sign in again» and choose «Continue with Google».",
+                        "Calendario y contactos: Google solo los comparte si inicias sesión con Google. Usa «Volver a iniciar sesión» y elige «Continuar con Google».",
+                    ),
+                    reauth: true,
+                },
+            );
+        }
         if self.sync_options.is_none() {
             return;
         }

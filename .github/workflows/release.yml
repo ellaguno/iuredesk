@@ -21,6 +21,11 @@ env:
   CARGO_INCREMENTAL: "0"
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_PACKAGER_VERSION: "0.11.8"
+  # Identificadores OAuth incrustados al compilar (`option_env!`, docs/oauth.md). Sin ellos el botón
+  # «Continuar con Google/Microsoft» no aparece y Google solo da el correo con contraseña de app.
+  IUREDESK_GOOGLE_CLIENT_ID: ${{ secrets.IUREDESK_GOOGLE_CLIENT_ID }}
+  IUREDESK_GOOGLE_CLIENT_SECRET: ${{ secrets.IUREDESK_GOOGLE_CLIENT_SECRET }}
+  IUREDESK_MS_CLIENT_ID: ${{ secrets.IUREDESK_MS_CLIENT_ID }}
 
 jobs:
   package:

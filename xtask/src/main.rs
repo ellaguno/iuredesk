@@ -617,6 +617,15 @@ mod tests {
     use super::license_ok;
 
     #[test]
+    fn release_embeds_oauth_ids() {
+        // Regresión: al rehacer release.yml se perdieron y el instalador salió sin «Continuar con Google».
+        let wf = std::fs::read_to_string(super::root().join(".github/workflows/release.yml")).unwrap();
+        for v in ["IUREDESK_GOOGLE_CLIENT_ID", "IUREDESK_GOOGLE_CLIENT_SECRET", "IUREDESK_MS_CLIENT_ID"] {
+            assert!(wf.contains(&format!("{v}: ${{{{ secrets.{v} }}}}")), "falta {v} en release.yml");
+        }
+    }
+
+    #[test]
     fn spdx() {
         assert!(license_ok("MIT OR Apache-2.0"));
         assert!(license_ok("MIT/Apache-2.0"));

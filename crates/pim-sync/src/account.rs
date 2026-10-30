@@ -90,6 +90,8 @@ impl PimAccount {
                 ),
                 auth: DavAuth::OAuth,
             },
+            // Gmail con contraseña de app: Google rechaza CalDAV/CardDAV sin OAuth.
+            AccountKind::Gmail => return None,
             _ => {
                 if a.caldav_url.is_none() && a.carddav_url.is_none() {
                     return None;
@@ -202,6 +204,16 @@ mod tests {
             carddav_url: None,
             identities: vec![],
         }
+    }
+
+    #[test]
+    fn gmail_with_app_password_has_no_dav() {
+        // Google rechaza CalDAV/CardDAV con contraseña de app: no se intenta (el motor explica que
+        // hay que iniciar sesión con Google).
+        let mut g = acct(AccountKind::Gmail, AuthMethod::AppPassword);
+        g.caldav_url = Some("https://apidata.googleusercontent.com/caldav/v2/".into());
+        g.carddav_url = Some("https://www.googleapis.com/carddav/v1/principals/".into());
+        assert!(PimAccount::from_account(&g).is_none());
     }
 
     #[test]
