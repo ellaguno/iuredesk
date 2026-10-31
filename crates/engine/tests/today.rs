@@ -123,3 +123,66 @@ fn a_damaged_last_place_falls_back_to_today() {
     assert_eq!(s.folder_sel(), FolderSel::default());
     s.shutdown();
 }
+
+/// BUG-DUP: la cuenta de Workspace tiene suscrito el calendario principal de la de Gmail; las dos
+/// lo sincronizan. «Mi día» y las vistas lo muestran una sola vez, del calendario de la cuenta
+/// dueña; el duplicado queda oculto (se puede mostrar) y no se ofrece para escribir.
+#[test]
+fn calendar_shared_by_two_accounts_shows_once() {
+    use iuredesk_model::{AccountId, Calendar, Event, EventTime};
+    use iuredesk_store::AccountLabel;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = sample_store(dir.path());
+    let (work, gmail) = (AccountId(900), AccountId(901));
+    for (id, email) in [(work, "eduardo@llaguno.com"), (gmail, "eduardo.llaguno@gmail.com")] {
+        store.put_account_label(&AccountLabel { id, name: String::new(), email: email.into() }).unwrap();
+    }
+    let cal = |account, name: &str, path: &str| {
+        let c = Calendar { account, name: name.into(), remote_path: path.into(), ..Default::default() };
+        store.put_calendar(&c).unwrap()
+    };
+    let dup = cal(
+        work,
+        "eduardo.llaguno@gmail.com",
+        "https://apidata.googleusercontent.com/caldav/v2/eduardo.llaguno%40gmail.com/events/",
+    );
+    let main =
+        cal(gmail, "Eduardo", "https://apidata.googleusercontent.com/caldav/v2/eduardo.llaguno@gmail.com/events");
+    let start = Utc.with_ymd_and_hms(2026, 10, 21, 17, 0, 0).unwrap();
+    for c in [dup, main] {
+        store
+            .put_event(&Event {
+                calendar: c,
+                uid: "047d27cd72mhnajrmgegn11jjo@google.com".into(),
+                summary: "Técnico de TotalPly".into(),
+                start: EventTime::DateTime { utc: start, tzid: None },
+                end: EventTime::DateTime { utc: start + chrono::Duration::hours(1), tzid: None },
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let mut s = open(store, None);
+    settle(&mut s);
+    let count = |s: &mut Session| {
+        let day = summary(s);
+        day.events.iter().filter(|e| e.occ.summary == "Técnico de TotalPly").count()
+    };
+    assert_eq!(count(&mut s), 1, "una sola vez en «Mi día»");
+    let from = Utc.with_ymd_and_hms(2026, 10, 21, 0, 0, 0).unwrap();
+    let to = from + chrono::Duration::days(1);
+    let vis: Vec<_> =
+        s.visible_occurrences(from, to).into_iter().filter(|o| o.summary == "Técnico de TotalPly").collect();
+    assert_eq!(vis.len(), 1, "una sola vez en las vistas");
+    assert_eq!(vis[0].calendar, main, "del calendario de la cuenta dueña");
+    assert!(s.calendar_hidden(dup) && !s.calendar_hidden(main));
+    assert!(!s.writable_calendars().iter().any(|c| c.id == dup), "se edita por el primario");
+    // Ocultar el primario y mostrar el duplicado a propósito: sigue apareciendo, una vez.
+    s.set_calendar_hidden(main, true);
+    s.set_calendar_hidden(dup, false);
+    assert!(!s.calendar_hidden(dup) && s.calendar_hidden(main));
+    let vis = s.visible_occurrences(from, to).into_iter().filter(|o| o.summary == "Técnico de TotalPly").count();
+    assert_eq!(vis, 1);
+    assert_eq!(count(&mut s), 1);
+    s.shutdown();
+}

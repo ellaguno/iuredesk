@@ -121,7 +121,7 @@ impl Session {
             labels: self.labels.clone(),
             folders: self.folders.clone(),
             calendars: self.calendars.clone(),
-            hidden: self.prefs.hidden_calendars.clone(),
+            hidden: self.hidden_calendar_ids(),
             iure,
         }
     }

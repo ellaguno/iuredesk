@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Timelike, Utc};
-use iuredesk_model::{CalendarId, Event, EventId, EventTime, Mailbox, MessageId, PartStat};
+use iuredesk_model::{CalendarId, Event, EventId, EventTime, Mailbox, MessageId, PartStat, SharedCalendars};
 use iuredesk_pim_sync::ops::PimOp;
 use iuredesk_pim_sync::series::{detach_occurrence, exclude_occurrence, split_series, truncate_before};
 use iuredesk_pim_sync::{ImipReply, PimError, PimSyncHandle, SeriesScope};
@@ -256,24 +256,62 @@ impl Session {
 
     // ------------------------------------------------------------------ calendarios
 
-    /// ¿Está oculto el calendario?
+    /// Calendarios que son la misma colección remota vista desde varias cuentas (BUG-DUP).
+    pub fn shared_calendars(&self) -> SharedCalendars {
+        SharedCalendars::detect(&self.calendars, |a| self.labels.iter().find(|l| l.id == a).map(|l| l.email.clone()))
+    }
+
+    /// ¿Está oculto el calendario (casilla de la barra lateral)? Un duplicado («También en …»)
+    /// está oculto salvo que el usuario lo muestre a propósito.
     pub fn calendar_hidden(&self, id: CalendarId) -> bool {
+        if self.shared_calendars().is_duplicate(id) {
+            return !self.prefs.shown_duplicate_calendars.contains(&id.get());
+        }
         self.prefs.hidden_calendars.contains(&id.get())
     }
 
     /// Muestra u oculta un calendario (se recuerda).
     pub fn set_calendar_hidden(&mut self, id: CalendarId, hidden: bool) {
-        let list = &mut self.prefs.hidden_calendars;
-        list.retain(|c| *c != id.get());
-        if hidden {
-            list.push(id.get());
+        if self.shared_calendars().is_duplicate(id) {
+            let list = &mut self.prefs.shown_duplicate_calendars;
+            list.retain(|c| *c != id.get());
+            if !hidden {
+                list.push(id.get());
+            }
+        } else {
+            let list = &mut self.prefs.hidden_calendars;
+            list.retain(|c| *c != id.get());
+            if hidden {
+                list.push(id.get());
+            }
         }
         self.save_prefs();
     }
 
-    /// Calendarios donde se puede escribir.
+    /// Calendarios cuyas apariciones no se muestran ni avisan (vistas, «Mi día», recordatorios,
+    /// disponibilidad): los ocultos y los duplicados no mostrados. Las apariciones de un duplicado
+    /// se funden en su primario (`occurrences_between`), así que mostrar el duplicado a propósito
+    /// muestra el primario aunque esté oculto.
+    pub fn hidden_calendar_ids(&self) -> Vec<u64> {
+        let shared = self.shared_calendars();
+        let shown = |id: CalendarId| self.prefs.shown_duplicate_calendars.contains(&id.get());
+        let mut out: Vec<u64> = self
+            .prefs
+            .hidden_calendars
+            .iter()
+            .copied()
+            .filter(|h| !shared.duplicates_of(CalendarId(*h)).into_iter().any(shown))
+            .collect();
+        for c in self.calendars.iter().filter(|c| shared.is_duplicate(c.id) && !shown(c.id)) {
+            out.push(c.id.get());
+        }
+        out
+    }
+
+    /// Calendarios donde se puede escribir (sin duplicados: se edita por la cuenta del primario).
     pub fn writable_calendars(&self) -> Vec<iuredesk_model::Calendar> {
-        self.calendars.iter().filter(|c| !c.read_only).cloned().collect()
+        let shared = self.shared_calendars();
+        self.calendars.iter().filter(|c| !c.read_only && !shared.is_duplicate(c.id)).cloned().collect()
     }
 
     /// Calendario para eventos nuevos: el primero visible y escribible.
@@ -284,7 +322,7 @@ impl Session {
 
     /// Apariciones de los calendarios visibles en `[from, to)`.
     pub fn visible_occurrences(&mut self, from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<Occurrence> {
-        let hidden = self.prefs.hidden_calendars.clone();
+        let hidden = self.hidden_calendar_ids();
         self.occurrences(from, to).iter().filter(|o| !hidden.contains(&o.calendar.get())).cloned().collect()
     }
 
@@ -595,7 +633,7 @@ impl Session {
         let conflicts = if inv.kind == InviteKind::Request || inv.kind == InviteKind::Counter {
             let (s, e) = inv.proposed.clone().unwrap_or((inv.event.start.clone(), inv.event.end.clone()));
             let (from, to) = (s.to_utc(), e.to_utc().max(s.to_utc() + Duration::minutes(1)));
-            let hidden = self.prefs.hidden_calendars.clone();
+            let hidden = self.hidden_calendar_ids();
             self.occurrences_uncached(from - Duration::days(1), to + Duration::days(1))
                 .into_iter()
                 .filter(|o| {
@@ -931,7 +969,7 @@ impl Session {
     pub fn my_availability(&mut self, day: NaiveDate, skip: Option<EventId>) -> Availability {
         let from = self.zone.day_start(day);
         let to = self.zone.day_start(day + Duration::days(1));
-        let hidden = self.prefs.hidden_calendars.clone();
+        let hidden = self.hidden_calendar_ids();
         let busy = self
             .occurrences_uncached(from, to)
             .into_iter()
@@ -954,7 +992,7 @@ impl Session {
         }
         self.cal.candidates_key = Some(key);
         let occ = self.occurrences_uncached(now - Duration::days(1), now + Duration::days(2));
-        let hidden = self.prefs.hidden_calendars.clone();
+        let hidden = self.hidden_calendar_ids();
         let mut reminders: HashMap<EventId, Vec<iuredesk_model::Reminder>> = HashMap::new();
         let mut out = Vec::new();
         for o in occ.into_iter().filter(|o| !o.cancelled && !hidden.contains(&o.calendar.get())).take(2_000) {

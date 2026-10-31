@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
 use iuredesk_model::{
-    AddressBook, AddressBookId, Calendar, CalendarId, Contact, ContactId, Event, EventId, Note, NoteId, Task, TaskId,
-    TaskList, TaskListId,
+    AddressBook, AddressBookId, Calendar, CalendarId, Contact, ContactId, Event, EventId, Note, NoteId,
+    SharedCalendars, Task, TaskId, TaskList, TaskListId,
 };
 use redb::{ReadableDatabase, ReadableTable, Table, TableDefinition, WriteTransaction};
 use serde::Serialize;
@@ -155,6 +155,14 @@ impl Store {
     /// Todos los calendarios.
     pub fn calendars(&self) -> Result<Vec<Calendar>> {
         self.read_all(CALENDARS)
+    }
+
+    /// Calendarios que son la misma colección remota vista desde varias cuentas (BUG-DUP): cuál
+    /// es el primario de cada duplicado. Ver [`iuredesk_model::SharedCalendars`].
+    pub fn shared_calendars(&self) -> Result<SharedCalendars> {
+        let cals = self.calendars()?;
+        let labels = self.account_labels()?;
+        Ok(SharedCalendars::detect(&cals, |a| labels.iter().find(|l| l.id == a).map(|l| l.email.clone())))
     }
 
     /// Guarda un evento y devuelve su id. El calendario debe existir.
@@ -487,6 +495,27 @@ mod tests {
 
     fn dt(d: DateTime<Utc>) -> EventTime {
         EventTime::DateTime { utc: d, tzid: Some("Europe/Madrid".into()) }
+    }
+
+    /// BUG-DUP: la colección principal de Gmail vista también desde la cuenta de Workspace.
+    #[test]
+    fn shared_collection_has_one_primary() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path()).unwrap();
+        for (id, email) in [(1, "eduardo@llaguno.com"), (2, "eduardo.llaguno@gmail.com")] {
+            let label = crate::AccountLabel { id: AccountId(id), name: String::new(), email: email.into() };
+            s.put_account_label(&label).unwrap();
+        }
+        let put = |acct, path: &str| {
+            s.put_calendar(&Calendar { account: AccountId(acct), remote_path: path.into(), ..Default::default() })
+                .unwrap()
+        };
+        let own = put(1, "https://apidata.googleusercontent.com/caldav/v2/eduardo%40llaguno.com/events/");
+        let dup = put(1, "https://apidata.googleusercontent.com/caldav/v2/eduardo.llaguno%40gmail.com/events/");
+        let main = put(2, "https://apidata.googleusercontent.com/caldav/v2/eduardo.llaguno@gmail.com/events/");
+        let shared = s.shared_calendars().unwrap();
+        assert_eq!(shared.primary_of(dup), Some(main));
+        assert!(!shared.is_duplicate(main) && !shared.is_duplicate(own));
     }
 
     #[test]

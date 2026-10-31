@@ -27,6 +27,9 @@ pub struct State {
     pub puts: Vec<(String, String)>,
     /// Anunciar buzón de salida de agenda (programación en el servidor).
     pub outbox: bool,
+    /// BUG-DUP: un segundo usuario («bob», misma contraseña) cuya casa de calendarios lista,
+    /// además del suyo, el calendario de Ana compartido con él.
+    pub bob: bool,
 }
 
 impl State {
@@ -65,8 +68,10 @@ fn ok_prop(inner: &str) -> String {
 fn handle(state: &Mutex<State>, req: Req) -> Resp {
     let mut st = state.lock().unwrap();
     st.requests.push(format!("{} {}", req.method, req.path));
-    let expected = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode("ana:secreto"));
-    if req.header("Authorization") != Some(expected.as_str()) {
+    let basic = |u: &str| format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{u}:secreto")));
+    let auth = req.header("Authorization");
+    let bob = st.bob && auth == Some(basic("bob").as_str());
+    if auth != Some(basic("ana").as_str()) && !bob {
         return Resp::new(401, "").with("WWW-Authenticate", "Basic realm=\"x\"");
     }
     let path = req.path.split('?').next().unwrap_or_default().to_string();
@@ -80,6 +85,39 @@ fn handle(state: &Mutex<State>, req: Req) -> Resp {
         }
     };
     match (req.method.as_str(), path.as_str()) {
+        ("PROPFIND", "/dav/") if bob => Resp::xml(
+            207,
+            multistatus(&format!(
+                "<d:response><d:href>/dav/</d:href>{}</d:response>",
+                ok_prop(
+                    "<d:current-user-principal><d:href>/dav/principals/bob/</d:href></d:current-user-principal><d:resourcetype><d:collection/></d:resourcetype>"
+                )
+            )),
+        ),
+        ("PROPFIND", "/dav/principals/bob/") if bob => Resp::xml(
+            207,
+            multistatus(&format!(
+                "<d:response><d:href>/dav/principals/bob/</d:href>{}</d:response>",
+                ok_prop(
+                    "<d:displayname>Bob</d:displayname><c:calendar-home-set><d:href>/dav/cal/bob/</d:href></c:calendar-home-set>"
+                )
+            )),
+        ),
+        // La casa de Bob: el calendario de Ana (compartido) con otro nombre y color.
+        ("PROPFIND", "/dav/cal/bob/") if bob => Resp::xml(
+            207,
+            multistatus(&format!(
+                "<d:response><d:href>/dav/cal/bob/</d:href>{}</d:response><d:response><d:href>{CAL}</d:href>{}</d:response>",
+                ok_prop("<d:resourcetype><d:collection/></d:resourcetype>"),
+                ok_prop(&format!(
+                    "<d:resourcetype><d:collection/><c:calendar/></d:resourcetype><d:displayname>Trabajo de Ana</d:displayname>\
+<a:calendar-color>#FF0000FF</a:calendar-color><d:sync-token>tok-{}</d:sync-token>\
+<c:supported-calendar-component-set><c:comp name=\"VEVENT\"/></c:supported-calendar-component-set>\
+<d:current-user-privilege-set><d:privilege><d:read/></d:privilege><d:privilege><d:write/></d:privilege></d:current-user-privilege-set>",
+                    st.seq
+                ))
+            )),
+        ),
         ("PROPFIND", "/dav/") => Resp::xml(
             207,
             multistatus(&format!(

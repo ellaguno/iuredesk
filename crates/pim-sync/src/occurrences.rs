@@ -21,11 +21,13 @@
 //!   cientos de series es del orden de milisegundos). Si hiciera falta, una caché por
 //!   `(evento, ETag)` cabe aquí sin cambiar la firma.
 
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use iuredesk_dav::calendar::{EventView, ICalendar};
 use iuredesk_dav::recur::{Limits, expand};
-use iuredesk_model::{CalendarId, Event, EventOccurrence, EventStatus, EventTime, Transparency};
+use iuredesk_model::{CalendarId, Event, EventOccurrence, EventStatus, EventTime, SharedCalendars, Transparency};
 use iuredesk_store::{PimRef, Store};
 
 use crate::error::Result;
@@ -132,8 +134,34 @@ pub fn occurrences_between(
             Err(_) => out.push(single(&e)),
         }
     }
+    // BUG-DUP: la misma colección sincronizada por dos cuentas daría cada evento dos veces.
+    if let Ok(shared) = store.shared_calendars()
+        && !shared.is_empty()
+    {
+        collapse_shared(&mut out, &shared);
+    }
     out.sort_by(|a, b| a.start.to_utc().cmp(&b.start.to_utc()).then(a.event.cmp(&b.event)));
     Ok(out)
+}
+
+/// Quita las apariciones de un calendario duplicado que ya trae su primario (misma colección
+/// remota, mismo `UID` y misma repetición). Las de colecciones distintas con el mismo `UID` (una
+/// invitación copiada en dos calendarios) se quedan: son dos entradas legítimas.
+fn collapse_shared(out: &mut Vec<EventOccurrence>, shared: &SharedCalendars) {
+    let key = |o: &EventOccurrence| {
+        let instance = o.recurrence_id.unwrap_or_else(|| o.start.to_utc());
+        (shared.canonical(o.calendar), o.uid.clone(), instance)
+    };
+    let primary: HashSet<_> =
+        out.iter().filter(|o| !o.uid.is_empty() && !shared.is_duplicate(o.calendar)).map(key).collect();
+    let mut seen = HashSet::new();
+    out.retain(|o| {
+        if o.uid.is_empty() || !shared.is_duplicate(o.calendar) {
+            return true;
+        }
+        let k = key(o);
+        !primary.contains(&k) && seen.insert(k)
+    });
 }
 
 /// Instante de un [`EventTime`] en la zona del usuario: los días completos empiezan a la

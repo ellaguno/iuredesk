@@ -154,6 +154,10 @@ pub struct Prefs {
     /// Calendarios ocultos (ids locales).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hidden_calendars: Vec<u64>,
+    /// Calendarios duplicados (misma colección que otra cuenta) que el usuario quiere ver; los
+    /// demás duplicados se ocultan solos (BUG-DUP).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shown_duplicate_calendars: Vec<u64>,
     /// Segunda zona horaria en la rejilla del calendario (IANA).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secondary_tz: Option<String>,
@@ -326,6 +330,7 @@ impl Default for Prefs {
             iure_poll_secs: default_iure_poll(),
             cal_view: crate::calendar::nav::CalView::default(),
             hidden_calendars: Vec::new(),
+            shown_duplicate_calendars: Vec::new(),
             secondary_tz: None,
             notify_reminders: true,
             native_decorations: false,

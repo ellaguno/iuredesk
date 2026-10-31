@@ -17,6 +17,7 @@ pub mod contact;
 pub mod ids;
 pub mod mail;
 pub mod note;
+pub mod shared;
 pub mod task;
 pub mod threading;
 
@@ -25,5 +26,6 @@ pub use contact::*;
 pub use ids::*;
 pub use mail::*;
 pub use note::*;
+pub use shared::{SharedCalendars, normalize_collection_url};
 pub use task::*;
 pub use threading::*;

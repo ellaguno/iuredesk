@@ -176,7 +176,9 @@ pub(crate) fn tz_label(name: &str) -> String {
     name.rsplit('/').next().unwrap_or(name).replace('_', " ")
 }
 
-/// Calendarios agrupados por cuenta, con su color como casilla de mostrar/ocultar.
+/// Calendarios agrupados por cuenta, con su color como casilla de mostrar/ocultar. Un calendario
+/// que otra cuenta también sincroniza (misma colección remota, BUG-DUP) va bajo el de la cuenta
+/// dueña como «También en …», oculto salvo que se muestre a propósito.
 fn calendar_list(app: &mut DeskApp, ui: &mut Ui) {
     let c = theme::colors(ui);
     let labels = app.session.account_labels().to_vec();
@@ -186,56 +188,80 @@ fn calendar_list(app: &mut DeskApp, ui: &mut Ui) {
         ui.label(RichText::new(pick("No calendars yet.", "Aún no hay calendarios.")).color(c.text_muted));
         return;
     }
+    let shared = app.session.shared_calendars();
+    let email = |a: iuredesk_model::AccountId| labels.iter().find(|l| l.id == a).map(|l| l.email.clone());
     let mut accounts: Vec<iuredesk_model::AccountId> = Vec::new();
-    for cal in &cals {
+    for cal in cals.iter().filter(|x| !shared.is_duplicate(x.id)) {
         if !accounts.contains(&cal.account) {
             accounts.push(cal.account);
         }
     }
     for acct in accounts {
-        let head = labels
-            .iter()
-            .find(|l| l.id == acct)
-            .map_or_else(|| pick("Calendars", "Calendarios").to_string(), |l| l.email.clone());
+        let head = email(acct).unwrap_or_else(|| pick("Calendars", "Calendarios").to_string());
         section_label(ui, &head);
         ui.add_space(2.0);
-        for cal in cals.iter().filter(|x| x.account == acct) {
-            let hidden = app.session.calendar_hidden(cal.id);
-            let resp = ui
-                .horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    let (r, resp) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::click());
-                    let col = rgb(cal.color.unwrap_or(0x3B82F6));
-                    if hidden {
-                        ui.painter().rect_stroke(r.shrink(0.5), 3.0, Stroke::new(1.5, col), egui::StrokeKind::Inside);
-                    } else {
-                        ui.painter().rect_filled(r, 3.0, col);
-                        // Palomita.
-                        let a = pos2(r.left() + 3.0, r.center().y);
-                        let b = pos2(r.left() + 6.0, r.bottom() - 3.5);
-                        let d = pos2(r.right() - 3.0, r.top() + 3.5);
-                        ui.painter().line_segment([a, b], Stroke::new(1.6, Color32::WHITE));
-                        ui.painter().line_segment([b, d], Stroke::new(1.6, Color32::WHITE));
-                    }
-                    // Sin emoji: las fuentes de la suite no lo traen; el candado es un icono dibujado.
-                    let l = ui.add(
-                        egui::Label::new(RichText::new(&cal.name).color(if hidden { c.text_muted } else { c.text }))
-                            .sense(Sense::click()),
-                    );
-                    if cal.read_only {
-                        let (r, lock) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), Sense::hover());
-                        icons::paint(ui.painter(), r, Icon::Lock, c.text_muted, c.text_muted);
-                        lock.on_hover_text(pick("Read-only", "Solo lectura"));
-                    }
-                    resp | l
-                })
-                .inner;
-            iurefficient_ui::a11y::toggle(&resp, &cal.name, !hidden);
-            if resp.clicked() {
-                app.session.set_calendar_hidden(cal.id, !hidden);
+        for cal in cals.iter().filter(|x| x.account == acct && !shared.is_duplicate(x.id)) {
+            calendar_row(app, ui, cal, &cal.name, None);
+            for dup in shared.duplicates_of(cal.id) {
+                let Some(d) = cals.iter().find(|x| x.id == dup) else { continue };
+                let who = email(d.account).unwrap_or_else(|| d.name.clone());
+                let text = format!("{} {who}", pick("Also in", "También en"));
+                let tip = pick(
+                    "The same calendar, synced by another account. Hidden so its events don't show twice; changes go through the account above.",
+                    "El mismo calendario, sincronizado por otra cuenta. Oculto para no ver sus eventos dos veces; los cambios van por la cuenta de arriba.",
+                );
+                calendar_row(app, ui, d, &text, Some(tip));
             }
         }
         ui.add_space(8.0);
+    }
+}
+
+/// Una fila: casilla con el color del calendario y su nombre. `note` = duplicado (sangrado, en
+/// gris, con explicación al pasar el ratón).
+fn calendar_row(app: &mut DeskApp, ui: &mut Ui, cal: &iuredesk_model::Calendar, text: &str, note: Option<&str>) {
+    let c = theme::colors(ui);
+    let hidden = app.session.calendar_hidden(cal.id);
+    let resp = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if note.is_some() {
+                ui.add_space(14.0);
+            }
+            let (r, resp) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::click());
+            let col = rgb(cal.color.unwrap_or(0x3B82F6));
+            if hidden {
+                ui.painter().rect_stroke(r.shrink(0.5), 3.0, Stroke::new(1.5, col), egui::StrokeKind::Inside);
+            } else {
+                ui.painter().rect_filled(r, 3.0, col);
+                // Palomita.
+                let a = pos2(r.left() + 3.0, r.center().y);
+                let b = pos2(r.left() + 6.0, r.bottom() - 3.5);
+                let d = pos2(r.right() - 3.0, r.top() + 3.5);
+                ui.painter().line_segment([a, b], Stroke::new(1.6, Color32::WHITE));
+                ui.painter().line_segment([b, d], Stroke::new(1.6, Color32::WHITE));
+            }
+            // Sin emoji: las fuentes de la suite no lo traen; el candado es un icono dibujado.
+            let muted = hidden || note.is_some();
+            let mut rt = RichText::new(text).color(if muted { c.text_muted } else { c.text });
+            if note.is_some() {
+                rt = rt.small();
+            }
+            let mut l = ui.add(egui::Label::new(rt).truncate().sense(Sense::click()));
+            if let Some(tip) = note {
+                l = l.on_hover_text(tip);
+            }
+            if cal.read_only {
+                let (r, lock) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), Sense::hover());
+                icons::paint(ui.painter(), r, Icon::Lock, c.text_muted, c.text_muted);
+                lock.on_hover_text(pick("Read-only", "Solo lectura"));
+            }
+            resp | l
+        })
+        .inner;
+    iurefficient_ui::a11y::toggle(&resp, text, !hidden);
+    if resp.clicked() {
+        app.session.set_calendar_hidden(cal.id, !hidden);
     }
 }
 
