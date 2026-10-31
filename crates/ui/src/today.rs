@@ -45,7 +45,8 @@ enum Act {
     Event(Box<Occurrence>),
     Join(String),
     Calendar,
-    Task(TaskListId),
+    /// UX-6: abrir la tarea en el editor (sobre «Mi día»).
+    Task(TaskListId, TaskId),
     Complete(Box<DayTask>),
     Tasks,
     Message(Box<MailItem>),
@@ -710,7 +711,7 @@ fn task_row(app: &DeskApp, ui: &mut Ui, dt: &DayTask, today: chrono::NaiveDate, 
             acts.push(Act::Complete(Box::new(dt.clone())));
         }
     } else if resp.on_hover_text(tip).clicked() {
-        acts.push(Act::Task(dt.list));
+        acts.push(Act::Task(dt.list, dt.task.id));
     }
 }
 
@@ -970,9 +971,10 @@ fn apply(app: &mut DeskApp, ctx: &egui::Context, a: Act) {
             app.session.cal.anchor = None;
             app.session.module = Module::Calendar;
         }
-        Act::Task(list) => {
+        Act::Task(list, id) => {
             app.pim.task_list = Some(list);
-            app.session.module = Module::Tasks;
+            app.pim.task_sel = Some(id);
+            crate::task_editor::open(app, id);
         }
         Act::Tasks => app.session.module = Module::Tasks,
         Act::Complete(dt) => complete(app, ctx, &dt),

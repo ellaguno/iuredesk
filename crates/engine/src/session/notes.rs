@@ -1,5 +1,5 @@
 //! Notas (F7.1): crear, editar (Markdown, guardado automático), buscar y borrar con deshacer.
-//! Por ahora solo en el almacén local (`Note::account = None`).
+//! UX-6: cada nota es también un archivo Markdown en la carpeta de notas (ver `notes_files`).
 
 use iuredesk_model::{Note, NoteId};
 
@@ -93,18 +93,29 @@ impl Session {
         }
         n.title = title;
         n.body = body;
-        n.updated = self.now();
+        n.updated = self.note_stamp(n.updated);
         self.store.put_note(&n).map_err(store_err)?;
         self.data_gen = self.data_gen.wrapping_add(1);
+        self.notes_reconcile();
         Ok(())
+    }
+
+    /// Fecha de modificación nueva, siempre posterior a la anterior (la carpeta de notas compara
+    /// fechas para saber qué falta escribir).
+    pub(crate) fn note_stamp(&self, prev: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+        let now = self.now();
+        if now > prev { now } else { prev + chrono::Duration::milliseconds(1) }
     }
 
     /// Fija o suelta una nota arriba de la lista.
     pub fn toggle_note_pin(&mut self, id: NoteId) -> Result<()> {
         let mut n = self.store.get_note(id).map_err(store_err)?.ok_or(EngineError::NoSelection)?;
         n.pinned = !n.pinned;
+        // Va en el archivo (bloque YAML): hay que reescribirlo.
+        n.updated = self.note_stamp(n.updated);
         self.store.put_note(&n).map_err(store_err)?;
         self.data_gen = self.data_gen.wrapping_add(1);
+        self.notes_reconcile();
         Ok(())
     }
 
@@ -112,6 +123,7 @@ impl Session {
     pub fn delete_note(&mut self, id: NoteId) -> Result<Outcome> {
         let n = self.store.get_note(id).map_err(store_err)?.ok_or(EngineError::NoSelection)?;
         self.store.delete_note(id).map_err(store_err)?;
+        self.note_file_removed(&n);
         if self.note_focus == Some(id) {
             self.note_focus = None;
         }
@@ -134,17 +146,23 @@ impl Session {
     pub(crate) fn undo_note(&mut self, u: NoteUndo) -> Result<()> {
         match u {
             NoteUndo::Created(id) => {
+                if let Some(n) = self.store.get_note(id).map_err(store_err)? {
+                    self.note_file_removed(&n);
+                }
                 self.store.delete_note(id).map_err(store_err)?;
                 if self.note_focus == Some(id) {
                     self.note_focus = None;
                 }
             }
-            NoteUndo::Deleted(n) => {
+            NoteUndo::Deleted(mut n) => {
+                // El archivo se borró con la nota: se vuelve a escribir.
+                n.file = None;
                 let id = self.store.put_note(&n).map_err(store_err)?;
                 self.note_focus = Some(id);
             }
         }
         self.data_gen = self.data_gen.wrapping_add(1);
+        self.notes_reconcile();
         Ok(())
     }
 }

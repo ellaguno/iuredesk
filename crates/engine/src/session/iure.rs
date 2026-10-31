@@ -1506,26 +1506,32 @@ impl Session {
         }
     }
 
-    /// Una tarea de la lista «Iurefficient» cambió aquí: se lleva a la instancia.
-    pub(crate) fn iure_task_toggled(&mut self, t: &Task) {
+    /// Una tarea de la lista «Iurefficient» cambió aquí (terminada, reabierta o editada en el
+    /// editor de UX-6): se lleva a la instancia solo lo que cambió.
+    pub(crate) fn iure_task_changed(&mut self, old: &Task, t: &Task) {
         let Some(rid) = t.remote_id.as_deref().and_then(|r| r.strip_prefix(REMOTE_PREFIX)) else { return };
         let Some(list) = self.store.get_task_list(t.list).ok().flatten() else { return };
         if list.remote_path != IURE_TASKS_PATH {
+            return;
+        }
+        let input = iure_task_input(old, t);
+        if input.is_none() {
             return;
         }
         let Some(s) = self.iure_remote() else {
             // Nunca en silencio: sin conexión, la instancia no se entera (el ejemplo no tiene red).
             if matches!(self.iure.backend, Backend::None) {
                 self.notices.push(Notice::error(Text::new(
-                    "Iurefficient is not connected: the task changed only on this computer and will reopen on the next sync. Complete it in Iurefficient.",
-                    "Iurefficient no está conectado: la tarea cambió solo en este equipo y se reabrirá en la próxima sincronización. Termínala en Iurefficient.",
+                    "Iurefficient is not connected: the task changed only on this computer and will go back on the next sync. Change it in Iurefficient.",
+                    "Iurefficient no está conectado: la tarea cambió solo en este equipo y volverá a como estaba en la próxima sincronización. Cámbiala en Iurefficient.",
                 )));
             }
             return;
         };
-        let (rid, done) = (rid.to_string(), t.is_done());
+        let rid = rid.to_string();
+        let input = input.unwrap_or_default();
         self.iure_spawn(async move {
-            let r = iure::call(iurefficient_connect::pim::set_task_done(&s, &rid, done)).await;
+            let r = iure::call(iurefficient_connect::pim::update_task(&s, &rid, &input)).await;
             Msg::Plain(r.map(|_| Text::default()))
         });
     }
@@ -1618,6 +1624,58 @@ fn event_from_remote(
     })
 }
 
+/// Lo que cambió de una tarea de Iurefficient, como `TaskInput` (`None` si nada que la instancia
+/// guarde). La instancia no tiene recordatorio, repetición editable ni hora de vencimiento.
+pub(crate) fn iure_task_input(old: &Task, t: &Task) -> Option<iurefficient_connect::pim::TaskInput> {
+    let mut i = iurefficient_connect::pim::TaskInput::default();
+    let mut any = false;
+    if old.summary != t.summary {
+        i.title = Some(t.summary.clone());
+        any = true;
+    }
+    if old.description != t.description {
+        // La línea «Caso: …» la agrega IureDesk al leer; no se devuelve.
+        let d = t.description.rsplit_once("\n\nCaso: ").map_or(t.description.as_str(), |(a, _)| a);
+        i.description = Some(d.trim().to_string());
+        any = true;
+    }
+    if old.is_done() != t.is_done() || old.status != t.status {
+        i.status = Some(
+            match t.status {
+                _ if t.is_done() => "completed",
+                TaskStatus::InProcess => "in_progress",
+                TaskStatus::Cancelled => "cancelled",
+                _ => "pending",
+            }
+            .into(),
+        );
+        any = true;
+    }
+    if old.priority != t.priority {
+        i.priority = match t.priority {
+            1 => Some("urgent".into()),
+            2..=4 => Some("high".into()),
+            5 => Some("medium".into()),
+            6..=9 => Some("low".into()),
+            _ => None,
+        };
+        any |= i.priority.is_some();
+    }
+    let day = |e: &Option<EventTime>| {
+        e.as_ref().map(|d| iuredesk_pim_sync::map::ical::date_of(d).format("%Y-%m-%d").to_string())
+    };
+    if day(&old.due) != day(&t.due) {
+        // Sin fecha: cadena vacía (la instancia la borra).
+        i.due_date = Some(day(&t.due).unwrap_or_default());
+        any = true;
+    }
+    if day(&old.start) != day(&t.start) {
+        i.start_date = Some(day(&t.start).unwrap_or_default());
+        any = true;
+    }
+    any.then_some(i)
+}
+
 fn task_from_remote(t: &iurefficient_connect::pim::Task, list: TaskListId) -> Option<Task> {
     if t.id.trim().is_empty() {
         return None;
@@ -1639,6 +1697,16 @@ fn task_from_remote(t: &iurefficient_connect::pim::Task, list: TaskListId) -> Op
         summary: iure::clip(&t.title, 300),
         description,
         due: t.due_date.as_deref().and_then(parse_day).map(EventTime::Date),
+        start: t.start_date.as_deref().and_then(parse_day).map(EventTime::Date),
+        rrule: t
+            .recurrence_rule
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .trim_start_matches("RRULE:")
+            .chars()
+            .take(1_024)
+            .collect(),
         priority: match t.priority.as_deref() {
             Some("urgent" | "high") => 1,
             Some("medium") => 5,
@@ -1714,5 +1782,31 @@ mod tests {
         };
         let ev = event_from_remote(&all, ev.calendar).unwrap();
         assert!(ev.start.is_all_day() && ev.end.to_utc() > ev.start.to_utc());
+    }
+
+    /// UX-6: a la instancia va solo lo que cambió, sin la línea «Caso:» que se agrega al leer.
+    #[test]
+    fn iure_task_input_sends_only_changes() {
+        let d = |m, day| EventTime::Date(NaiveDate::from_ymd_opt(2026, m, day).unwrap());
+        let old = Task {
+            summary: "Contestar demanda".into(),
+            description: "Revisar anexos\n\nCaso: Pérez".into(),
+            due: Some(d(11, 3)),
+            ..Default::default()
+        };
+        assert!(iure_task_input(&old, &old).is_none());
+        let mut new = old.clone();
+        new.description = "Revisar anexos y pruebas\n\nCaso: Pérez".into();
+        new.priority = 1;
+        new.start = Some(d(11, 1));
+        new.due = None;
+        let i = iure_task_input(&old, &new).unwrap();
+        assert_eq!(i.description.as_deref(), Some("Revisar anexos y pruebas"));
+        assert_eq!(i.priority.as_deref(), Some("urgent"));
+        assert_eq!(i.start_date.as_deref(), Some("2026-11-01"));
+        assert_eq!(i.due_date.as_deref(), Some(""));
+        assert!(i.title.is_none() && i.status.is_none());
+        new.status = TaskStatus::Completed;
+        assert_eq!(iure_task_input(&old, &new).unwrap().status.as_deref(), Some("completed"));
     }
 }

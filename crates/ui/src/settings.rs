@@ -601,11 +601,61 @@ fn general(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
         app.session.save_prefs();
     }
     ui.add_space(14.0);
+    notes_folder(app, ui);
+    ui.add_space(14.0);
     section_label(ui, pick("Keyboard shortcuts", "Atajos de teclado"));
     muted(ui, pick("Use the keys you already know.", "Usa las teclas que ya conoces."));
     let mut s = app.session.prefs.scheme;
     if segmented(ui, &mut s, &ShortcutScheme::ALL.map(|s| (s, s.label()))).changed() {
         *run = Some(format!("view.scheme.{}", s.key()));
+    }
+}
+
+/// UX-6: carpeta de las notas en Markdown (la que abre IureEditor). Puede ser una unidad de
+/// IureDav para que las notas lleguen a Iurefficient. El selector corre en otro hilo (la
+/// interfaz no espera al diálogo).
+fn notes_folder(app: &mut DeskApp, ui: &mut Ui) {
+    let c = theme::colors(ui);
+    let picked_id = egui::Id::unique("ux6-notes-folder-picked");
+    if let Some(p) = ui.ctx().data_mut(|d| d.remove_temp::<String>(picked_id)) {
+        app.session.set_notes_dir(Some(p));
+    }
+    section_label(ui, pick("Notes folder", "Carpeta de notas"));
+    muted(
+        ui,
+        pick(
+            "Each note is also a Markdown file here, so you can edit it in IureEditor. Choose a folder on your IureDav drive to have your notes in Iurefficient too.",
+            "Cada nota es también un archivo Markdown aquí, para editarla en IureEditor. Elige una carpeta de tu unidad de IureDav para tener tus notas también en Iurefficient.",
+        ),
+    );
+    let current = app.session.notes_dir().map(|d| d.display().to_string());
+    ui.horizontal(|ui| {
+        let shown = current.clone().unwrap_or_else(|| pick("(not set)", "(sin carpeta)").to_string());
+        ui.label(RichText::new(shown).color(c.text));
+        if ui.button(pick("Choose…", "Elegir…")).clicked() {
+            let ctx = ui.ctx().clone();
+            let _ = std::thread::Builder::new().name("notes-folder-pick".into()).spawn(move || {
+                if let Some(dir) =
+                    rfd::FileDialog::new().set_title(pick("Notes folder", "Carpeta de notas")).pick_folder()
+                {
+                    ctx.data_mut(|d| d.insert_temp(picked_id, dir.to_string_lossy().into_owned()));
+                    ctx.request_repaint();
+                }
+            });
+        }
+        if app.session.prefs.notes_dir.is_some() && ui.button(pick("Use the default", "Usar la de omisión")).clicked()
+        {
+            app.session.set_notes_dir(None);
+        }
+    });
+    if let Some(p) = app.session.notes_dir_problem() {
+        ui.label(
+            RichText::new(format!(
+                "{} ({p})",
+                pick("The folder is not available right now", "La carpeta no está disponible ahora")
+            ))
+            .color(c.danger),
+        );
     }
 }
 

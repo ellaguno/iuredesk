@@ -66,6 +66,12 @@ pub struct Task {
     pub remote_id: Option<String>,
     /// `ETag` remoto, opaco.
     pub etag: Option<String>,
+    /// Inicio (`DTSTART` de VTODO, `startDateTime` de To Do, `start_date` de Iurefficient).
+    pub start: Option<EventTime>,
+    /// Recordatorio (`VALARM` con disparador absoluto, `reminderDateTime` de To Do).
+    pub reminder: Option<DateTime<Utc>>,
+    /// Repetición: `RRULE` de RFC 5545 sin el prefijo (vacía = no se repite).
+    pub rrule: String,
 }
 
 impl Task {

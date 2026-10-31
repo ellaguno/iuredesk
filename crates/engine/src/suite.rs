@@ -43,6 +43,9 @@ pub enum SuiteAction {
     Transcribe { file: PathBuf, title: String },
     /// Documento nuevo en IureEditor.
     NewDocument { name: String, markdown: String },
+    /// UX-6: abrir un archivo existente en IureEditor (`iureditor://open?path=`; si ya está
+    /// abierto, IureEditor enfoca su ventana).
+    OpenFile(PathBuf),
     /// Abrir una app.
     Launch(SisterApp),
     /// «Usar IureDesk desde Claude / Copilot».
@@ -221,7 +224,9 @@ impl SuiteHub {
             || SuiteEvent::Failed(Text::new("The attachment could not be read.", "No se pudo leer el adjunto."));
         // Sin instalar: la invitación de inmediato (sin hilo).
         let needs = match &action {
-            SuiteAction::OpenAttachment { .. } | SuiteAction::NewDocument { .. } => Some(SisterApp::Editor),
+            SuiteAction::OpenAttachment { .. } | SuiteAction::NewDocument { .. } | SuiteAction::OpenFile(_) => {
+                Some(SisterApp::Editor)
+            }
             SuiteAction::OcrAttachment { .. } => Some(SisterApp::Ocr),
             SuiteAction::SaveAttachment { .. } => Some(SisterApp::Dav),
             SuiteAction::Speak(_) | SuiteAction::Dictate { .. } => Some(SisterApp::Voz),
@@ -283,6 +288,12 @@ impl SuiteHub {
                         SuiteEvent::Done(Text::new("Opened in IureEditor", "Abierto en IureEditor"))
                     })
                 }
+                SuiteAction::OpenFile(path) => outcome(suite.open_in_iureditor(&EditorTarget::File(path)), |_| {
+                    SuiteEvent::Done(Text::new(
+                        "Opened in IureEditor. Changes you save there come back here.",
+                        "Abierta en IureEditor. Lo que guardes allá vuelve aquí.",
+                    ))
+                }),
                 SuiteAction::Launch(app) => outcome(suite.launch(app), |_| {
                     SuiteEvent::Done(Text::new(format!("Opening {}", app.name()), format!("Abriendo {}", app.name())))
                 }),

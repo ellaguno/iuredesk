@@ -293,8 +293,34 @@ pub fn task_from_component(cal: &ICalendar, comp: &Component, user_tz: Tz) -> Ta
         completed: utc_prop(comp, "COMPLETED"),
         created: utc_prop(comp, "CREATED"),
         updated: utc_prop(comp, "LAST-MODIFIED").or_else(|| view.dtstamp()),
+        start: view.dtstart().map(|v| event_time(cal, &v, user_tz)),
+        reminder: comp.children("VALARM").find_map(|a| task_alarm_at(cal, comp, a, user_tz)),
+        rrule: view.rrules().into_iter().next().unwrap_or_default().chars().take(1_024).collect(),
         ..Default::default()
     }
+}
+
+/// Instante de un `VALARM` de un `VTODO` (UX-6): absoluto, o relativo a `DTSTART`
+/// (`RELATED=START`, el de omisión) o a `DUE` (`RELATED=END`).
+fn task_alarm_at(cal: &ICalendar, todo: &Component, alarm: &Component, user_tz: Tz) -> Option<DateTime<Utc>> {
+    let trig = alarm.prop("TRIGGER")?;
+    if trig.param("VALUE").is_some_and(|v| v.eq_ignore_ascii_case("DATE-TIME")) {
+        return Some(cal.to_utc(&DateTimeValue::from_property(trig).ok()?, user_tz));
+    }
+    let d = value::parse_duration(&trig.value).ok()?;
+    let from_end = trig.param("RELATED").is_some_and(|r| r.eq_ignore_ascii_case("END"));
+    let anchor = todo.prop(if from_end { "DUE" } else { "DTSTART" })?;
+    let at = cal.to_utc(&DateTimeValue::from_property(anchor).ok()?, user_tz);
+    at.checked_add_signed(d)
+}
+
+/// `VALARM` con disparador absoluto (UX-6: el recordatorio de una tarea).
+fn task_alarm(at: DateTime<Utc>) -> Component {
+    let mut a = Component::new("VALARM");
+    a.push(Property::new("ACTION", "DISPLAY"));
+    a.push(Property::text("DESCRIPTION", "Reminder"));
+    a.push(Property::new("TRIGGER", &format_utc(at)).with_param("VALUE", "DATE-TIME"));
+    a
 }
 
 /// Un [`Task`] por `VTODO` maestro.
@@ -598,6 +624,18 @@ pub fn patch_task(cal: &mut ICalendar, old: &Task, new: &Task, now: DateTime<Utc
         cal.root.components.push(new_vtodo(new, now));
         return true;
     };
+    // Instante de cada `VALARM` (para quitar solo el que era el recordatorio).
+    let alarm_times: Vec<Option<DateTime<Utc>>> = cal
+        .root
+        .components
+        .get(idx)
+        .map(|c| {
+            c.components
+                .iter()
+                .map(|a| if a.name == "VALARM" { task_alarm_at(cal, c, a, chrono_tz::UTC) } else { None })
+                .collect()
+        })
+        .unwrap_or_default();
     let Some(comp) = cal.root.components.get_mut(idx) else { return false };
     let mut changed = false;
     if old.summary != new.summary {
@@ -638,6 +676,40 @@ pub fn patch_task(cal: &mut ICalendar, old: &Task, new: &Task, now: DateTime<Utc
         }
         changed = true;
     }
+    if old.start != new.start {
+        match &new.start {
+            Some(d) => set_time(comp, "DTSTART", d),
+            None => comp.remove("DTSTART"),
+        }
+        changed = true;
+    }
+    if old.rrule != new.rrule {
+        match new.rrule.trim() {
+            "" => comp.remove("RRULE"),
+            r => comp.set(Property::new("RRULE", r)),
+        }
+        changed = true;
+    }
+    if old.reminder != new.reminder {
+        // Solo se quita la alarma que era el recordatorio; las demás (con sonido, de otro
+        // cliente…) se conservan.
+        let mut kept = Vec::new();
+        let mut removed = false;
+        let subs = std::mem::take(&mut comp.components);
+        for (i, c) in subs.into_iter().enumerate() {
+            let at = alarm_times.get(i).copied().flatten();
+            if !removed && c.name == "VALARM" && old.reminder.is_some() && at == old.reminder {
+                removed = true;
+                continue;
+            }
+            kept.push(c);
+        }
+        comp.components = kept;
+        if let Some(at) = new.reminder {
+            comp.components.push(task_alarm(at));
+        }
+        changed = true;
+    }
     if changed {
         touch(comp, now);
     }
@@ -666,6 +738,15 @@ fn new_vtodo(t: &Task, now: DateTime<Utc>) -> Component {
     }
     if let Some(done) = t.completed {
         c.push(Property::new("COMPLETED", &format_utc(done)));
+    }
+    if let Some(s) = &t.start {
+        c.push(time_property("DTSTART", s));
+    }
+    if !t.rrule.trim().is_empty() {
+        c.push(Property::new("RRULE", t.rrule.trim()));
+    }
+    if let Some(at) = t.reminder {
+        c.components.push(task_alarm(at));
     }
     c
 }
@@ -863,6 +944,41 @@ PRIORITY:1\r\nSTATUS:NEEDS-ACTION\r\nX-APPLE-SORT-ORDER:5\r\nEND:VTODO\r\nEND:VC
         let b2 = tasks_from_ics(&ICalendar::parse(&fresh).unwrap(), chrono_tz::UTC).remove(0);
         assert_eq!(b2.summary, "Pagar");
         assert_eq!(b2.due, done.due);
+    }
+
+    /// UX-6: inicio, repetición y recordatorio de un `VTODO`; al editar solo cambia lo tocado y
+    /// la alarma con sonido de otro cliente se conserva.
+    #[test]
+    fn task_start_repeat_and_reminder() {
+        let src = "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nUID:t2\r\nSUMMARY:Revisar\r\n\
+DTSTART:20261101T090000Z\r\nDUE:20261103T170000Z\r\nRRULE:FREQ=WEEKLY;BYDAY=MO\r\n\
+BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER;RELATED=END:-PT1H\r\nEND:VALARM\r\n\
+BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER;VALUE=DATE-TIME:20261102T080000Z\r\nX-OTRO:1\r\nEND:VALARM\r\n\
+END:VTODO\r\nEND:VCALENDAR\r\n";
+        let mut cal = ICalendar::parse(src).unwrap();
+        let t = tasks_from_ics(&cal, chrono_tz::UTC).remove(0);
+        let at = |d, h| Utc.with_ymd_and_hms(2026, 11, d, h, 0, 0).unwrap();
+        assert_eq!(t.start, Some(EventTime::DateTime { utc: at(1, 9), tzid: None }));
+        assert_eq!(t.rrule, "FREQ=WEEKLY;BYDAY=MO");
+        assert_eq!(t.reminder, Some(at(3, 16)), "relativo al vencimiento");
+        // Sin cambios no se toca nada.
+        assert!(!patch_task(&mut cal.clone(), &t, &t, at(1, 0)));
+        let mut new = t.clone();
+        new.reminder = Some(at(3, 8));
+        new.rrule = "FREQ=DAILY".into();
+        new.start = None;
+        assert!(patch_task(&mut cal, &t, &new, at(1, 0)));
+        let out = cal.to_ics();
+        assert!(out.contains("X-OTRO:1"), "la otra alarma sigue");
+        assert!(!out.contains("RELATED=END"), "la vieja se quitó");
+        assert!(out.contains("TRIGGER;VALUE=DATE-TIME:20261103T080000Z"));
+        assert!(out.contains("RRULE:FREQ=DAILY") && !out.contains("DTSTART"));
+        let back = tasks_from_ics(&ICalendar::parse(&out).unwrap(), chrono_tz::UTC).remove(0);
+        assert_eq!((back.start, back.rrule.as_str()), (None, "FREQ=DAILY"));
+        // Una tarea nueva lleva todo.
+        let fresh = new_task_ics(&t, at(1, 0)).to_ics();
+        let b2 = tasks_from_ics(&ICalendar::parse(&fresh).unwrap(), chrono_tz::UTC).remove(0);
+        assert_eq!((b2.start, b2.reminder, b2.rrule), (t.start, t.reminder, t.rrule));
     }
 
     proptest::proptest! {

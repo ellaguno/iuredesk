@@ -25,6 +25,7 @@ mod codec;
 pub mod error;
 mod links;
 mod mail;
+mod migrations;
 mod pim;
 pub mod pim_remote;
 mod queue;
@@ -58,13 +59,13 @@ use crate::search::{IndexDoc, SearchIndex};
 pub const REDB_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
 /// Versión actual del esquema de redb.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Migración de un esquema `n` a `n + 1` (la posición `i` migra de `i + 1` a `i + 2`).
 type Migration = fn(&WriteTransaction) -> Result<()>;
 /// Migraciones registradas. Al cambiar el formato de un registro o una tabla se añade aquí una
 /// función y se incrementa [`SCHEMA_VERSION`].
-const MIGRATIONS: &[Migration] = &[];
+const MIGRATIONS: &[Migration] = &[migrations::v1_to_v2];
 
 /// Clave de la versión de esquema en `meta`.
 const META_SCHEMA: &str = "schema_version";

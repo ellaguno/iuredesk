@@ -335,6 +335,26 @@ fn main() -> Result<(), String> {
     if args.iter().any(|a| a == "--note-preview") {
         app.set_note_preview(true);
     }
+    // UX-6: `--notes-dir RUTA` escribe las notas como Markdown en esa carpeta (la cabecera de la
+    // nota muestra su archivo); `--task-editor` abre el editor de una tarea con vencimiento.
+    if let Some(d) = flag("--notes-dir") {
+        let _ = std::fs::create_dir_all(&d);
+        app.session.notes_fs_for_tests(std::path::PathBuf::from(d), Duration::from_millis(50));
+        app.session.notes_fs_flush(Duration::from_secs(10));
+        app.session.notes_fs_flush(Duration::from_secs(10));
+    }
+    if args.iter().any(|a| a == "--task-editor") {
+        let lists = app.session.task_lists();
+        let pick_task = lists
+            .iter()
+            .filter(|l| !app.session.is_iure_task(l.id))
+            .flat_map(|l| app.session.tasks(l.id))
+            .find(|t| t.due.is_some() && !t.is_done() && t.priority > 0)
+            .or_else(|| lists.iter().flat_map(|l| app.session.tasks(l.id)).find(|t| !t.is_done()));
+        if let Some(t) = pick_task {
+            app.demo_task_editor(t.id);
+        }
+    }
     if module == "provider" {
         app.demo_provider_step("laura.mendez@gmail.com");
     } else if module == "manual" {

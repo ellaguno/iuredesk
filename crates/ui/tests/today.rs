@@ -89,10 +89,14 @@ fn today_renders_and_items_navigate() {
     assert!(h.query_all_by_label_contains("Buenos días, Laura").next().is_some(), "saludo");
     assert!(h.query_all_by_label_contains("Día despejado").next().is_none(), "el ejemplo tiene citas hoy");
 
-    // Tarea → módulo de Tareas con su lista.
+    // UX-6: tarea → su editor, encima de «Mi día»; «Todas» lleva al módulo de Tareas.
     h.get_by_label("Presentar escrito caso 241/2026").click();
     settle(&mut h);
-    assert_eq!(h.state().session.module, Module::Tasks);
+    assert!(h.state().task_editor_open());
+    assert_eq!(h.state().session.module, Module::Today);
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+    assert!(!h.state().task_editor_open());
 
     // Volver con el riel y abrir un correo que espera respuesta.
     h.state_mut().session.run("nav.today").unwrap();

@@ -79,7 +79,7 @@ pub fn merge_task(base: &Task, local: &Task, server: &Task) -> Option<Task> {
         local,
         server,
         out,
-        [summary, description, due, priority, status, percent_complete, completed,]
+        [summary, description, due, priority, status, percent_complete, completed, start, reminder, rrule,]
     );
     (!conflict).then_some(out)
 }

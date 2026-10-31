@@ -185,6 +185,10 @@ pub struct Prefs {
     /// Mostrar en Contactos los contactos sin ningún dato.
     #[serde(default)]
     pub show_empty_contacts: bool,
+    /// UX-6: carpeta de las notas en Markdown (`None` = `Documentos/IureDesk/Notas`). Puede ser
+    /// una unidad de IureDav para que las notas lleguen a Iurefficient.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes_dir: Option<String>,
     /// UX-3: ancho del panel de lectura (puntos) que dejó el usuario; `None` = automático.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reading_width: Option<u32>,
@@ -332,6 +336,7 @@ impl Default for Prefs {
             text_scale_pct: default_text_scale(),
             crisp_text: false,
             show_empty_contacts: false,
+            notes_dir: None,
             reading_width: None,
             reading_zoom_pct: default_reading_zoom(),
             context_collapsed: false,

@@ -16,6 +16,7 @@ mod iure;
 mod live;
 mod mailops;
 mod notes;
+mod notes_files;
 mod opened;
 mod outbox;
 mod pim;
@@ -31,9 +32,11 @@ pub use iure::{IURE_CALENDAR_PATH, IURE_TASKS_PATH, IurePanel, IureSetup, LeadSu
 pub use live::{AccountSync, SyncStatus};
 pub use mailops::AccountRow;
 pub use notes::{note_matches, note_title};
+pub use notes_files::NoteSaved;
 pub use opened::FileOpened;
 pub use outbox::OfflineTransport;
 pub use rules_glue::{IureBadge, IureKind, RulePlace, SieveRow};
+pub use tasks::{TaskCaps, TaskSource};
 pub use today::{folder_from_key, folder_key};
 
 use std::collections::{HashMap, HashSet};
@@ -404,6 +407,8 @@ pub struct Session {
     contact_selection: Vec<iuredesk_model::ContactId>,
     /// Nota enfocada (F7.1).
     note_focus: Option<iuredesk_model::NoteId>,
+    /// UX-6: carpeta de notas en Markdown.
+    notes_fs: notes_files::NotesFs,
     /// Última «Probar conexión» del editor de cuentas (id de la cuenta y estado).
     connection_test: Option<(String, accounts::ConnectionTest)>,
     calendars: Vec<Calendar>,
@@ -487,6 +492,7 @@ impl Session {
             contacts_cache: None,
             contact_selection: Vec::new(),
             note_focus: None,
+            notes_fs: notes_files::NotesFs::default(),
             connection_test: None,
             calendars: Vec::new(),
             events_cache: None,
@@ -512,6 +518,7 @@ impl Session {
         s.rebuild_rows();
         s.start_outbox();
         s.restart_sync();
+        s.start_notes_fs();
         if s.sample {
             s.iure_start(IureSetup::Sample);
         } else if s.sync_options.is_some() {
@@ -1147,6 +1154,7 @@ impl Session {
             }
             "mail.edit_draft" => self.focused.is_some_and(|m| self.is_draft(m)),
             "notes.delete" | "notes.open_editor" => self.note_focus.is_some(),
+            "tasks.edit" => self.module == Module::Tasks || self.module == Module::Today,
             "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
                 !self.contact_selection.is_empty()
             }
@@ -1212,6 +1220,7 @@ impl Session {
             "mail.new_folder" | "mail.rename_folder" | "mail.delete_folder" => self.run_folder_command(base, arg),
             "notes.delete" => self.run_delete_note(arg),
             "notes.open_editor" => Ok(Outcome::Assist("notes.open_editor".into())),
+            "tasks.edit" => Ok(Outcome::Assist("tasks.edit".into())),
             "mail.archive" => self.archive(),
             "mail.delete" => self.delete(),
             "mail.toggle_read" => self.toggle_read(),
@@ -1647,6 +1656,7 @@ impl Session {
         self.poll_pending_read();
         self.poll_iure(&mut events);
         self.poll_rules(&mut events);
+        self.poll_notes_fs();
         events.extend(self.notices.drain(..).map(Event::Notice));
         for d in done {
             match d.output {
@@ -1861,7 +1871,6 @@ impl Session {
         }
         self.write_task(&new)?;
         self.data_gen = self.data_gen.wrapping_add(1);
-        self.iure_task_toggled(&new);
         let text = if new.is_done() {
             Text::new("Task completed", "Tarea terminada")
         } else {

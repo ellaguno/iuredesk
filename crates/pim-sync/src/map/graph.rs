@@ -632,8 +632,24 @@ pub fn task_from_graph(v: &Value) -> Task {
         updated: ts("lastModifiedDateTime"),
         remote_id: v.get("id").and_then(Value::as_str).map(str::to_string),
         etag: etag(v),
+        start: v
+            .get("startDateTime")
+            .filter(|d| !d.is_null())
+            .and_then(|d| parse_naive(s(d, "dateTime")))
+            .map(|n| EventTime::Date(n.date())),
+        reminder: if v.get("isReminderOn").and_then(Value::as_bool).unwrap_or(false) {
+            v.get("reminderDateTime").filter(|d| !d.is_null()).and_then(graph_instant)
+        } else {
+            None
+        },
+        rrule: v.get("recurrence").filter(|r| !r.is_null()).and_then(recurrence_to_rrule).unwrap_or_default(),
         ..Default::default()
     }
+}
+
+/// Fecha de To Do (`{dateTime, timeZone}` a medianoche UTC).
+fn todo_date(d: &EventTime) -> Value {
+    json!({ "dateTime": format!("{}T00:00:00", super::ical::date_of(d).format("%Y-%m-%d")), "timeZone": "UTC" })
 }
 
 /// Cuerpo de `PATCH`/`POST` de una tarea (ver [`event_patch`]).
@@ -649,10 +665,35 @@ pub fn task_patch(old: Option<&Task>, new: &Task) -> Map<String, Value> {
         m.insert("body".into(), json!({ "contentType": "text", "content": new.description }));
     }
     if full || old.due != new.due {
-        let due = new.due.as_ref().map_or(Value::Null, |d| {
-            json!({ "dateTime": format!("{}T00:00:00", super::ical::date_of(d).format("%Y-%m-%d")), "timeZone": "UTC" })
-        });
-        m.insert("dueDateTime".into(), due);
+        m.insert("dueDateTime".into(), new.due.as_ref().map_or(Value::Null, todo_date));
+    }
+    if (full && new.start.is_some()) || (!full && old.start != new.start) {
+        m.insert("startDateTime".into(), new.start.as_ref().map_or(Value::Null, todo_date));
+    }
+    if (full && new.reminder.is_some()) || (!full && old.reminder != new.reminder) {
+        match new.reminder {
+            Some(at) => {
+                m.insert("isReminderOn".into(), json!(true));
+                m.insert(
+                    "reminderDateTime".into(),
+                    json!({ "dateTime": at.format("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": "UTC" }),
+                );
+            }
+            None => {
+                m.insert("isReminderOn".into(), json!(false));
+            }
+        }
+    }
+    if (full && !new.rrule.is_empty()) || (!full && old.rrule != new.rrule) {
+        let anchor = new.due.clone().or_else(|| new.start.clone());
+        let rec = match (new.rrule.trim(), anchor) {
+            ("", _) => Some(Value::Null),
+            (r, Some(a)) => rrule_to_recurrence(r, &a),
+            (_, None) => None,
+        };
+        if let Some(rec) = rec {
+            m.insert("recurrence".into(), rec);
+        }
     }
     if full || old.priority != new.priority {
         let imp = match new.priority {
@@ -801,6 +842,44 @@ mod tests {
         assert_eq!(t.due, Some(EventTime::Date(NaiveDate::from_ymd_opt(2026, 11, 3).unwrap())));
         assert!(task_patch(Some(&t), &t).is_empty());
         assert_eq!(task_patch(None, &t)["importance"], "high");
+    }
+
+    /// UX-6: inicio, recordatorio y repetición de To Do, ida y vuelta; el `PATCH` lleva solo lo
+    /// que cambió.
+    #[test]
+    fn todo_start_reminder_recurrence() {
+        let t = task_from_graph(&json!({
+            "id": "T2", "title": "Informe", "status": "notStarted",
+            "dueDateTime": {"dateTime": "2026-11-06T00:00:00.0000000", "timeZone": "UTC"},
+            "startDateTime": {"dateTime": "2026-11-02T00:00:00.0000000", "timeZone": "UTC"},
+            "isReminderOn": true,
+            "reminderDateTime": {"dateTime": "2026-11-06T08:30:00.0000000", "timeZone": "UTC"},
+            "recurrence": {"pattern": {"type": "weekly", "interval": 1, "daysOfWeek": ["friday"]},
+                           "range": {"type": "noEnd", "startDate": "2026-11-06"}}
+        }));
+        assert_eq!(t.start, Some(EventTime::Date(NaiveDate::from_ymd_opt(2026, 11, 2).unwrap())));
+        assert_eq!(t.reminder, Some(Utc.with_ymd_and_hms(2026, 11, 6, 8, 30, 0).unwrap()));
+        assert_eq!(t.rrule, "FREQ=WEEKLY;BYDAY=FR");
+        assert!(task_patch(Some(&t), &t).is_empty());
+        // Recordatorio apagado: no se lee.
+        let off = task_from_graph(&json!({"id": "T3", "isReminderOn": false,
+            "reminderDateTime": {"dateTime": "2026-11-06T08:30:00", "timeZone": "UTC"}}));
+        assert_eq!(off.reminder, None);
+        let mut n = t.clone();
+        n.reminder = None;
+        n.rrule = "FREQ=DAILY;INTERVAL=2".into();
+        let p = task_patch(Some(&t), &n);
+        assert_eq!(p["isReminderOn"], false);
+        assert_eq!(p["recurrence"]["pattern"]["type"], "daily");
+        assert_eq!(p["recurrence"]["pattern"]["interval"], 2);
+        assert!(!p.contains_key("title") && !p.contains_key("startDateTime"));
+        n.rrule.clear();
+        n.start = None;
+        let p = task_patch(Some(&t), &n);
+        assert_eq!((p["recurrence"].clone(), p["startDateTime"].clone()), (Value::Null, Value::Null));
+        let full = task_patch(None, &t);
+        assert_eq!(full["reminderDateTime"]["dateTime"], "2026-11-06T08:30:00");
+        assert_eq!(full["startDateTime"]["dateTime"], "2026-11-02T00:00:00");
     }
 
     proptest::proptest! {

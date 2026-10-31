@@ -304,6 +304,7 @@ impl DeskApp {
         }
 
         crate::event_editor::show(self, &ctx);
+        crate::task_editor::show(self, &ctx);
         crate::opened::frame(self, &ctx);
         crate::reminders::show(self, &ctx);
         crate::compose::show_all(self, &ctx);
@@ -458,6 +459,21 @@ impl DeskApp {
             && self.import.hub.is_idle()
             && !self.suite.hub.busy()
             && !self.attach.is_busy()
+    }
+
+    /// UX-6: ¿está abierto el editor de tareas? (pruebas)
+    pub fn task_editor_open(&self) -> bool {
+        crate::task_editor::is_open(self)
+    }
+
+    /// UX-6: abre el editor de una tarea (capturas).
+    pub fn demo_task_editor(&mut self, id: iuredesk_model::TaskId) {
+        self.session.module = iuredesk_engine::Module::Tasks;
+        if let Some(t) = self.session.task(id) {
+            self.pim.task_list = Some(t.list);
+        }
+        self.pim.task_sel = Some(id);
+        crate::task_editor::open(self, id);
     }
 
     /// UX-3: mensajes abiertos en ventanas propias (pruebas).

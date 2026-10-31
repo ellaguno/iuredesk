@@ -26,6 +26,10 @@ pub struct PimState {
     show_done: bool,
     /// F7.1: tarea nueva que se está escribiendo.
     new_task: String,
+    /// UX-6: tarea elegida en la lista, título en edición (F2) y editor abierto.
+    pub(crate) task_sel: Option<iuredesk_model::TaskId>,
+    pub(crate) task_rename: Option<TaskRename>,
+    pub(crate) task_editor: Option<crate::task_editor::TaskEditor>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -351,6 +355,14 @@ pub(crate) struct NoteEdit {
     body: String,
     /// Momento (reloj de egui) del último cambio sin guardar.
     dirty_at: Option<f64>,
+    /// UX-6: fecha de la nota al cargarla (si cambia por debajo, llegó algo de IureEditor).
+    base: chrono::DateTime<chrono::Utc>,
+}
+
+impl NoteEdit {
+    fn of(n: &iuredesk_model::Note) -> NoteEdit {
+        NoteEdit { id: n.id, title: n.title.clone(), body: n.body.clone(), dirty_at: None, base: n.updated }
+    }
 }
 
 /// Espera tras la última tecla antes del guardado automático.
@@ -363,22 +375,52 @@ pub(crate) fn flush_note(app: &mut DeskApp) {
     if e.dirty_at.take().is_none() {
         return;
     }
-    let (id, title, body) = (e.id, e.title.clone(), e.body.clone());
-    if let Err(err) = app.session.save_note(id, &title, &body) {
-        app.notice(iuredesk_engine::Notice::error(err.text()));
+    let (id, title, body, base) = (e.id, e.title.clone(), e.body.clone(), e.base);
+    match app.session.save_note_from(id, &title, &body, Some(base)) {
+        Ok(iuredesk_engine::session::NoteSaved::Saved(at)) => {
+            if let Some(e) = app.pim.note_edit.as_mut().filter(|e| e.id == id) {
+                e.base = at;
+            }
+        }
+        Ok(iuredesk_engine::session::NoteSaved::Copied(_)) => {
+            // Lo de aquí quedó en la copia en conflicto; el editor muestra lo de IureEditor.
+            if let Some(n) = app.session.notes().into_iter().find(|n| n.id == id) {
+                app.pim.note_edit = Some(NoteEdit::of(&n));
+            }
+            app.notice(iuredesk_engine::Notice::info(
+                "This note changed in IureEditor while you were typing here: what you wrote is in the conflicting copy.",
+                "Esta nota cambió en IureEditor mientras escribías aquí: lo que escribiste está en la copia en conflicto.",
+            ));
+        }
+        Err(err) => app.notice(iuredesk_engine::Notice::error(err.text())),
     }
 }
 
-/// «Abrir en IureEditor»: la nota como documento Markdown nuevo.
+/// UX-6: «Editar en IureEditor»: abre el archivo `.md` de la nota (`iureditor://open?path=`); lo
+/// que se guarde allá vuelve solo. Sin carpeta de notas (o sin texto aún), un documento nuevo.
 pub(crate) fn open_note_in_editor(app: &mut DeskApp) {
     flush_note(app);
     let Some(id) = app.session.note_focus() else { return };
     let Some(n) = app.session.notes().into_iter().find(|n| n.id == id) else { return };
+    if !app.suite.hub.installed(iuredesk_engine::iuredesk_integrations::SisterApp::Editor) {
+        // La invitación a instalarla (la da el propio `run`).
+        app.suite.hub.run(iuredesk_engine::suite::SuiteAction::OpenFile(std::path::PathBuf::new()));
+        return;
+    }
+    if let Some(path) = app.session.note_path(id) {
+        app.suite.hub.run(iuredesk_engine::suite::SuiteAction::OpenFile(path));
+        return;
+    }
+    if n.title.trim().is_empty() && n.body.trim().is_empty() {
+        app.notice(iuredesk_engine::Notice::info(
+            "Write a title or some text first.",
+            "Primero escribe un título o algo de texto.",
+        ));
+        return;
+    }
     let title = iuredesk_engine::session::note_title(&n);
-    let name: String = title.chars().filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_')).take(60).collect();
-    let name = if name.trim().is_empty() { "nota".to_string() } else { name.trim().to_string() };
-    let markdown =
-        if n.title.trim().is_empty() { n.body.clone() } else { format!("# {}\n\n{}", n.title.trim(), n.body) };
+    let name = iuredesk_engine::notes_fs::file_stem(&title);
+    let markdown = iuredesk_engine::notes_fs::render(&n.title, &n.body, &n.tags, n.pinned);
     app.suite.hub.run(iuredesk_engine::suite::SuiteAction::NewDocument { name: format!("{name}.md"), markdown });
 }
 
@@ -391,6 +433,7 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
     let focus = app.session.note_focus().filter(|id| notes.iter().any(|n| n.id == *id)).or(notes.first().map(|n| n.id));
     let mut pick_note: Option<NoteId> = None;
     let mut fire: Option<&'static str> = None;
+    let editor_installed = app.suite.hub.installed(iuredesk_engine::iuredesk_integrations::SisterApp::Editor);
     split::left(ui, "notes-list", PaneKind::Sidebar, 300.0, 220.0..=460.0, |ui| {
         let c = theme::colors(ui);
         ui.add_space(4.0);
@@ -475,6 +518,11 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                 if resp.clicked() {
                     pick_note = Some(n.id);
                 }
+                // UX-6: doble clic = editar en IureEditor (si está instalado).
+                if resp.double_clicked() && editor_installed {
+                    pick_note = Some(n.id);
+                    fire = Some("notes.open_editor");
+                }
                 egui::Popup::context_menu(&resp).show(|ui| {
                     let pin = if n.pinned { pick("Unpin", "Soltar") } else { pick("Pin to top", "Fijar arriba") };
                     if icons::menu_item(ui, Some(Icon::Pin), pin).clicked() {
@@ -496,12 +544,7 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
     {
         flush_note(app);
         app.session.set_note_focus(Some(id));
-        app.pim.note_edit = notes.iter().find(|n| n.id == id).map(|n| NoteEdit {
-            id,
-            title: n.title.clone(),
-            body: n.body.clone(),
-            dirty_at: None,
-        });
+        app.pim.note_edit = notes.iter().find(|n| n.id == id).map(NoteEdit::of);
         // Nota nueva (vacía): se escribe enseguida.
         app.pim.note_focus_editor = notes.iter().any(|n| n.id == id && n.title.is_empty() && n.body.is_empty());
     }
@@ -514,8 +557,23 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         app.run(&ctx, id);
         return;
     }
-    let editor_installed = app.suite.hub.installed(iuredesk_engine::iuredesk_integrations::SisterApp::Editor);
+    // UX-6: la nota cambió por debajo (IureEditor, otra copia) y aquí no hay nada sin guardar:
+    // se muestra lo nuevo.
+    if let Some(e) = app.pim.note_edit.as_ref()
+        && e.dirty_at.is_none()
+        && let Some(n) = notes.iter().find(|n| n.id == e.id && n.updated != e.base)
+    {
+        app.pim.note_edit = Some(NoteEdit::of(n));
+    }
     let updated = app.pim.note_edit.as_ref().and_then(|e| notes.iter().find(|n| n.id == e.id)).map(|n| n.updated);
+    let file_name = app
+        .pim
+        .note_edit
+        .as_ref()
+        .and_then(|e| notes.iter().find(|n| n.id == e.id))
+        .and_then(|n| n.file.as_ref().map(|f| f.name.clone()));
+    let notes_dir = app.session.notes_dir();
+    let dir_problem = app.session.notes_dir_problem().map(str::to_string);
     split::center(ui, PaneKind::Detail, |ui| {
         let c = theme::colors(ui);
         let Some(edit) = app.pim.note_edit.as_mut() else {
@@ -546,14 +604,54 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                 if icons::icon_button(ui, Icon::Trash, pick("Delete note", "Eliminar nota"), true).clicked() {
                     act = Some("notes.delete");
                 }
-                if editor_installed
-                    && icons::icon_button(ui, Icon::Open, pick("Open in IureEditor", "Abrir en IureEditor"), true)
-                        .clicked()
-                {
+                // UX-6: la forma principal de editar una nota larga.
+                let label = pick("Edit in IureEditor", "Editar en IureEditor");
+                let tip = if editor_installed {
+                    pick(
+                        "Opens the note's Markdown file in IureEditor. What you save there comes back here.",
+                        "Abre el archivo Markdown de la nota en IureEditor. Lo que guardes allá vuelve aquí.",
+                    )
+                } else {
+                    pick(
+                        "IureEditor is not installed: click to see how to get it. You can keep writing here.",
+                        "IureEditor no está instalado: pulsa para ver cómo obtenerlo. Puedes seguir escribiendo aquí.",
+                    )
+                };
+                if ui.button(label).on_hover_text(tip).clicked() {
                     act = Some("notes.open_editor");
                 }
             });
         });
+        // UX-6: dónde vive la nota.
+        // (texto, ruta completa para la ayuda, ¿problema?)
+        let where_ = match (&notes_dir, &file_name, &dir_problem) {
+            (Some(_), _, Some(p)) => Some((
+                format!(
+                    "{} ({p})",
+                    pick(
+                        "Notes folder not available; the note is safe here",
+                        "La carpeta de notas no está disponible; la nota está a salvo aquí"
+                    )
+                ),
+                String::new(),
+                true,
+            )),
+            (Some(d), Some(f), None) => {
+                let folder = d.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                Some((format!("{} {folder}/{f}", pick("File:", "Archivo:")), d.join(f).display().to_string(), false))
+            }
+            _ => None,
+        };
+        if let Some((text, full, bad)) = where_ {
+            let r = ui.label(
+                RichText::new(text)
+                    .color(if bad { c.danger } else { c.text_muted })
+                    .size(theme::density(ui.ctx()).small_size()),
+            );
+            if !full.is_empty() {
+                r.on_hover_text(full);
+            }
+        }
         ui.add_space(6.0);
         hairline(ui);
         ui.add_space(8.0);
@@ -679,6 +777,18 @@ fn inline(ui: &mut Ui, text: &str, size: f32, color: egui::Color32) {
 // ---------------------------------------------------------------------------------------------
 // Tareas
 
+/// Qué se hizo sobre una fila de tarea.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RowAct {
+    Toggle,
+    Delete,
+    Select,
+    /// UX-6: abrir el editor (doble clic, Intro, «Editar…»).
+    Edit,
+    /// UX-6: cambiar el nombre en la lista (F2).
+    Rename,
+}
+
 pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let lists = app.session.task_lists();
@@ -722,10 +832,10 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
             badge(ui, &b, BadgeKind::Neutral);
         }
         ui.add_space(8.0);
-        let mut toggle: Option<iuredesk_model::TaskId> = None;
-        let mut remove: Option<iuredesk_model::TaskId> = None;
+        let mut acts: Vec<(iuredesk_model::TaskId, RowAct)> = Vec::new();
+        let writable = app.session.iure_can_write() || !app.session.is_iure_task(list_id);
         // F7.1: alta rápida (Intro); se sube a la cuenta de la lista en segundo plano.
-        if app.session.iure_can_write() || !app.session.is_iure_task(list_id) {
+        if writable {
             ui.horizontal(|ui| {
                 ui.set_max_width(760.0);
                 let r = ui.add(
@@ -745,6 +855,19 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
             });
             ui.add_space(6.0);
         }
+        // UX-6: teclado sobre la tarea elegida (sin un campo de texto con el foco).
+        let sel = app.pim.task_sel.filter(|id| open.iter().chain(done.iter()).any(|t| t.id == *id));
+        if let Some(id) = sel
+            && !ctx.egui_wants_keyboard_input()
+            && app.pim.task_editor.is_none()
+            && app.pim.task_rename.is_none()
+        {
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                acts.push((id, RowAct::Edit));
+            } else if writable && ui.input(|i| i.key_pressed(egui::Key::F2)) {
+                acts.push((id, RowAct::Rename));
+            }
+        }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_max_width(760.0);
             if open.is_empty() {
@@ -754,10 +877,8 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
                     .show(ui);
             }
             for t in &open {
-                match task_row(app, ui, t) {
-                    Some(true) => toggle = Some(t.id),
-                    Some(false) => remove = Some(t.id),
-                    None => {}
+                if let Some(a) = task_row(app, ui, t, writable) {
+                    acts.push((t.id, a));
                 }
             }
             if !done.is_empty() {
@@ -769,48 +890,78 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
                 }
                 if app.pim.show_done {
                     for t in &done {
-                        match task_row(app, ui, t) {
-                            Some(true) => toggle = Some(t.id),
-                            Some(false) => remove = Some(t.id),
-                            None => {}
+                        if let Some(a) = task_row(app, ui, t, writable) {
+                            acts.push((t.id, a));
                         }
                     }
                 }
             }
         });
-        if let Some(id) = toggle {
-            match app.session.toggle_task(id, &lists) {
-                Ok(out) => app.outcome(&ctx, out),
-                Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
-            }
-        }
-        if let Some(id) = remove {
-            match app.session.delete_task(id) {
-                Ok(out) => app.outcome(&ctx, out),
-                Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
+        for (id, a) in acts {
+            match a {
+                RowAct::Toggle => match app.session.toggle_task(id, &lists) {
+                    Ok(out) => app.outcome(&ctx, out),
+                    Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
+                },
+                RowAct::Delete => match app.session.delete_task(id) {
+                    Ok(out) => app.outcome(&ctx, out),
+                    Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
+                },
+                RowAct::Select => app.pim.task_sel = Some(id),
+                RowAct::Edit => {
+                    app.pim.task_sel = Some(id);
+                    crate::task_editor::open(app, id);
+                }
+                RowAct::Rename => {
+                    app.pim.task_sel = Some(id);
+                    let title = app.session.task(id).map(|t| t.summary).unwrap_or_default();
+                    app.pim.task_rename = Some(TaskRename { id, text: title, focused: false });
+                }
             }
         }
     });
 }
 
-/// Una tarea con su casilla. `Some(true)` si se pulsó la casilla, `Some(false)` si se eligió
-/// «Eliminar» en su menú.
-fn task_row(app: &DeskApp, ui: &mut Ui, t: &Task) -> Option<bool> {
+/// UX-6: título que se está cambiando en la lista (F2).
+pub(crate) struct TaskRename {
+    id: iuredesk_model::TaskId,
+    text: String,
+    focused: bool,
+}
+
+/// Una tarea con su casilla.
+fn task_row(app: &mut DeskApp, ui: &mut Ui, t: &Task, writable: bool) -> Option<RowAct> {
     let c = theme::colors(ui);
     let zone = app.session.zone();
     let today = app.session.today();
     let d = theme::density(ui.ctx());
     let h = d.row_height().max(30.0) + 6.0;
     let (rect, row) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
-    let mut delete = false;
-    if !app.session.is_iure_task(t.list) || app.session.iure_can_write() {
-        egui::Popup::context_menu(&row).show(|ui| {
-            if icons::menu_item(ui, Some(Icon::Trash), pick("Delete task", "Eliminar tarea")).clicked() {
-                delete = true;
+    let mut act: Option<RowAct> = None;
+    let selected = app.pim.task_sel == Some(t.id);
+    // La fila (doble clic = editar) con su nombre; la casilla lleva el título solo.
+    crate::widgets::named(&row, egui::Role::ListItem, &format!("{} {}", pick("Task", "Tarea"), t.summary));
+    if selected {
+        ui.painter().rect_filled(rect, 6.0, c.selection);
+    } else if row.hovered() {
+        ui.painter().rect_filled(rect, 6.0, c.hover);
+    }
+    egui::Popup::context_menu(&row).show(|ui| {
+        if icons::menu_item(ui, Some(Icon::Rename), pick("Edit…", "Editar…")).clicked() {
+            act = Some(RowAct::Edit);
+            ui.close();
+        }
+        if writable {
+            if icons::menu_item(ui, None, pick("Rename (F2)", "Cambiar nombre (F2)")).clicked() {
+                act = Some(RowAct::Rename);
                 ui.close();
             }
-        });
-    }
+            if icons::menu_item(ui, Some(Icon::Trash), pick("Delete task", "Eliminar tarea")).clicked() {
+                act = Some(RowAct::Delete);
+                ui.close();
+            }
+        }
+    });
     let box_r = Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), vec2(18.0, 18.0));
     let resp = ui.interact(box_r.expand(4.0), ui.scope_id().with(("task", t.id.get())), Sense::click());
     let done = t.is_done();
@@ -825,42 +976,88 @@ fn task_row(app: &DeskApp, ui: &mut Ui, t: &Task) -> Option<bool> {
     let x = box_r.right() + 12.0;
     let mut right = rect.right() - 8.0;
     if let Some(due) = &t.due {
-        let dd = zone.local(due.to_utc()).date();
+        let local = zone.local(due.to_utc());
+        let dd = local.date();
+        let time = match due {
+            iuredesk_model::EventTime::DateTime { .. } => format!(" {}", local.format("%H:%M")),
+            iuredesk_model::EventTime::Date(_) => String::new(),
+        };
         let (txt, col) = if done {
             (dd.format("%d/%m").to_string(), c.text_muted)
         } else if dd < today {
             (format!("{} · {}", pick("Overdue", "Vencida"), dd.format("%d/%m")), c.danger)
         } else if dd == today {
-            (pick("Today", "Hoy").to_string(), c.accent)
+            (format!("{}{time}", pick("Today", "Hoy")), c.accent)
         } else if Some(dd) == today.succ_opt() {
-            (pick("Tomorrow", "Mañana").to_string(), c.text_muted)
+            (format!("{}{time}", pick("Tomorrow", "Mañana")), c.text_muted)
         } else {
-            (format!("{} {}", iuredesk_engine::time::weekday_short(dd), dd.format("%d/%m")), c.text_muted)
+            (format!("{} {}{time}", iuredesk_engine::time::weekday_short(dd), dd.format("%d/%m")), c.text_muted)
         };
         let g = ui.painter().layout_no_wrap(txt, theme::small_font(ui.ctx()), col);
         let w = g.size().x;
         ui.painter().galley(pos2(right - w, rect.center().y - g.size().y / 2.0), g, col);
         right -= w + 14.0;
     }
+    if !t.rrule.is_empty() {
+        let fr = Rect::from_center_size(pos2(right - 7.0, rect.center().y), vec2(14.0, 14.0));
+        icons::paint(ui.painter(), fr, Icon::Sync, c.text_muted, c.text_muted);
+        right -= 22.0;
+    }
     if !done && (1..=4).contains(&t.priority) {
         let fr = Rect::from_center_size(pos2(right - 7.0, rect.center().y), vec2(14.0, 14.0));
         icons::paint(ui.painter(), fr, Icon::Flag, c.danger, c.danger);
         right -= 22.0;
     }
-    let font = theme::body_font(ui.ctx());
-    let ink = if done { c.text_muted } else { c.text };
-    let g = iurefficient_ui::widgets::text::elided(ui, &t.summary, font, ink, (right - x).max(0.0));
-    let gy = rect.center().y - g.size().y / 2.0;
-    let gw = g.size().x;
-    ui.painter().galley(pos2(x, gy), g, ink);
-    if done {
-        ui.painter().hline(x..=(x + gw), rect.center().y, Stroke::new(1.0, c.text_muted));
+    let renaming = app.pim.task_rename.as_ref().is_some_and(|r| r.id == t.id);
+    if renaming {
+        // F2: el título se cambia en su sitio; Intro guarda, Esc deshace.
+        let r_rect = Rect::from_min_max(pos2(x, rect.top() + 4.0), pos2(right.max(x + 80.0), rect.bottom() - 4.0));
+        let mut save: Option<bool> = None;
+        if let Some(rn) = app.pim.task_rename.as_mut() {
+            let r = ui.put(r_rect, egui::TextEdit::singleline(&mut rn.text).desired_width(r_rect.width()));
+            crate::widgets::text_label(&r, pick("Task title", "Título de la tarea"));
+            if !rn.focused {
+                rn.focused = true;
+                r.request_focus();
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                save = Some(false);
+            } else if r.lost_focus() {
+                save = Some(true);
+            }
+        }
+        if let Some(keep) = save
+            && let Some(rn) = app.pim.task_rename.take()
+            && keep
+            && rn.text.trim() != t.summary
+        {
+            let ctx = ui.ctx().clone();
+            match app.session.rename_task(rn.id, &rn.text) {
+                Ok(out) => app.outcome(&ctx, out),
+                Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
+            }
+        }
+    } else {
+        let font = theme::body_font(ui.ctx());
+        let ink = if done { c.text_muted } else { c.text };
+        let g = iurefficient_ui::widgets::text::elided(ui, &t.summary, font, ink, (right - x).max(0.0));
+        let gy = rect.center().y - g.size().y / 2.0;
+        let gw = g.size().x;
+        ui.painter().galley(pos2(x, gy), g, ink);
+        if done {
+            ui.painter().hline(x..=(x + gw), rect.center().y, Stroke::new(1.0, c.text_muted));
+        }
     }
     ui.painter().hline((rect.left() + 34.0)..=rect.right(), rect.bottom() - 0.5, Stroke::new(1.0, c.separator));
+    if act.is_some() {
+        return act;
+    }
     if resp.clicked() {
-        Some(true)
-    } else if delete {
-        Some(false)
+        Some(RowAct::Toggle)
+    } else if row.double_clicked() {
+        Some(RowAct::Edit)
+    } else if row.clicked() {
+        Some(RowAct::Select)
     } else {
         None
     }

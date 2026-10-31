@@ -22,6 +22,7 @@ pub mod context;
 pub mod iure;
 pub mod lang;
 pub mod migrate;
+pub mod notes_fs;
 pub mod onboarding;
 pub mod open;
 pub mod prefs;

@@ -173,6 +173,7 @@ impl Session {
         };
         self.store.put_note(&note).map_err(store_err)?;
         self.data_gen = self.data_gen.wrapping_add(1);
+        self.notes_reconcile();
         Ok(Outcome::Notice(Notice::success("Saved in Notes", "Guardado en Notas")))
     }
 

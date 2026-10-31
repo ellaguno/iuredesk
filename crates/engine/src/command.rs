@@ -290,10 +290,11 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
     c("notes.new", "New note", "Nueva nota", "notes", Group::App, "note create nota crear apunte"),
     c("notes.delete", "Delete note", "Eliminar nota", "trash", Group::App, "note delete nota borrar eliminar"),
+    c("tasks.edit", "Edit task…", "Editar tarea…", "edit", Group::App, "task todo edit tarea editar pendiente"),
     c(
         "notes.open_editor",
-        "Open note in IureEditor",
-        "Abrir nota en IureEditor",
+        "Edit note in IureEditor",
+        "Editar nota en IureEditor",
         "edit",
         Group::App,
         "note editor iureeditor nota editor",
