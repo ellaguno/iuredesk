@@ -37,13 +37,14 @@ fn whole_corpus_renders() {
 #[test]
 fn timing_budget() {
     // Presupuesto holgado (las pruebas pueden correr en depuración y en CI lento): lo que importa
-    // es detectar regresiones de órdenes de magnitud.
+    // es detectar regresiones de órdenes de magnitud. En Windows CI, en depuración, «09-cjk-emoji»
+    // llegó a 5,8 s con las fuentes CJK del sistema: el límite corto es 15 s.
     iuredesk_html_view::warm_up();
     for case in common::corpus() {
         let o = opts_for(&case.html);
         let t = Instant::now();
         let _ = render(&case.html, &o);
-        let budget = if case.html.len() > 1_000_000 { Duration::from_secs(60) } else { Duration::from_secs(5) };
+        let budget = if case.html.len() > 1_000_000 { Duration::from_secs(60) } else { Duration::from_secs(15) };
         assert!(t.elapsed() < budget, "{} tardó {:?}", case.name, t.elapsed());
     }
 }
