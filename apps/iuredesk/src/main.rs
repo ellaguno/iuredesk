@@ -214,6 +214,21 @@ fn button_layout() -> Option<String> {
     None
 }
 
+/// BUG-FREEZE: presentación sin espera de vsync. egui pinta las ventanas de lectura (viewports
+/// inmediatos) en cada cuadro de la principal sin mirar si se ven; con FIFO, Wayland + NVIDIA deja
+/// `get_current_texture` bloqueado para siempre cuando esa ventana está tapada o en otro escritorio,
+/// y la aplicación entera se congela. `AutoNoVsync` (Immediate → Mailbox → Fifo) no espera al
+/// compositor; como solo repintamos cuando hay cambios, no gasta más.
+fn wgpu_options() -> eframe::WgpuConfiguration {
+    eframe::WgpuConfiguration {
+        surface: eframe::SurfaceConfig {
+            present_mode: eframe::wgpu::PresentMode::AutoNoVsync,
+            desired_maximum_frame_latency: Some(2),
+        },
+        ..Default::default()
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Antes de cualquier salida: en modo MCP, stdout es solo del protocolo.
@@ -290,7 +305,7 @@ fn main() -> ExitCode {
         },
     );
 
-    let options = eframe::NativeOptions { viewport, ..Default::default() };
+    let options = eframe::NativeOptions { viewport, wgpu_options: wgpu_options(), ..Default::default() };
     let minimize = cli.minimized;
     let ctx_slot = Arc::clone(&wake.ctx);
     // R1.4: antes del bucle de eventos, para no perder el enlace o archivo con que se lanzó.
@@ -427,6 +442,13 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn surfaces_never_wait_for_vsync() {
+        // Regresión BUG-FREEZE: con vsync, una ventana de lectura oculta congelaba la app.
+        let o = super::wgpu_options();
+        assert_eq!(o.surface.present_mode, eframe::wgpu::PresentMode::AutoNoVsync);
+    }
+
     use super::*;
 
     fn args(v: &[&str]) -> Vec<String> {
