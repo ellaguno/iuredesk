@@ -24,6 +24,7 @@
 
 mod engine;
 mod fonts;
+pub mod markdown;
 mod net;
 pub mod print;
 pub mod sanitize;
@@ -86,6 +87,9 @@ pub struct RenderOptions {
     pub max_input_bytes: usize,
     /// Tamaño máximo de cada recurso (imagen, hoja de estilo, fuente).
     pub max_resource_bytes: usize,
+    /// UX-8: fondo fijo (RGB) en lugar del blanco/oscuro de correo (la vista previa de notas usa
+    /// el de su panel).
+    pub background: Option<[u8; 3]>,
 }
 
 impl Default for RenderOptions {
@@ -100,6 +104,7 @@ impl Default for RenderOptions {
             max_height: 12_000,
             max_input_bytes: 8 * 1024 * 1024,
             max_resource_bytes: 10 * 1024 * 1024,
+            background: None,
         }
     }
 }

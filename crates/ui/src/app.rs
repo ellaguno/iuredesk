@@ -82,6 +82,8 @@ pub struct DeskApp {
     pub(crate) calendar: CalendarState,
     pub(crate) pim: PimState,
     pub(crate) html: HtmlCache,
+    /// UX-8: vistas previas de notas.
+    pub(crate) note_preview: crate::note_preview::NotePreviewCache,
     pub palette: CommandPalette,
     palette_mode: PaletteMode,
     palette_items: Vec<PaletteItem>,
@@ -138,6 +140,7 @@ impl DeskApp {
             calendar: CalendarState::default(),
             pim: PimState::default(),
             html: HtmlCache::default(),
+            note_preview: Default::default(),
             palette: CommandPalette::default(),
             palette_mode: PaletteMode::Commands,
             palette_items: Vec::new(),
@@ -223,6 +226,18 @@ impl DeskApp {
     /// Notas en «Vista previa» (capturas).
     pub fn set_note_preview(&mut self, on: bool) {
         self.pim.note_preview = on;
+    }
+
+    /// UX-8: ¿se ve la vista previa de la nota? (pruebas)
+    pub fn note_preview_on(&self) -> bool {
+        self.pim.note_preview
+    }
+
+    /// UX-8: lo mismo que pulsar la casilla `n` de la vista previa de la nota enfocada (pruebas).
+    pub fn toggle_note_task(&mut self, n: usize) {
+        if let Some(id) = self.session.note_focus() {
+            crate::note_preview::toggle_task(self, id, n);
+        }
     }
 
     /// Ventanas de redacción abiertas (pruebas).
@@ -455,6 +470,7 @@ impl DeskApp {
             && self.opened.pending() == 0
             && self.session.is_idle()
             && !self.html.pending()
+            && !self.note_preview.pending()
             && self.ai.hub.is_idle()
             && self.import.hub.is_idle()
             && !self.suite.hub.busy()
@@ -736,7 +752,15 @@ impl DeskApp {
                 Event::Compose(d) => self.open_composer(*d),
                 Event::Custom { id, value } => {
                     if let Some(f) = value.downcast_ref::<iuredesk_engine::Fetched>() {
-                        self.html.on_fetched(f.clone());
+                        if f.tag & crate::note_preview::NOTE_TAG != 0 {
+                            self.note_preview.on_fetched(f.clone());
+                        } else {
+                            self.html.on_fetched(f.clone());
+                        }
+                    } else if value.is::<crate::note_preview::NoteDone>() {
+                        if let Ok(done) = value.downcast::<crate::note_preview::NoteDone>() {
+                            self.note_preview.on_done(ctx, *done);
+                        }
                     } else if value.is::<crate::compose::PickedFiles>() {
                         if let Ok(p) = value.downcast::<crate::compose::PickedFiles>() {
                             crate::compose::on_picked(self, *p);
@@ -820,6 +844,7 @@ impl DeskApp {
         let typing = ctx.egui_wants_keyboard_input();
         let in_calendar = self.session.module == Module::Calendar;
         let in_mail = self.session.module == Module::Mail;
+        let in_notes = self.session.module == Module::Notes;
         let mut fire: Option<&'static str> = None;
         ctx.input_mut(|i| {
             let mut consumed = None;
@@ -834,6 +859,7 @@ impl DeskApp {
                         // El zoom del mensaje solo en el correo (en lo demás, el de egui).
                         || (cmd.starts_with("view.zoom") && !in_mail)
                         || ((cmd == "mail.open_window" || cmd == "view.reading_focus") && !in_mail)
+                        || (cmd == "notes.toggle_preview" && !in_notes)
                     {
                         continue;
                     }

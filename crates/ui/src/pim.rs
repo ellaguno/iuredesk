@@ -547,6 +547,8 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         app.pim.note_edit = notes.iter().find(|n| n.id == id).map(NoteEdit::of);
         // Nota nueva (vacía): se escribe enseguida.
         app.pim.note_focus_editor = notes.iter().any(|n| n.id == id && n.title.is_empty() && n.body.is_empty());
+        // UX-8: con texto se abre en la vista previa; vacía, en el editor.
+        app.pim.note_preview = notes.iter().any(|n| n.id == id && !n.body.trim().is_empty());
     }
     if focus.is_none() && pick_note.is_none() {
         flush_note(app);
@@ -581,15 +583,27 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             return;
         };
         let mut act: Option<&'static str> = None;
+        let mut fire_toggle = false;
+        let mut preview_act = None;
         ui.set_max_width(820.0);
         ui.add_space(4.0);
         ui.horizontal(|ui| {
+            // UX-8: Vista (render nativo) / Editar (editor ligero); Ctrl+Shift+E alterna.
             let preview = app.pim.note_preview;
-            if ui.selectable_label(!preview, pick("Edit", "Editar")).clicked() {
-                app.pim.note_preview = false;
+            let sc = iuredesk_engine::command::shortcut("notes.toggle_preview", app.session.scheme())
+                .map(|k| k.label(cfg!(target_os = "macos")))
+                .unwrap_or_default();
+            let view = ui
+                .selectable_label(preview, pick("View", "Vista"))
+                .on_hover_text(format!("{} ({sc})", pick("See the note formatted", "Ver la nota con formato")));
+            if view.clicked() && !preview {
+                fire_toggle = true;
             }
-            if ui.selectable_label(preview, pick("Preview", "Vista previa")).clicked() {
-                app.pim.note_preview = true;
+            let ed = ui
+                .selectable_label(!preview, pick("Edit", "Editar"))
+                .on_hover_text(format!("{} ({sc})", pick("Edit the Markdown text", "Editar el texto Markdown")));
+            if ed.clicked() && preview {
+                fire_toggle = true;
             }
             ui.add_space(8.0);
             let state = match (edit.dirty_at.is_some(), updated) {
@@ -667,8 +681,9 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         changed |= title.changed();
         ui.add_space(8.0);
         if app.pim.note_preview {
+            let (nid, body) = (edit.id, edit.body.clone());
             egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-preview").show(ui, |ui| {
-                markdown(ui, &edit.body);
+                preview_act = crate::note_preview::show(app, ui, nid, &body);
             });
         } else {
             egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-body").show(ui, |ui| {
@@ -693,15 +708,23 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             });
         }
         let t = ui.input(|i| i.time);
-        if changed {
-            edit.dirty_at = Some(t);
+        if changed && let Some(e) = app.pim.note_edit.as_mut() {
+            e.dirty_at = Some(t);
         }
-        if let Some(at) = edit.dirty_at {
+        if let Some(at) = app.pim.note_edit.as_ref().and_then(|e| e.dirty_at) {
             if t - at >= NOTE_AUTOSAVE_SECS {
                 flush_note(app);
             } else {
                 ctx.request_repaint_after(std::time::Duration::from_secs_f64(NOTE_AUTOSAVE_SECS));
             }
+        }
+        if let Some(a) = preview_act
+            && let Some(id) = app.pim.note_edit.as_ref().map(|e| e.id)
+        {
+            crate::note_preview::handle(app, id, a);
+        }
+        if fire_toggle {
+            app.run(&ctx, "notes.toggle_preview");
         }
         if let Some(id) = act {
             flush_note(app);
@@ -710,68 +733,14 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
     });
 }
 
-/// Markdown sencillo: encabezados, viñetas, casillas, citas, negritas y párrafos.
-fn markdown(ui: &mut Ui, text: &str) {
-    let c = theme::colors(ui);
-    let body = theme::density(ui.ctx()).body_size() + 1.0;
-    for line in text.lines().take(5_000) {
-        let t = line.trim_end();
-        if t.trim().is_empty() {
-            ui.add_space(6.0);
-            continue;
-        }
-        if let Some(h) = t.strip_prefix("### ") {
-            ui.add_space(6.0);
-            ui.label(RichText::new(h).font(theme::bold_font(ui.ctx(), body + 2.0)).color(c.text));
-        } else if let Some(h) = t.strip_prefix("## ") {
-            ui.add_space(8.0);
-            ui.label(RichText::new(h).font(theme::bold_font(ui.ctx(), body + 4.0)).color(c.text));
-        } else if let Some(h) = t.strip_prefix("# ") {
-            ui.add_space(10.0);
-            ui.label(RichText::new(h).font(theme::bold_font(ui.ctx(), body + 7.0)).color(c.text));
-        } else if let Some(rest) = t.strip_prefix("- [ ] ").or_else(|| t.strip_prefix("- [x] ")) {
-            let done = t.starts_with("- [x]");
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-                ui.painter().rect_stroke(r.shrink(1.5), 3.0, Stroke::new(1.3, c.text_muted), egui::StrokeKind::Inside);
-                if done {
-                    icons::paint(ui.painter(), r.shrink(2.0), Icon::Check, c.accent, c.accent);
-                }
-                inline(ui, rest, body, if done { c.text_muted } else { c.text });
-            });
-        } else if let Some(rest) = t.trim_start().strip_prefix("- ").or_else(|| t.trim_start().strip_prefix("* ")) {
-            ui.horizontal(|ui| {
-                ui.add_space(4.0);
-                let (r, _) = ui.allocate_exact_size(vec2(10.0, body), Sense::hover());
-                ui.painter().circle_filled(r.center(), 2.5, c.text_muted);
-                inline(ui, rest, body, c.text);
-            });
-        } else if let Some(q) = t.strip_prefix("> ") {
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(3.0, body * 1.4), Sense::hover());
-                ui.painter().rect_filled(r, 1.0, c.separator);
-                ui.add_space(6.0);
-                inline(ui, q, body, c.text_muted);
-            });
-        } else {
-            inline(ui, t, body, c.text);
-        }
+/// UX-8: `notes.toggle_preview`. Al pasar a la vista se guarda lo escrito (la vista muestra lo
+/// mismo que el archivo).
+pub(crate) fn toggle_note_preview(app: &mut DeskApp) {
+    if app.pim.note_edit.is_none() {
+        return;
     }
-}
-
-/// Texto con `**negritas**`.
-fn inline(ui: &mut Ui, text: &str, size: f32, color: egui::Color32) {
-    let mut job = egui::text::LayoutJob::default();
-    for (i, part) in text.split("**").enumerate() {
-        let font = if i % 2 == 1 { theme::bold_font(ui.ctx(), size) } else { egui::FontId::proportional(size) };
-        job.append(
-            part,
-            0.0,
-            egui::TextFormat { font_id: font, color, line_height: Some(size * 1.45), ..Default::default() },
-        );
-    }
-    job.wrap.max_width = ui.available_width();
-    ui.add(egui::Label::new(job).wrap().selectable(true));
+    flush_note(app);
+    app.pim.note_preview = !app.pim.note_preview;
 }
 
 // ---------------------------------------------------------------------------------------------

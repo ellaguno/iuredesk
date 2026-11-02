@@ -5,7 +5,12 @@
 //!  [--html] [--month] [--view day|agenda|week|work_week|month] [--editor] [--invite] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]
 //!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]
 //!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]
-//!  [--reader] [--focus] [--context-collapsed] [--strip] [--attachments [--attachments-menu]] [--emoji]`
+//!  [--reader] [--focus] [--context-collapsed] [--strip] [--attachments [--attachments-menu]] [--emoji]
+//!  [--note [--note-edit]]`
+//!
+//! UX-8: `--note` agrega una nota con tablas, casillas, código, cita, Mermaid, fórmula, nota al
+//! pie y una imagen local (en una carpeta de notas temporal si no hay `--notes-dir`) y la muestra
+//! en la vista previa nativa; `--note-edit`, en el editor.
 //!
 //! UX-3: `--reader` abre el mensaje en su ventana (sin pantalla, egui la dibuja dentro de la
 //! principal); `--attachments` elige un mensaje con adjuntos y `--attachments-menu` abre el menú
@@ -389,6 +394,25 @@ fn main() -> Result<(), String> {
         app.session.notes_fs_flush(Duration::from_secs(10));
         app.session.notes_fs_flush(Duration::from_secs(10));
     }
+    if args.iter().any(|a| a == "--note") {
+        let dir = flag("--notes-dir").map(std::path::PathBuf::from).unwrap_or_else(|| {
+            let d = std::env::temp_dir().join(format!("iuredesk-note-shot-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&d);
+            d
+        });
+        let _ = std::fs::create_dir_all(dir.join("img"));
+        let _ = demo_image().save(dir.join("img").join("sello.png"));
+        if flag("--notes-dir").is_none() {
+            app.session.notes_fs_for_tests(dir.clone(), Duration::from_millis(50));
+        }
+        let _ = app.session.new_note();
+        if let Some(id) = app.session.note_focus() {
+            let _ = app.session.save_note(id, "Reunión con Altamira", DEMO_NOTE);
+            app.session.module = Module::Notes;
+        }
+        app.session.notes_fs_flush(Duration::from_secs(10));
+        app.session.notes_fs_flush(Duration::from_secs(10));
+    }
     if args.iter().any(|a| a == "--task-editor") {
         let lists = app.session.task_lists();
         let pick_task = lists
@@ -538,6 +562,10 @@ fn main() -> Result<(), String> {
         harness.state_mut().run(&ctx, "view.reading_focus");
         later(&mut harness);
     }
+    if args.iter().any(|a| a == "--note-edit") {
+        harness.state_mut().set_note_preview(false);
+        later(&mut harness);
+    }
     if args.iter().any(|a| a == "--attachments-menu") {
         use egui_kittest::kittest::Queryable;
         if let Some(n) = harness.query_all_by_label_contains("Adjunto ").next() {
@@ -553,4 +581,57 @@ fn main() -> Result<(), String> {
     image.save(&out).map_err(|e| e.to_string())?;
     println!("{out}");
     Ok(())
+}
+
+/// UX-8: nota de ejemplo con todo lo que pinta la vista previa.
+const DEMO_NOTE: &str = "Acuerdos de la **reunión del 21 de octubre** con *Altamira Legal*. \
+Expediente: [caso 241/2026](https://iurefficient.com/casos/241).
+
+![Sello del despacho](img/sello.png)
+
+## Pendientes
+
+- [x] Enviar propuesta de honorarios
+- [ ] Revisar el contrato de arrendamiento
+- [ ] Agendar la firma con el notario
+
+## Honorarios
+
+| Concepto | Horas | Importe |
+|---|---:|---:|
+| Revisión de contrato | 6 | $9,000 |
+| Audiencia | 3 | $6,000 |
+| **Total** | **9** | **$15,000** |
+
+> El cliente prefiere llamadas por la mañana y ~~fax~~ correo para todo lo demás.
+
+```rust
+fn honorarios(horas: u32) -> u32 {
+    horas * 1_500
+}
+```
+
+```mermaid
+graph LR; Propuesta --> Firma --> Audiencia
+```
+
+Interés moratorio: $i = r \\cdot t$ (ver nota[^1]).
+
+[^1]: Cláusula 7 del contrato de prestación de servicios.
+";
+
+/// Imagen local de la nota de ejemplo (dibujada aquí: sin activos de terceros).
+fn demo_image() -> image::RgbaImage {
+    image::RgbaImage::from_fn(240, 64, |x, y| {
+        let (cx, cy) = (32.0f32, 32.0f32);
+        let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+        if d < 26.0 && d > 20.0 {
+            image::Rgba([0x1a, 0x5f, 0xb4, 255])
+        } else if d <= 20.0 {
+            image::Rgba([0xdb, 0xe8, 0xf7, 255])
+        } else {
+            let t = (x as f32 / 240.0 * 60.0) as u8;
+            image::Rgba([0x1a + t, 0x5f + t / 2, 0xb4, 255])
+        }
+    })
 }

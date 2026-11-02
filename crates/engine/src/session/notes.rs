@@ -18,6 +18,8 @@ pub(crate) enum NoteUndo {
     Created(NoteId),
     /// Se borró: se devuelve tal cual.
     Deleted(Box<Note>),
+    /// UX-8: se cambió el cuerpo desde la vista previa (casilla de tarea): vuelve el anterior.
+    Body { id: NoteId, body: String },
 }
 
 fn clip(s: &str, max: usize) -> String {
@@ -107,6 +109,19 @@ impl Session {
         if now > prev { now } else { prev + chrono::Duration::milliseconds(1) }
     }
 
+    /// UX-8: cambia el cuerpo desde la vista previa (marcar una casilla de tarea), con deshacer.
+    /// El título no se toca; el archivo Markdown se reescribe como en cualquier guardado.
+    pub fn set_note_body(&mut self, id: NoteId, body: &str, text: Text) -> Result<Outcome> {
+        let n = self.store.get_note(id).map_err(store_err)?.ok_or(EngineError::NoSelection)?;
+        if n.body == body {
+            return Ok(Outcome::Done);
+        }
+        let before = n.body.clone();
+        self.save_note(id, &n.title, body)?;
+        self.push_undo(text.clone(), vec![(Inverse::Note(Box::new(NoteUndo::Body { id, body: before })), None)]);
+        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: Some(6) }))
+    }
+
     /// Fija o suelta una nota arriba de la lista.
     pub fn toggle_note_pin(&mut self, id: NoteId) -> Result<()> {
         let mut n = self.store.get_note(id).map_err(store_err)?.ok_or(EngineError::NoSelection)?;
@@ -159,6 +174,12 @@ impl Session {
                 n.file = None;
                 let id = self.store.put_note(&n).map_err(store_err)?;
                 self.note_focus = Some(id);
+            }
+            NoteUndo::Body { id, body } => {
+                if let Some(n) = self.store.get_note(id).map_err(store_err)? {
+                    // `save_note` ya reescribe el archivo y avanza la fecha.
+                    return self.save_note(id, &n.title, &body);
+                }
             }
         }
         self.data_gen = self.data_gen.wrapping_add(1);

@@ -43,17 +43,17 @@ pub struct HtmlDone {
 /// Render listo para subir: franjas horizontales de como mucho el lado máximo de textura de la
 /// GPU (un boletín largo pasa de 8 192 px de alto y `load_texture` no lo admitiría).
 pub struct HtmlImage {
-    tiles: Vec<ColorImage>,
-    size: [usize; 2],
-    links: Vec<LinkRect>,
-    blocked: Vec<String>,
+    pub(crate) tiles: Vec<ColorImage>,
+    pub(crate) size: [usize; 2],
+    pub(crate) links: Vec<LinkRect>,
+    pub(crate) blocked: Vec<String>,
 }
 
 /// Lado máximo de textura si aún no se conoce el de la GPU (el mínimo que egui garantiza).
 const DEFAULT_MAX_SIDE: usize = 2_048;
 
 /// Convierte el render en franjas de imagen de egui (fuera del hilo de la interfaz).
-fn to_image(r: iuredesk_html_view::Rendered, max_side: usize) -> Result<HtmlImage, String> {
+pub(crate) fn to_image(r: iuredesk_html_view::Rendered, max_side: usize) -> Result<HtmlImage, String> {
     let size = [r.width as usize, r.height as usize];
     let row = size[0].saturating_mul(4);
     let need = row.saturating_mul(size[1]);
@@ -95,7 +95,7 @@ fn tex_bytes(size: [usize; 2]) -> usize {
 }
 
 /// Recursos remotos descargados, para el render con imágenes.
-struct MapFetcher(HashMap<String, Bytes>);
+pub(crate) struct MapFetcher(pub(crate) HashMap<String, Bytes>);
 
 impl Fetcher for MapFetcher {
     fn fetch(&self, url: &str) -> Option<Bytes> {

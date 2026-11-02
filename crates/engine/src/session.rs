@@ -1153,7 +1153,7 @@ impl Session {
                 self.focused.is_some()
             }
             "mail.edit_draft" => self.focused.is_some_and(|m| self.is_draft(m)),
-            "notes.delete" | "notes.open_editor" => self.note_focus.is_some(),
+            "notes.delete" | "notes.open_editor" | "notes.toggle_preview" => self.note_focus.is_some(),
             "tasks.edit" => self.module == Module::Tasks || self.module == Module::Today,
             "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
                 !self.contact_selection.is_empty()
@@ -1220,6 +1220,7 @@ impl Session {
             "mail.new_folder" | "mail.rename_folder" | "mail.delete_folder" => self.run_folder_command(base, arg),
             "notes.delete" => self.run_delete_note(arg),
             "notes.open_editor" => Ok(Outcome::Assist("notes.open_editor".into())),
+            "notes.toggle_preview" => Ok(Outcome::Assist("notes.toggle_preview".into())),
             "tasks.edit" => Ok(Outcome::Assist("tasks.edit".into())),
             "mail.archive" => self.archive(),
             "mail.delete" => self.delete(),

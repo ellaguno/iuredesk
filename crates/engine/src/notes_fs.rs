@@ -661,6 +661,41 @@ impl Drop for Worker {
     }
 }
 
+/// UX-8: imagen más grande que se lee para la vista previa de una nota.
+pub const MAX_NOTE_IMAGE: u64 = 10 * 1024 * 1024;
+/// Extensiones de imagen que se leen.
+const IMAGE_EXTS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+
+/// UX-8: lee una imagen local que cita una nota (`![](img/a.png)`), relativa a la carpeta de
+/// notas `root`. Nunca sale de ella: solo componentes normales (ni `..`, ni rutas absolutas, ni
+/// unidades), y la ruta real (tras seguir enlaces simbólicos) debe seguir dentro de `root`. Solo
+/// archivos normales con extensión de imagen y de como mucho [`MAX_NOTE_IMAGE`] bytes.
+pub fn read_note_image(root: &Path, rel: &str) -> Option<Vec<u8>> {
+    let rel_path = Path::new(rel);
+    if rel.is_empty() || rel.len() > 1024 || rel.contains('\\') {
+        return None;
+    }
+    if !rel_path.components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+        return None;
+    }
+    let ext = rel_path.extension()?.to_str()?.to_ascii_lowercase();
+    if !IMAGE_EXTS.contains(&ext.as_str()) {
+        return None;
+    }
+    let base = root.canonicalize().ok()?;
+    let real = base.join(rel_path).canonicalize().ok()?;
+    if !real.starts_with(&base) {
+        return None;
+    }
+    let meta = std::fs::metadata(&real).ok()?;
+    if !meta.is_file() || meta.len() > MAX_NOTE_IMAGE {
+        return None;
+    }
+    let mut buf = Vec::new();
+    std::fs::File::open(&real).ok()?.take(MAX_NOTE_IMAGE.saturating_add(1)).read_to_end(&mut buf).ok()?;
+    (buf.len() as u64 <= MAX_NOTE_IMAGE).then_some(buf)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -829,6 +864,45 @@ mod tests {
         }
         assert_eq!(written.as_deref(), Some("Hola.md"));
         assert!(tmp.path().join("n").join("Hola.md").is_file());
+    }
+
+    /// UX-8: las imágenes de la vista previa nunca salen de la carpeta de notas.
+    #[test]
+    fn note_images_stay_inside() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("notas");
+        std::fs::create_dir_all(root.join("img")).unwrap();
+        std::fs::write(root.join("img").join("a.png"), b"\x89PNG").unwrap();
+        std::fs::write(tmp.path().join("secreto.png"), b"no").unwrap();
+        std::fs::write(root.join("texto.txt"), b"no").unwrap();
+        assert_eq!(read_note_image(&root, "img/a.png").as_deref(), Some(&b"\x89PNG"[..]));
+        assert_eq!(read_note_image(&root, "../secreto.png"), None);
+        assert_eq!(read_note_image(&root, "img/../../secreto.png"), None);
+        let abs = tmp.path().join("secreto.png").display().to_string();
+        assert_eq!(read_note_image(&root, &abs), None);
+        assert_eq!(read_note_image(&root, "texto.txt"), None);
+        assert_eq!(read_note_image(&root, "img/falta.png"), None);
+        assert_eq!(read_note_image(&root, "img"), None);
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(tmp.path().join("secreto.png"), root.join("enlace.png")).unwrap();
+            assert_eq!(read_note_image(&root, "enlace.png"), None);
+        }
+    }
+
+    proptest::proptest! {
+        /// Con cualquier ruta, lo leído está dentro de la carpeta de notas.
+        #[test]
+        fn note_image_paths_never_escape(s in "(\\.\\.|\\.|/|a|b\\.png|secreto\\.png|~){0,12}") {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path().join("notas");
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("b.png"), b"dentro").unwrap();
+            std::fs::write(tmp.path().join("secreto.png"), b"fuera").unwrap();
+            if let Some(b) = read_note_image(&root, &s) {
+                proptest::prop_assert_eq!(b, b"dentro".to_vec());
+            }
+        }
     }
 
     proptest::proptest! {

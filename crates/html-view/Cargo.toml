@@ -28,6 +28,8 @@ thiserror = { workspace = true }
 # F5.4: imprimir / guardar como PDF (Rust puro; Flate con miniz_oxide)
 pdf-writer = { workspace = true }
 flate2 = { workspace = true }
+# UX-8: vista previa de notas (Markdown → HTML; Rust puro).
+pulldown-cmark = { workspace = true, features = ["html"] }
 
 [dev-dependencies]
 png = { workspace = true }

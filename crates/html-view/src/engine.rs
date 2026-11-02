@@ -105,7 +105,11 @@ pub(crate) fn render_sanitized(clean: &Sanitized, opts: &RenderOptions) -> Resul
 
     let links = collect_links(doc, scale, height);
 
-    let bg = if dark { DARK_BG } else { LIGHT_BG };
+    let bg = match opts.background {
+        Some([r, g, b]) => Color::from_rgba8(r, g, b, 255),
+        None if dark => DARK_BG,
+        None => LIGHT_BG,
+    };
     let row_bytes = (width as usize).saturating_mul(4);
     let mut rgba: Vec<u8> = Vec::with_capacity(row_bytes.saturating_mul(height as usize));
     let mut y = 0u32;

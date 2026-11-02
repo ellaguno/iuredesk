@@ -57,6 +57,27 @@ impl Session {
         remote_images::should_load(mode, &[], &[], &addr, trusted)
     }
 
+    /// UX-8: ¿se cargan solas las imágenes remotas de una nota? No hay remitente: con «Siempre»
+    /// sí; si no, solo cuando todas vienen de dominios de la lista de permitidos (Ajustes →
+    /// Privacidad). Los rastreadores se bloquean igual al descargar.
+    pub fn note_images_auto(&self, urls: &[String]) -> bool {
+        if self.prefs.remote_images == RemoteImages::Always {
+            return true;
+        }
+        !urls.is_empty()
+            && urls.iter().all(|u| {
+                let host = u
+                    .split_once("://")
+                    .map(|(_, r)| r)
+                    .and_then(|r| r.split(['/', '?', '#']).next())
+                    .map(|h| h.rsplit_once('@').map_or(h, |(_, h)| h))
+                    .map(|h| h.split(':').next().unwrap_or(h))
+                    .unwrap_or("");
+                // Se compara como si fuera la dirección `x@host` (dominio o dominio padre).
+                remote_images::allowed_by_list(&[], &self.prefs.image_domains, &format!("x@{host}"))
+            })
+    }
+
     /// Modo de imágenes remotas.
     pub fn set_remote_images(&mut self, mode: RemoteImages) {
         if self.prefs.remote_images != mode {
