@@ -20,7 +20,9 @@ iuredesk-accounts = { workspace = true }
 iuredesk-ui = { workspace = true }
 # `iuredesk --mcp` y el puente IPC con la ventana abierta (F4.2).
 iuredesk-mcp = { workspace = true }
-egui = { workspace = true }
+# UX-7: Noto Emoji (monocromo, OFL) de respaldo para los emoji del texto de egui; a color con la
+# fuente del sistema por `iurefficient-ui` (`color-emoji`).
+egui = { workspace = true, features = ["monochrome_emoji_fonts"] }
 eframe = { workspace = true, features = ["wgpu", "wayland", "x11", "accesskit", "default_fonts", "clipboard"] }
 # Marco de ventana estilo Adwaita en GNOME/Wayland (sctk-adwaita, Rust puro) cuando se elige la
 # barra de título del sistema; por omisión la barra es la integrada (UI-HEADER, sin decoraciones).

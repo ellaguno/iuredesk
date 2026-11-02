@@ -5,7 +5,7 @@
 //!  [--html] [--month] [--view day|agenda|week|work_week|month] [--editor] [--invite] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]
 //!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]
 //!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]
-//!  [--reader] [--focus] [--context-collapsed] [--strip] [--attachments [--attachments-menu]]`
+//!  [--reader] [--focus] [--context-collapsed] [--strip] [--attachments [--attachments-menu]] [--emoji]`
 //!
 //! UX-3: `--reader` abre el mensaje en su ventana (sin pantalla, egui la dibuja dentro de la
 //! principal); `--attachments` elige un mensaje con adjuntos y `--attachments-menu` abre el menú
@@ -241,6 +241,49 @@ fn main() -> Result<(), String> {
             }
             session.poll();
         }
+        // UX-7: `--emoji` agrega mensajes con emoji en el asunto, el remitente y el texto.
+        if args.iter().any(|a| a == "--emoji") {
+            let base = session.rows().first().map(|r| r.id).and_then(|id| session.envelope(id).cloned());
+            if let Some(base) = base {
+                let mails = [
+                    ("🔁 Recordatorio semanal: junta de socios", "Agenda del despacho 📅", "e1", 2),
+                    ("🚨 Urgente: vence el plazo del caso 241/2026", "Pablo Ríos 🚀", "e2", 12),
+                    ("✅ Firmado: contrato marco ACME 📎", "Carmen Brown", "e3", 30),
+                    ("🎉 ¡Felicidades por el nuevo cliente! 🥂", "Equipo 💼", "e4", 45),
+                ];
+                for (subject, name, key, mins) in mails {
+                    let mut env = base.clone();
+                    env.id = iuredesk_model::MessageId::UNASSIGNED;
+                    env.thread = None;
+                    env.remote_id = Some(format!("ux7-{key}"));
+                    env.message_id = Some(format!("<{key}@emoji.example.org>"));
+                    env.in_reply_to = None;
+                    env.references = Vec::new();
+                    env.from =
+                        vec![iuredesk_model::Mailbox { name: Some(name.into()), addr: format!("{key}@example.org") }];
+                    env.reply_to = Vec::new();
+                    env.subject = subject.into();
+                    env.preview = "Hola 👋 te recuerdo lo pendiente ✅ 📎 🔁".into();
+                    env.date = now - chrono::Duration::minutes(mins);
+                    env.flags = Default::default();
+                    env.has_attachments = false;
+                    env.attachments = Vec::new();
+                    let raw = format!(
+                        "From: {name} <{key}@example.org>\r\nSubject: {subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHola 👋\r\n\r\nTe recuerdo lo pendiente:\r\n✅ Revisar el anexo B\r\n📎 Adjuntar la firma\r\n🔁 Repetir cada lunes\r\n🚨 Plazo: viernes\r\n\r\nSaludos 🙂\r\n"
+                    );
+                    if let Err(e) = session.store().put_message(env, raw.as_bytes()) {
+                        eprintln!("emoji: {e}");
+                    }
+                }
+            }
+            session.rebuild_rows();
+            let start = Instant::now();
+            while !session.is_idle() && start.elapsed() < Duration::from_secs(30) {
+                session.poll();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            session.poll();
+        }
         if let Some(tab) = flag("--tab") {
             let _ = session.run(&format!("mail.category:{tab}"));
             let start = Instant::now();
@@ -272,6 +315,9 @@ fn main() -> Result<(), String> {
                 }
                 if args.iter().any(|a| a == "--iure-tab") {
                     return session.envelope(r.id).is_some_and(|e| e.subject.starts_with("[Iurefficient] Ticket"));
+                }
+                if args.iter().any(|a| a == "--emoji") {
+                    return session.envelope(r.id).is_some_and(|e| e.subject.starts_with("🔁"));
                 }
                 if invite {
                     return session.envelope(r.id).is_some_and(|e| e.subject.starts_with("Invitación:"));
