@@ -257,8 +257,11 @@ async fn ops_roundtrip(caps: FakeCaps) {
     // Mover.
     let m2 = by_uid(&e.store, ib, 2).unwrap();
     e.handle.move_message(m2, archive).unwrap();
-    until("movido en el servidor", 10, || s.messages("Archive").len() == 1).await;
-    assert!(!s.messages("INBOX").iter().any(|(u, _)| *u == 2));
+    // Sin MOVE son tres pasos (COPY, STORE \\Deleted, EXPUNGE): se espera a que terminen todos.
+    until("movido en el servidor", 10, || {
+        s.messages("Archive").len() == 1 && !s.messages("INBOX").iter().any(|(u, _)| *u == 2)
+    })
+    .await;
     e.handle.sync_now_wait("t1").await.unwrap();
     assert_eq!(e.store.count(archive).unwrap().total, 1, "sin duplicados tras mover");
     let moved = e.store.get_envelope(m2).unwrap().unwrap();
