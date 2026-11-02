@@ -70,6 +70,10 @@ fn handle(log: &Mutex<Vec<String>>, req: Req) -> Resp {
     if path.starts_with("/carddav/") {
         return Resp::new(403, GOOGLE_403).with("Content-Type", "application/json; charset=UTF-8");
     }
+    // Tasks (BUG-CI-GTASKS: antes iba a Google de verdad): sin listas.
+    if path.starts_with("/tasks/v1/") {
+        return Resp::new(200, r#"{"items":[]}"#).with("Content-Type", "application/json; charset=UTF-8");
+    }
     let items = [(format!("{CAL}junta.ics"), ics()), (format!("{CAL}cumple.ics"), birthday())];
     match (req.method.as_str(), path.as_str()) {
         ("PROPFIND", "/caldav/v2/") => Resp::xml(

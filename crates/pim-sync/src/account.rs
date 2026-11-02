@@ -103,7 +103,7 @@ impl PimAccount {
                 }
             }
         };
-        let tasks_api = google.then(|| crate::gtasks::GOOGLE_TASKS_BASE.to_string());
+        let tasks_api = google.then(|| google_tasks_base(a.caldav_url.as_deref()));
         Some(Self { account: a.clone(), source, tasks_api })
     }
 
@@ -117,6 +117,22 @@ impl PimAccount {
             }
         }
         v
+    }
+}
+
+/// Base de la API de Tasks. Como con CardDAV, un CalDAV propio fuera de Google (servidor de
+/// pruebas, alias) se respeta: sus tareas van a `{origen}/tasks/v1` y nunca a Google con un token
+/// ajeno (en CI, Google respondía 401 y tapaba el aviso de los contactos).
+fn google_tasks_base(caldav: Option<&str>) -> String {
+    let own = caldav.and_then(|u| reqwest::Url::parse(u.trim()).ok()).filter(|u| {
+        u.host_str().is_some_and(|h| {
+            let h = h.to_ascii_lowercase();
+            !(h.ends_with("google.com") || h.ends_with("googleapis.com") || h.ends_with("googleusercontent.com"))
+        })
+    });
+    match own {
+        Some(u) => format!("{}/tasks/v1", u.origin().ascii_serialization()),
+        None => crate::gtasks::GOOGLE_TASKS_BASE.to_string(),
     }
 }
 
@@ -228,6 +244,14 @@ mod tests {
         // Google: las tareas van por la API de Tasks (su CalDAV no tiene VTODO).
         assert_eq!(g.tasks_api.as_deref(), Some(crate::GOOGLE_TASKS_BASE));
         assert_eq!(p.tasks_api, None);
+        // Un CalDAV fuera de Google (pruebas) lleva las tareas a su mismo origen.
+        let mut own = acct(AccountKind::Gmail, AuthMethod::OAuth2 { provider: OAuthProvider::Google });
+        own.caldav_url = Some("http://127.0.0.1:4321/caldav/v2/".into());
+        let own = PimAccount::from_account(&own).unwrap();
+        assert_eq!(own.tasks_api.as_deref(), Some("http://127.0.0.1:4321/tasks/v1"));
+        let mut real = acct(AccountKind::Gmail, AuthMethod::OAuth2 { provider: OAuthProvider::Google });
+        real.caldav_url = Some("https://apidata.googleusercontent.com/caldav/v2/".into());
+        assert_eq!(PimAccount::from_account(&real).unwrap().tasks_api.as_deref(), Some(crate::GOOGLE_TASKS_BASE));
         // BUG-GCAL: la raíz genérica que guarda el autodescubrimiento da 404; se usa la libreta
         // del usuario. La raíz CalDAV genérica sí descubre y se respeta.
         let mut gs = acct(AccountKind::Gmail, AuthMethod::OAuth2 { provider: OAuthProvider::Google });

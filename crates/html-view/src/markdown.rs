@@ -646,6 +646,15 @@ mod tests {
     }
 
     #[test]
+    fn odd_tag_names_are_not_reemitted() {
+        // Regresión (proptest en Windows): `<javascript:<script>` salía tal cual del saneador.
+        let h = conv("<script></script><javascript:<script>");
+        let clean = crate::sanitize(&h.html).html.to_ascii_lowercase();
+        assert!(!clean.contains("<javascript"), "{clean}");
+        assert!(!clean.contains("<script"), "{clean}");
+    }
+
+    #[test]
     fn renders_with_blitz() {
         let h =
             conv("# Título\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- [ ] x\n\n[l](https://e.org)\n\n```\ncode\n```\n");

@@ -48,6 +48,11 @@ const DROP_TAG_ONLY: &[&str] =
 const URL_ATTRS: &[&str] =
     &["href", "src", "background", "poster", "cite", "longdesc", "lowsrc", "dynsrc", "xlink:href", "usemap", "srcset"];
 
+/// Nombre de elemento o atributo corriente: letras, dígitos y `-`, `_`, `:`, `.`.
+fn plain_name(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.'))
+}
+
 /// Sanea `html`. Nunca falla: con entrada basura devuelve basura inofensiva.
 pub fn sanitize(html: &str) -> Sanitized {
     let sink = Sink::default();
@@ -120,6 +125,12 @@ impl State {
             return if tag.kind == TagKind::StartTag { raw_kind(name) } else { TokenSinkResult::Continue };
         }
 
+        // Nombres raros (`<javascript:<script>` da el elemento «javascript:<script»): no son
+        // peligrosos al volver a analizarlos, pero no se reemiten; se conserva su contenido.
+        if !plain_name(name) {
+            self.removed = self.removed.saturating_add(1);
+            return TokenSinkResult::Continue;
+        }
         if DROP_WITH_CONTENT.contains(&name) {
             self.removed = self.removed.saturating_add(1);
             if tag.kind == TagKind::StartTag && !tag.self_closing {
@@ -179,7 +190,7 @@ impl State {
         for a in &tag.attrs {
             let an: &str = &a.name.local;
             let an_lower = an.to_ascii_lowercase();
-            if !attr_allowed(name, &an_lower, &a.value, in_svg) {
+            if !plain_name(an) || !attr_allowed(name, &an_lower, &a.value, in_svg) {
                 self.removed = self.removed.saturating_add(1);
                 continue;
             }
