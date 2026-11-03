@@ -184,6 +184,7 @@ async fn google_tasks_full_incremental_and_local_first() {
         account: account(),
         source: PimSource::Dav { caldav: None, carddav: None, auth: DavAuth::OAuth },
         tasks_api: Some(format!("{base}/tasks/v1")),
+        calendar_api: None,
     };
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(Store::open(dir.path()).unwrap());

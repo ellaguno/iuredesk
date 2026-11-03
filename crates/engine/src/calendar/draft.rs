@@ -106,6 +106,8 @@ pub struct EventDraft {
     /// Ocupado (`OPAQUE`) o disponible.
     pub busy: bool,
     pub private: bool,
+    /// UX-11: «Agregar videollamada» (Meet o Teams, según el calendario).
+    pub video_call: bool,
     /// Evento original (base de la edición).
     pub base: Option<Event>,
 }
@@ -160,6 +162,7 @@ impl EventDraft {
             attendees: Vec::new(),
             busy: !all_day,
             private: false,
+            video_call: false,
             base: None,
         }
     }
@@ -199,6 +202,7 @@ impl EventDraft {
         d.attendees = ev.attendees.clone();
         d.busy = ev.transparency == Transparency::Opaque;
         d.private = private;
+        d.video_call = ev.online_meeting.is_some();
         d.base = Some(ev.clone());
         d
     }

@@ -99,8 +99,14 @@ pub(crate) fn show(app: &mut DeskApp, ctx: &Context) {
                             dismiss.push(r.key);
                         }
                     });
-                    let description =
-                        app.session.calendar_event(r.key.event).map(|e| e.description).unwrap_or_default();
+                    let description = app
+                        .session
+                        .calendar_event(r.key.event)
+                        .map(|e| match iuredesk_engine::today::join_url(&e) {
+                            Some(u) => format!("{u}\n{}", e.description),
+                            None => e.description,
+                        })
+                        .unwrap_or_default();
                     if let Some(j) = iuredesk_engine::today::meeting_link(&[&r.location, &description])
                         && crate::meeting::join_button(ui, &j, true)
                     {

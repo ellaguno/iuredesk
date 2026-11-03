@@ -142,6 +142,37 @@ pub enum Transparency {
     Transparent,
 }
 
+/// Servicio de una reunión en línea (UX-11).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MeetingProvider {
+    /// Google Meet.
+    GoogleMeet,
+    /// Microsoft Teams (o Skype en cuentas personales).
+    Teams,
+    /// Zoom.
+    Zoom,
+    /// Otro servicio (enlace sin reconocer).
+    #[default]
+    Other,
+}
+
+/// Reunión en línea de un evento (UX-11). `join_url` vacío = pedida al servidor y aún sin crear
+/// (Meet en Google, Teams en Microsoft 365): la sincronización la crea y trae el enlace.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnlineMeeting {
+    /// Servicio.
+    pub provider: MeetingProvider,
+    /// Enlace para unirse.
+    pub join_url: String,
+}
+
+impl OnlineMeeting {
+    /// Pedida y todavía sin enlace.
+    pub fn is_pending(&self) -> bool {
+        self.join_url.trim().is_empty()
+    }
+}
+
 /// Evento de calendario (`VEVENT`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
@@ -183,6 +214,8 @@ pub struct Event {
     pub etag: Option<String>,
     /// Última modificación.
     pub updated: Option<DateTime<Utc>>,
+    /// Reunión en línea (UX-11, esquema 3 del almacén).
+    pub online_meeting: Option<OnlineMeeting>,
 }
 
 impl Event {

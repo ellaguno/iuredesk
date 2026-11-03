@@ -65,6 +65,7 @@ async fn shared_collection_shows_each_event_once() {
                 auth: DavAuth::Password { username: u.into() },
             },
             tasks_api: None,
+            calendar_api: None,
         });
     }
     let tz = chrono_tz::UTC;

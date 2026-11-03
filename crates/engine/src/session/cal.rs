@@ -117,6 +117,8 @@ pub(crate) struct CalUndo {
     restore: Vec<Snapshot>,
     /// Eventos creados por la edición (se borran).
     remove: Vec<EventId>,
+    /// UX-11: invitaciones que salieron por correo (se sacan de la bandeja si aún no se van).
+    pub(super) sent: Vec<iuredesk_compose::OutboxId>,
 }
 
 /// Invitación con lo que depende de mi calendario (se recalcula cuando cambian los datos).
@@ -139,6 +141,8 @@ pub struct CalState {
     candidates: Vec<Candidate>,
     candidates_key: Option<(i64, u64)>,
     free_busy: Arc<Mutex<HashMap<(String, NaiveDate), Availability>>>,
+    /// UX-11: capacidades fijadas a mano (pruebas, capturas, buzón de ejemplo).
+    pub(super) caps_override: HashMap<CalendarId, iuredesk_pim_sync::CalendarCaps>,
 }
 
 /// Inicio de una aparición como en el modelo (fecha en días completos).
@@ -380,7 +384,7 @@ impl Session {
         self.calendars.iter().any(|c| c.id == cal && !c.read_only)
     }
 
-    fn organizer_for(&self, cal: CalendarId) -> Option<Mailbox> {
+    pub(super) fn organizer_for(&self, cal: CalendarId) -> Option<Mailbox> {
         let acct = self.calendars.iter().find(|c| c.id == cal)?.account;
         let l = self.labels.iter().find(|l| l.id == acct)?;
         Some(Mailbox { name: Some(l.name.clone()).filter(|n| !n.is_empty()), addr: l.email.clone() })
@@ -391,9 +395,9 @@ impl Session {
         if let Some(p) = d.problem(self.zone) {
             return Ok(Outcome::Notice(Notice::error(p)));
         }
-        let edited = d.to_event(self.zone, self.organizer_for(d.calendar));
+        let edited = self.draft_event(d);
         let new = d.id.is_none();
-        let out = self.apply_edit(d.id, d.occurrence.clone(), edited.clone(), scope)?;
+        let mut out = self.apply_edit(d.id, d.occurrence.clone(), edited.clone(), scope)?;
         // `UID` final (los nuevos lo reciben al guardar).
         let uid = match d.id {
             Some(id) => self.calendar_event(id).map(|e| e.uid).unwrap_or(edited.uid),
@@ -405,11 +409,23 @@ impl Session {
             }
         }
         self.set_event_private(&uid, d.private);
+        // UX-11: invitaciones, actualizaciones y cancelaciones (por correo si el servidor no las
+        // manda), sobre el evento tal como quedó guardado.
+        let saved = match d.id {
+            Some(id) => self.calendar_event(id),
+            None => out.created.first().and_then(|id| self.calendar_event(*id)),
+        };
+        let (sent, said) = self.deliver_invites(d.calendar, d.base.as_ref(), saved.as_ref());
+        out.undo.sent = sent;
         let title = if edited.summary.is_empty() { "—".to_string() } else { edited.summary.clone() };
         let text = if new {
             Text::new(format!("Event created: {title}"), format!("Evento creado: {title}"))
         } else {
             Text::new(format!("Event saved: {title}"), format!("Evento guardado: {title}"))
+        };
+        let text = match said {
+            Some(t) => Text::new(format!("{} · {}", text.en, t.en), format!("{} · {}", text.es, t.es)),
+            None => text,
         };
         Ok(self.finish(text, out))
     }
@@ -456,6 +472,7 @@ impl Session {
         if let Some(s) = self.snapshot(ev.id) {
             out.undo.restore.push(s);
         }
+        let whole = replacement.is_none();
         match replacement {
             Some(m) => {
                 backend.save_event(&self.store, &m).map_err(pim_err)?;
@@ -463,6 +480,13 @@ impl Session {
             None => backend.delete_event(&self.store, ev.id).map_err(pim_err)?,
         }
         let text = Text::new(format!("Deleted: {}", o.summary), format!("Eliminado: {}", o.summary));
+        // UX-11: borrar el evento entero cancela la cita a los invitados.
+        let (sent, said) = if whole { self.deliver_invites(ev.calendar, Some(&ev), None) } else { (Vec::new(), None) };
+        out.undo.sent = sent;
+        let text = match said {
+            Some(t) => Text::new(format!("{} · {}", text.en, t.en), format!("{} · {}", text.es, t.es)),
+            None => text,
+        };
         Ok(self.finish(text, out))
     }
 
@@ -540,6 +564,12 @@ impl Session {
 
     /// Deshace una edición de calendario (desde `undo_last`).
     pub(crate) fn undo_calendar(&mut self, u: CalUndo) -> Result<()> {
+        // UX-11: lo que aún no salió de la bandeja no se manda (lo que salió, salió).
+        if let Some(sender) = &self.sender {
+            for id in &u.sent {
+                let _ = sender.outbox.cancel(*id);
+            }
+        }
         let backend = self.backend();
         for id in u.remove {
             let _ = backend.delete_event(&self.store, id);

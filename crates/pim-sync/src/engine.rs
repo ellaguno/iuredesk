@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use iuredesk_accounts::SecretStore;
-use iuredesk_model::{AccountId, Contact, ContactId, Event, EventId, PartStat, Task, TaskId};
+use iuredesk_model::{AccountId, Contact, ContactId, Event, EventId, MeetingProvider, PartStat, Task, TaskId};
 use iuredesk_oauth::TokenProvider;
 use iuredesk_store::{AccountLabel, Store};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
@@ -25,6 +25,16 @@ use crate::ops::{self, ImipReply, PimOp};
 use crate::provider::{Ctx, Provider};
 use crate::{FriendlyError, PimEvent, PimSyncOptions};
 pub use freebusy::{BusySlot, FreeBusy};
+
+/// UX-11: lo que el servidor de un calendario hace solo.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CalendarCaps {
+    /// El servidor manda las invitaciones, actualizaciones y cancelaciones (Graph, CalDAV con
+    /// programación RFC 6638 como Google o iCloud). Si no, las mandamos por correo (iMIP).
+    pub server_invites: bool,
+    /// Videollamada que el servidor sabe crear (Teams en Microsoft 365, Meet en Google).
+    pub meeting: Option<MeetingProvider>,
+}
 
 /// Capacidad del canal de eventos.
 const EVENT_CAPACITY: usize = 4_096;
@@ -186,7 +196,13 @@ async fn provider(ctx: &Ctx) -> Result<Box<dyn Provider>> {
         PimSource::Graph { base_url } => Some(Box::new(Graph::new(ctx, base_url)?)),
     };
     match (&ctx.account.tasks_api, main) {
-        (Some(base), dav) => Ok(Box::new(WithTasks { dav, tasks: GoogleTasks::new(ctx, base)? })),
+        (Some(base), dav) => {
+            let meet = match &ctx.account.calendar_api {
+                Some(c) => Some(crate::gmeet::GoogleMeet::new(ctx, c)?),
+                None => None,
+            };
+            Ok(Box::new(WithTasks { dav, tasks: GoogleTasks::new(ctx, base)?, meet }))
+        }
         (None, Some(p)) => Ok(p),
         (None, None) => Err(PimError::Invalid("la cuenta no tiene calendario, contactos ni tareas".into())),
     }
@@ -354,6 +370,21 @@ impl PimSyncHandle {
 
     fn slot(&self, account: &str) -> Result<&Slot> {
         self.inner.slots.iter().find(|s| s.id == account).ok_or_else(|| PimError::UnknownAccount(account.to_string()))
+    }
+
+    /// UX-11: qué hace el servidor de un calendario por nosotros. `None` si el calendario no es
+    /// de una cuenta en marcha (local, o la cuenta no arrancó).
+    pub fn calendar_caps(&self, cal: iuredesk_model::CalendarId) -> Option<CalendarCaps> {
+        let c = self.inner.store.get_calendar(cal).ok().flatten()?;
+        let s = self.slot_by_acct(c.account)?;
+        Some(match &s.ctx.account.source {
+            PimSource::Graph { .. } => CalendarCaps { server_invites: true, meeting: Some(MeetingProvider::Teams) },
+            PimSource::Dav { .. } => CalendarCaps {
+                server_invites: s.ctx.opts.trust_server_scheduling && server_schedules(&self.inner.store, s.acct),
+                meeting: (s.ctx.account.calendar_api.is_some() && crate::gmeet::calendar_id(&c.remote_path).is_some())
+                    .then_some(MeetingProvider::GoogleMeet),
+            },
+        })
     }
 
     fn slot_by_acct(&self, acct: AccountId) -> Option<&Slot> {

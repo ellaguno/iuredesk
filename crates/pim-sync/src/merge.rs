@@ -49,6 +49,7 @@ pub fn merge_event(base: &Event, local: &Event, server: &Event) -> Option<Event>
             reminders,
             status,
             transparency,
+            online_meeting,
         ]
     );
     if conflict {

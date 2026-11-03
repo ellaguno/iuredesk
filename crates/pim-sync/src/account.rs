@@ -53,6 +53,8 @@ pub struct PimAccount {
     /// Raíz de la API de Google Tasks (cuentas de Google: su CalDAV no tiene tareas). `None` =
     /// las tareas van con `source` (CalDAV `VTODO`, Graph To Do).
     pub tasks_api: Option<String>,
+    /// UX-11: raíz de la API de Google Calendar (para crear salas de Meet), solo en Google.
+    pub calendar_api: Option<String>,
 }
 
 impl PimAccount {
@@ -104,7 +106,8 @@ impl PimAccount {
             }
         };
         let tasks_api = google.then(|| google_tasks_base(a.caldav_url.as_deref()));
-        Some(Self { account: a.clone(), source, tasks_api })
+        let calendar_api = google.then(|| google_calendar_base(a.caldav_url.as_deref()));
+        Some(Self { account: a.clone(), source, tasks_api, calendar_api })
     }
 
     /// Nuestras direcciones (la de la cuenta y las de sus identidades), en minúsculas.
@@ -133,6 +136,16 @@ fn google_tasks_base(caldav: Option<&str>) -> String {
     match own {
         Some(u) => format!("{}/tasks/v1", u.origin().ascii_serialization()),
         None => crate::gtasks::GOOGLE_TASKS_BASE.to_string(),
+    }
+}
+
+/// Base de la API de Calendar, con la misma regla que [`google_tasks_base`]: un CalDAV propio
+/// fuera de Google usa `{origen}/calendar/v3`.
+fn google_calendar_base(caldav: Option<&str>) -> String {
+    let tasks = google_tasks_base(caldav);
+    match tasks.strip_suffix("/tasks/v1") {
+        Some(origin) if tasks != crate::gtasks::GOOGLE_TASKS_BASE => format!("{origin}/calendar/v3"),
+        _ => crate::gmeet::GOOGLE_CALENDAR_BASE.to_string(),
     }
 }
 
@@ -249,6 +262,9 @@ mod tests {
         own.caldav_url = Some("http://127.0.0.1:4321/caldav/v2/".into());
         let own = PimAccount::from_account(&own).unwrap();
         assert_eq!(own.tasks_api.as_deref(), Some("http://127.0.0.1:4321/tasks/v1"));
+        assert_eq!(own.calendar_api.as_deref(), Some("http://127.0.0.1:4321/calendar/v3"));
+        assert_eq!(g.calendar_api.as_deref(), Some(crate::gmeet::GOOGLE_CALENDAR_BASE));
+        assert_eq!(p.calendar_api, None);
         let mut real = acct(AccountKind::Gmail, AuthMethod::OAuth2 { provider: OAuthProvider::Google });
         real.caldav_url = Some("https://apidata.googleusercontent.com/caldav/v2/".into());
         assert_eq!(PimAccount::from_account(&real).unwrap().tasks_api.as_deref(), Some(crate::GOOGLE_TASKS_BASE));

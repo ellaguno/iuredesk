@@ -341,10 +341,12 @@ impl Provider for GoogleTasks {
     }
 }
 
-/// CalDAV/CardDAV (calendario, contactos) + Google Tasks (tareas) de una cuenta de Google.
+/// CalDAV/CardDAV (calendario, contactos) + Google Tasks (tareas) de una cuenta de Google, y la
+/// API de Calendar para las salas de Meet (UX-11).
 pub(crate) struct WithTasks {
     pub dav: Option<Box<dyn Provider>>,
     pub tasks: GoogleTasks,
+    pub meet: Option<crate::gmeet::GoogleMeet>,
 }
 
 fn is_task_op(op: &PimOp) -> bool {
@@ -390,9 +392,14 @@ impl Provider for WithTasks {
                 }
             }
             match &self.dav {
-                Some(d) => d.push(ctx, op).await,
-                None => Ok(()),
+                Some(d) => d.push(ctx, op).await?,
+                None => return Ok(()),
             }
+            // UX-11: subido el evento por CalDAV, la sala de Meet que pida.
+            if let (PimOp::PutEvent { event }, Some(meet)) = (op, &self.meet) {
+                meet.ensure(ctx, *event).await?;
+            }
+            Ok(())
         })
     }
 }

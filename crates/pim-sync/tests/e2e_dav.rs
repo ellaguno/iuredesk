@@ -88,6 +88,7 @@ async fn env(state: State) -> Env {
             auth: DavAuth::Password { username: "ana".into() },
         },
         tasks_api: None,
+        calendar_api: None,
     };
     let tz: chrono_tz::Tz = "Europe/Madrid".parse().unwrap();
     let opts = PimSyncOptions {
@@ -329,6 +330,7 @@ async fn server_scheduling_skips_imip_and_bad_password_needs_reauth() {
             auth: DavAuth::Password { username: "ana".into() },
         },
         tasks_api: None,
+        calendar_api: None,
     };
     let h = PimSyncEngine::start(store, vec![pim], None, secrets, PimSyncOptions::default());
     let err = h.sync_now_wait("ana-icloud").await.unwrap_err();

@@ -103,7 +103,7 @@ async fn main() -> anyhow_like::Result {
     };
     let handle = PimSyncEngine::start(
         Arc::clone(&store),
-        vec![PimAccount { account, source, tasks_api: None }],
+        vec![PimAccount { account, source, tasks_api: None, calendar_api: None }],
         tokens,
         secrets,
         opts,

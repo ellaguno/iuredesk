@@ -17,7 +17,8 @@ use iuredesk_dav::ical::{Component, Property};
 use iuredesk_dav::tz::local_to_utc;
 use iuredesk_dav::value::{self, DateTimeValue, format_utc};
 use iuredesk_model::{
-    Attendee, AttendeeRole, Event, EventStatus, EventTime, Mailbox, PartStat, Reminder, Task, TaskStatus, Transparency,
+    Attendee, AttendeeRole, Event, EventStatus, EventTime, Mailbox, MeetingProvider, OnlineMeeting, PartStat, Reminder,
+    Task, TaskStatus, Transparency,
 };
 
 /// Recordatorios máximos que se leen de un evento.
@@ -206,6 +207,51 @@ fn master_index(cal: &ICalendar, name: &str, uid: &str) -> Option<usize> {
         .or_else(|| cal.root.components.iter().position(same))
 }
 
+/// Largo máximo de un enlace de reunión.
+const MAX_JOIN_URL: usize = 2_048;
+
+/// Servicio de un enlace de reunión por su anfitrión (`None` si no es `https://`).
+pub fn meeting_provider_of(url: &str) -> Option<MeetingProvider> {
+    let rest = url.get(..8).filter(|p| p.eq_ignore_ascii_case("https://")).and(url.get(8..))?;
+    let host = rest.split(['/', '?', '#']).next()?.rsplit('@').next()?.split(':').next()?.to_ascii_lowercase();
+    if host.is_empty() {
+        return None;
+    }
+    let is = |d: &str| host == d || host.ends_with(&format!(".{d}"));
+    Some(if is("meet.google.com") {
+        MeetingProvider::GoogleMeet
+    } else if is("teams.microsoft.com") || is("teams.live.com") {
+        MeetingProvider::Teams
+    } else if is("zoom.us") || is("zoom.com") {
+        MeetingProvider::Zoom
+    } else {
+        MeetingProvider::Other
+    })
+}
+
+/// UX-11: reunión en línea que el servidor puso en el `VEVENT`: `X-GOOGLE-CONFERENCE` (Google),
+/// `X-MICROSOFT-SKYPETEAMSMEETINGURL` (Exchange) o `CONFERENCE` (RFC 7986, el de vídeo primero).
+/// Solo `https://` y acotado.
+fn meeting_from(comp: &Component) -> Option<OnlineMeeting> {
+    let ok = |v: String| {
+        let v = v.trim().to_string();
+        (v.len() <= MAX_JOIN_URL && !v.chars().any(char::is_whitespace))
+            .then(|| meeting_provider_of(&v).map(|p| (p, v)))
+            .flatten()
+    };
+    let from = |name: &str| comp.prop(name).and_then(|p| ok(p.text_value()));
+    let conference = || {
+        let mut all: Vec<_> = comp.props("CONFERENCE").collect();
+        all.sort_by_key(|p| !p.param_values("FEATURE").iter().any(|f| f.eq_ignore_ascii_case("VIDEO")));
+        all.into_iter().find_map(|p| ok(p.text_value()))
+    };
+    let (provider, join_url) = from("X-GOOGLE-CONFERENCE")
+        .map(|(_, u)| (MeetingProvider::GoogleMeet, u))
+        .or_else(|| from("X-MICROSOFT-SKYPETEAMSMEETINGURL").map(|(_, u)| (MeetingProvider::Teams, u)))
+        .or_else(conference)?;
+    Some(OnlineMeeting { provider, join_url })
+}
+
 /// Lee un `VEVENT`. `id`, `calendar`, `remote_id` y `etag` los pone quien llama.
 pub fn event_from_component(cal: &ICalendar, comp: &Component, user_tz: Tz) -> Event {
     let view = EventView::new(comp);
@@ -236,6 +282,7 @@ pub fn event_from_component(cal: &ICalendar, comp: &Component, user_tz: Tz) -> E
         transparency: transp_of(comp),
         sequence: view.sequence(),
         updated: utc_prop(comp, "LAST-MODIFIED").or_else(|| view.dtstamp()),
+        online_meeting: meeting_from(comp),
         start,
         end,
         ..Default::default()
@@ -839,6 +886,38 @@ SUMMARY:Reunión movida\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
         assert_eq!(back.summary, new.summary);
         assert_eq!(back.attendees, new.attendees);
         assert_eq!(back.reminders, new.reminders);
+    }
+
+    #[test]
+    fn online_meeting_from_server_properties() {
+        // UX-11: Google pone la sala en `X-GOOGLE-CONFERENCE`; Exchange, en la suya; RFC 7986, `CONFERENCE`.
+        let ics = |extra: &str| {
+            format!(
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:m1\r\nDTSTART:20261105T160000Z\r\n\
+                 DTEND:20261105T170000Z\r\nSUMMARY:Junta\r\n{extra}END:VEVENT\r\nEND:VCALENDAR\r\n"
+            )
+        };
+        let read = |extra: &str| events_from_ics(&ICalendar::parse(&ics(extra)).unwrap(), chrono_tz::UTC).remove(0);
+        let g = read("X-GOOGLE-CONFERENCE:https://meet.google.com/abc-defg-hij\r\n");
+        assert_eq!(
+            g.online_meeting,
+            Some(OnlineMeeting {
+                provider: MeetingProvider::GoogleMeet,
+                join_url: "https://meet.google.com/abc-defg-hij".into()
+            })
+        );
+        let t = read("X-MICROSOFT-SKYPETEAMSMEETINGURL:https://teams.microsoft.com/l/meetup-join/1\r\n");
+        assert_eq!(t.online_meeting.map(|m| m.provider), Some(MeetingProvider::Teams));
+        let c = read(
+            "CONFERENCE;VALUE=URI;FEATURE=PHONE:https://zoom.us/tel\r\n\
+             CONFERENCE;VALUE=URI;FEATURE=AUDIO,VIDEO:https://us02web.zoom.us/j/81\r\n",
+        );
+        assert_eq!(c.online_meeting.map(|m| m.join_url).as_deref(), Some("https://us02web.zoom.us/j/81"));
+        // Solo https; nada de esquemas raros ni espacios.
+        assert_eq!(read("X-GOOGLE-CONFERENCE:javascript:alert(1)\r\n").online_meeting, None);
+        assert_eq!(read("CONFERENCE:http://meet.google.com/x\r\n").online_meeting, None);
+        assert_eq!(read("").online_meeting, None);
+        assert_eq!(meeting_provider_of("https://meet.google.com.evil.example/x"), Some(MeetingProvider::Other));
     }
 
     #[test]

@@ -265,6 +265,12 @@ pub fn due_date(due: &EventTime, zone: Zone) -> NaiveDate {
     }
 }
 
+/// UX-11: enlace de la reunión en línea del evento (Meet o Teams creado por el servidor), si ya
+/// existe.
+pub fn join_url(e: &iuredesk_model::Event) -> Option<&str> {
+    e.online_meeting.as_ref().map(|m| m.join_url.trim()).filter(|u| !u.is_empty())
+}
+
 /// Busca el enlace de una reunión en línea (Teams, Meet, Zoom, Webex, Whereby, Jitsi) en los
 /// textos de un evento. Solo `https://`; acotado.
 pub fn meeting_link(texts: &[&str]) -> Option<MeetingLink> {
@@ -648,7 +654,9 @@ pub fn gather(store: &Store, a: GatherArgs) -> DayInput {
             continue;
         }
         if let Ok(Some(e)) = store.get_event(o.id) {
-            let mut t = e.description.chars().take(MAX_EVENT_TEXT).collect::<String>();
+            // UX-11: el enlace de la reunión en línea (Meet, Teams) va primero.
+            let mut t = join_url(&e).map(|u| format!("{u}\n")).unwrap_or_default();
+            t.extend(e.description.chars().take(MAX_EVENT_TEXT));
             t.push('\n');
             t.push_str(&e.location);
             event_text.insert(o.id, t);

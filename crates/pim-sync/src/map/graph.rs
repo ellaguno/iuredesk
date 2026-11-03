@@ -10,8 +10,8 @@
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use iuredesk_model::{
-    Attendee, AttendeeRole, Contact, Event, EventStatus, EventTime, Labeled, Mailbox, PartStat, PostalAddress,
-    Reminder, Task, TaskStatus, Transparency,
+    Attendee, AttendeeRole, Contact, Event, EventStatus, EventTime, Labeled, Mailbox, MeetingProvider, OnlineMeeting,
+    PartStat, PostalAddress, Reminder, Task, TaskStatus, Transparency,
 };
 use serde_json::{Map, Value, json};
 
@@ -351,8 +351,30 @@ pub fn event_from_graph(v: &Value) -> Event {
             .and_then(Value::as_str)
             .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
             .map(|t| t.with_timezone(&Utc)),
+        online_meeting: online_meeting(v),
         ..Default::default()
     }
+}
+
+/// UX-11: reunión en línea de un evento de Graph (`isOnlineMeeting` + `onlineMeeting.joinUrl`;
+/// `onlineMeetingUrl` en los antiguos). Con `isOnlineMeeting` y sin enlace aún, pendiente.
+fn online_meeting(v: &Value) -> Option<OnlineMeeting> {
+    let on = v.get("isOnlineMeeting").and_then(Value::as_bool).unwrap_or(false);
+    let url = v
+        .get("onlineMeeting")
+        .and_then(|m| m.get("joinUrl"))
+        .and_then(Value::as_str)
+        .or_else(|| v.get("onlineMeetingUrl").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|u| u.len() <= 2_048 && u.get(..8).is_some_and(|p| p.eq_ignore_ascii_case("https://")));
+    if !on && url.is_none() {
+        return None;
+    }
+    let provider = match s(v, "onlineMeetingProvider") {
+        "teamsForBusiness" | "skypeForBusiness" | "skypeForConsumer" => MeetingProvider::Teams,
+        _ => url.and_then(super::ical::meeting_provider_of).unwrap_or(MeetingProvider::Teams),
+    };
+    Some(OnlineMeeting { provider, join_url: url.unwrap_or_default().to_string() })
 }
 
 fn attendees_json(list: &[Attendee]) -> Value {
@@ -410,6 +432,11 @@ pub fn event_patch(old: Option<&Event>, new: &Event) -> Map<String, Value> {
     }
     if (full && !new.attendees.is_empty()) || (!full && old.attendees != new.attendees) {
         m.insert("attendees".into(), attendees_json(&new.attendees));
+    }
+    // UX-11: pedir la reunión (Teams o la que tenga la cuenta por omisión); el servidor la crea y
+    // devuelve el enlace. Quitarla no se manda: Outlook no deja apagarla una vez creada.
+    if new.online_meeting.is_some() && old.online_meeting.is_none() {
+        m.insert("isOnlineMeeting".into(), json!(true));
     }
     if (full && new.rrule.is_some()) || (!full && old.rrule != new.rrule) {
         let r = new.rrule.as_deref().and_then(|r| rrule_to_recurrence(r, &new.start)).unwrap_or(Value::Null);
@@ -797,6 +824,34 @@ mod tests {
         assert_eq!(recurrence_to_rrule(&rec).as_deref(), e.rrule.as_deref());
         let full = event_patch(None, &e);
         assert!(full.contains_key("recurrence") && full.contains_key("attendees"));
+    }
+
+    #[test]
+    fn online_meeting_from_and_to_graph() {
+        // UX-11: Teams creado por el servidor.
+        let v = json!({
+            "id": "AAMk2", "subject": "Junta", "isOnlineMeeting": true,
+            "onlineMeetingProvider": "teamsForBusiness",
+            "onlineMeeting": { "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3a1" },
+            "start": {"dateTime": "2026-11-05T16:00:00.0000000", "timeZone": "UTC"},
+            "end": {"dateTime": "2026-11-05T17:00:00.0000000", "timeZone": "UTC"}
+        });
+        let e = event_from_graph(&v);
+        let m = e.online_meeting.clone().unwrap();
+        assert_eq!(m.provider, MeetingProvider::Teams);
+        assert!(m.join_url.starts_with("https://teams.microsoft.com/"));
+        // Pedida pero aún sin enlace: pendiente.
+        let pending = event_from_graph(&json!({ "id": "x", "isOnlineMeeting": true, "onlineMeeting": null }));
+        assert!(pending.online_meeting.unwrap().is_pending());
+        assert_eq!(event_from_graph(&json!({ "id": "x" })).online_meeting, None);
+        // Pedirla manda `isOnlineMeeting`; una que ya existe no se vuelve a pedir ni se apaga.
+        let mut new = Event { summary: "Junta".into(), ..Default::default() };
+        new.online_meeting = Some(OnlineMeeting { provider: MeetingProvider::Teams, join_url: String::new() });
+        assert_eq!(event_patch(None, &new).get("isOnlineMeeting"), Some(&json!(true)));
+        assert!(event_patch(Some(&e), &e).get("isOnlineMeeting").is_none());
+        let mut off = e.clone();
+        off.online_meeting = None;
+        assert!(event_patch(Some(&e), &off).get("isOnlineMeeting").is_none());
     }
 
     #[test]

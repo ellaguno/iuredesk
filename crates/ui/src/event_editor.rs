@@ -307,7 +307,10 @@ fn full_editor(app: &mut DeskApp, ctx: &Context) {
         .show(ctx, |ui| {
             // «Unirse a la reunión» arriba y fuera de lo deshabilitado (vale en calendarios de
             // solo lectura e invitaciones).
-            if let Some(j) = iuredesk_engine::today::meeting_link(&[&f.draft.location, &f.draft.description]) {
+            let created =
+                f.draft.base.as_ref().and_then(iuredesk_engine::today::join_url).unwrap_or_default().to_string();
+            if let Some(j) = iuredesk_engine::today::meeting_link(&[&created, &f.draft.location, &f.draft.description])
+            {
                 ui.horizontal(|ui| {
                     if crate::meeting::join_button(ui, &j, true) {
                         join = Some(j.url.clone());
@@ -336,8 +339,12 @@ fn full_editor(app: &mut DeskApp, ctx: &Context) {
                             .color(theme::colors(ui).text_muted),
                     );
                 }
+                // UX-11: si sale algo a los invitados, el botón lo dice.
+                let sends = !f.read_only && app.session.invite_summary(&f.draft).is_some_and(|s| s.sends());
+                let save_label =
+                    if sends { pick("Save and send", "Guardar y enviar") } else { pick("Save", "Guardar") };
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if !f.read_only && primary_button(ui, pick("Save", "Guardar")).clicked() {
+                    if !f.read_only && primary_button(ui, save_label).clicked() {
                         action = Some("save");
                     }
                     if ui.button(pick("Cancel", "Cancelar")).clicked() {
@@ -375,6 +382,55 @@ fn full_editor(app: &mut DeskApp, ctx: &Context) {
         }
         _ => app.calendar.editor.full = Some(f),
     }
+}
+
+/// UX-11: «Agregar videollamada» si el servidor del calendario sabe crearla (Meet, Teams).
+fn video_call_row(app: &DeskApp, ui: &mut Ui, f: &mut Full) {
+    use iuredesk_model::MeetingProvider;
+    let Some(provider) = app.session.meeting_provider(f.draft.calendar) else { return };
+    let existing = f.draft.base.as_ref().and_then(|b| b.online_meeting.as_ref()).filter(|m| !m.is_pending());
+    let (label, service, there) = match provider {
+        MeetingProvider::GoogleMeet => (
+            pick("Add Google Meet video call", "Agregar videollamada de Google Meet"),
+            "Google Meet",
+            "Google Calendar",
+        ),
+        _ => (pick("Add Microsoft Teams video call", "Agregar videollamada de Microsoft Teams"), "Teams", "Outlook"),
+    };
+    ui.horizontal(|ui| {
+        row_icon(ui, Icon::Video);
+        let r = ui.add_enabled_ui(existing.is_none(), |ui| ui.checkbox(&mut f.draft.video_call, label)).inner;
+        crate::widgets::named(&r, egui::Role::CheckBox, label);
+        if existing.is_some() {
+            r.on_disabled_hover_text(format!(
+                "{} {there}.",
+                pick("The video call already exists; remove it from", "La videollamada ya está creada; se quita desde")
+            ));
+        } else if f.draft.video_call {
+            let c = theme::colors(ui);
+            ui.label(
+                RichText::new(format!(
+                    "{} {service} {}",
+                    pick("The", "El enlace de"),
+                    pick("link is created when you save.", "se crea al guardar.")
+                ))
+                .color(c.text_muted)
+                .size(theme::density(ui.ctx()).small_size()),
+            );
+        }
+    });
+}
+
+/// UX-11: qué se manda a los invitados al guardar y cómo.
+fn invite_line(app: &DeskApp, ui: &mut Ui, f: &Full) {
+    let Some(sum) = app.session.invite_summary(&f.draft) else { return };
+    let c = theme::colors(ui);
+    ui.horizontal(|ui| {
+        row_icon(ui, Icon::Send);
+        let color = if sum.sends() { c.text_muted } else { c.warning };
+        let r = ui.label(RichText::new(sum.describe().get()).color(color).size(theme::density(ui.ctx()).small_size()));
+        crate::widgets::named(&r, egui::Role::Label, sum.describe().get());
+    });
 }
 
 fn row_icon(ui: &mut Ui, ic: Icon) {
@@ -439,6 +495,7 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
         );
         crate::widgets::named(&r, egui::Role::TextInput, pick("Location", "Lugar"));
     });
+    video_call_row(app, ui, f);
 
     // Cuándo.
     ui.add_space(4.0);
@@ -556,6 +613,7 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
     // Invitados.
     ui.add_space(4.0);
     attendees_editor(app, ui, f);
+    invite_line(app, ui, f);
     if !f.draft.attendees.is_empty() {
         scheduling_assistant(app, ui, f);
     }
@@ -1053,6 +1111,26 @@ impl DeskApp {
             }
             None => false,
         }
+    }
+
+    /// UX-11: editor de una cita nueva con dos invitados y videollamada (capturas y pruebas).
+    /// `meet`: Google Meet con invitaciones del servidor; si no, CalDAV sin programación (correo).
+    pub fn demo_new_meeting(&mut self, meet: bool) -> bool {
+        use iuredesk_model::{Mailbox, MeetingProvider};
+        let start = self.session.today().and_hms_opt(16, 0, 0).unwrap_or_default();
+        let Some(mut d) = self.session.new_event_draft(start, start + Duration::hours(1), false) else { return false };
+        let caps = iuredesk_engine::session::CalendarCaps {
+            server_invites: meet,
+            meeting: meet.then_some(MeetingProvider::GoogleMeet),
+        };
+        self.session.demo_calendar_caps(d.calendar, caps);
+        d.title = pick("Contract review", "Revisión del contrato").into();
+        d.add_attendee(Mailbox::new("Ana Ruiz", "ana@contoso.example.com"), false);
+        d.add_attendee(Mailbox::new("Carlos Pérez", "carlos@acme.example.com"), false);
+        d.video_call = meet;
+        self.session.module = iuredesk_engine::Module::Calendar;
+        open(self, d);
+        true
     }
 
     /// ¿Está abierto el editor de eventos?

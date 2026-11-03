@@ -11,7 +11,8 @@ use std::sync::{Arc, Mutex};
 use base64::Engine as _;
 use common::{Req, Resp, between, multistatus, serve};
 
-pub const CAL: &str = "/dav/cal/ana/work/";
+/// Con la forma de las rutas de Google (`…/caldav/v2/{id}/events/`) para probar también Meet (UX-11).
+pub const CAL: &str = "/dav/cal/ana/caldav/v2/work/events/";
 pub const BOOK: &str = "/dav/card/ana/contacts/";
 
 #[derive(Default)]

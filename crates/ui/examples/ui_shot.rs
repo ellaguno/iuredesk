@@ -6,7 +6,7 @@
 //!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]
 //!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]
 //!  [--reader] [--focus] [--context-collapsed] [--strip] [--attachments [--attachments-menu]] [--emoji]
-//!  [--note [--note-edit]] [--contact-editor[=new]]`
+//!  [--note [--note-edit]] [--contact-editor[=new]] [--meeting[=email]]`
 //!
 //! UX-8: `--note` agrega una nota con tablas, casillas, código, cita, Mermaid, fórmula, nota al
 //! pie y una imagen local (en una carpeta de notas temporal si no hay `--notes-dir`) y la muestra
@@ -447,6 +447,10 @@ fn main() -> Result<(), String> {
     }
     if args.iter().any(|a| a == "--editor") {
         app.demo_event_editor();
+    }
+    // UX-11: cita nueva con invitados y videollamada (`=email`: invitaciones por correo).
+    if let Some(a) = args.iter().find(|a| a.starts_with("--meeting")) {
+        app.demo_new_meeting(!a.ends_with("=email"));
     }
     if !args.iter().any(|a| a == "--reminders") {
         app.dismiss_reminders();

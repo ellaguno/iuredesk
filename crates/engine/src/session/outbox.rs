@@ -28,7 +28,7 @@ type Transports = Arc<RwLock<HashMap<AccountId, Arc<dyn Transport>>>>;
 pub(crate) struct Sender {
     pub outbox: Arc<Outbox>,
     transports: Transports,
-    wake: Arc<tokio::sync::Notify>,
+    pub(super) wake: Arc<tokio::sync::Notify>,
     rx: Receiver<SendOutcome>,
     stop: Arc<AtomicBool>,
 }

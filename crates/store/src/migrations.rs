@@ -4,12 +4,15 @@
 //! lee los registros con la forma vieja (copiada aquí, congelada) y los vuelve a escribir.
 
 use chrono::{DateTime, Utc};
-use iuredesk_model::{AccountId, EventTime, Note, NoteId, Task, TaskId, TaskListId, TaskStatus};
+use iuredesk_model::{
+    AccountId, Attendee, CalendarId, Event, EventId, EventStatus, EventTime, Mailbox, Note, NoteId, Reminder, Task,
+    TaskId, TaskListId, TaskStatus, Transparency,
+};
 use redb::{ReadableTable, WriteTransaction};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::tables::{NOTES, TASKS};
+use crate::tables::{EVENTS, NOTES, TASKS};
 use crate::{codec, put_rec};
 
 /// `Task` del esquema 1 (antes de UX-6).
@@ -106,6 +109,69 @@ pub(crate) fn v1_to_v2(tx: &WriteTransaction) -> Result<()> {
     Ok(())
 }
 
+/// `Event` de los esquemas 1 y 2 (antes de UX-11).
+#[derive(Serialize, Deserialize)]
+pub(crate) struct EventV2 {
+    pub id: EventId,
+    pub calendar: CalendarId,
+    pub uid: String,
+    pub summary: String,
+    pub location: String,
+    pub description: String,
+    pub start: EventTime,
+    pub end: EventTime,
+    pub rrule: Option<String>,
+    pub exdates: Vec<String>,
+    pub organizer: Option<Mailbox>,
+    pub attendees: Vec<Attendee>,
+    pub reminders: Vec<Reminder>,
+    pub status: EventStatus,
+    pub transparency: Transparency,
+    pub sequence: u32,
+    pub remote_id: Option<String>,
+    pub etag: Option<String>,
+    pub updated: Option<DateTime<Utc>>,
+}
+
+/// 2 → 3 (UX-11): `Event` gana su reunión en línea (`online_meeting`, vacía al migrar: la próxima
+/// sincronización la trae del servidor).
+pub(crate) fn v2_to_v3(tx: &WriteTransaction) -> Result<()> {
+    let mut t = tx.open_table(EVENTS)?;
+    let mut out = Vec::new();
+    for row in t.iter()? {
+        let (k, v) = row?;
+        if let Ok(o) = codec::decode::<EventV2>(v.value()) {
+            let new = Event {
+                id: o.id,
+                calendar: o.calendar,
+                uid: o.uid,
+                summary: o.summary,
+                location: o.location,
+                description: o.description,
+                start: o.start,
+                end: o.end,
+                rrule: o.rrule,
+                exdates: o.exdates,
+                organizer: o.organizer,
+                attendees: o.attendees,
+                reminders: o.reminders,
+                status: o.status,
+                transparency: o.transparency,
+                sequence: o.sequence,
+                remote_id: o.remote_id,
+                etag: o.etag,
+                updated: o.updated,
+                online_meeting: None,
+            };
+            out.push((k.value(), new));
+        }
+    }
+    for (k, v) in out {
+        put_rec(&mut t, k, &v)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone;
@@ -163,5 +229,49 @@ mod tests {
         assert_eq!((t.summary.as_str(), t.priority, t.start, t.rrule.as_str()), ("Pagar", 1, None, ""));
         let n = s.get_note(NoteId(4)).unwrap().unwrap();
         assert_eq!((n.title.as_str(), n.pinned, n.file), ("Ideas", true, None));
+    }
+
+    /// Un almacén del esquema 2 con eventos se abre con todo intacto y sin reunión en línea.
+    #[test]
+    fn migrates_events_from_v2() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = Utc.with_ymd_and_hms(2026, 11, 3, 16, 0, 0).unwrap();
+        {
+            let s = Store::open(dir.path()).unwrap();
+            let tx = s.db.begin_write().unwrap();
+            {
+                let mut t = tx.open_table(EVENTS).unwrap();
+                let old = EventV2 {
+                    id: EventId(9),
+                    calendar: CalendarId(2),
+                    uid: "ev-9".into(),
+                    summary: "Revisión".into(),
+                    location: "Sala 1".into(),
+                    description: String::new(),
+                    start: EventTime::DateTime { utc: at, tzid: None },
+                    end: EventTime::DateTime { utc: at + chrono::Duration::hours(1), tzid: None },
+                    rrule: Some("FREQ=WEEKLY".into()),
+                    exdates: vec![],
+                    organizer: Some(Mailbox { name: None, addr: "yo@x.com".into() }),
+                    attendees: vec![],
+                    reminders: vec![Reminder { minutes_before: 10 }],
+                    status: EventStatus::Confirmed,
+                    transparency: Transparency::Opaque,
+                    sequence: 3,
+                    remote_id: Some("r".into()),
+                    etag: Some("e".into()),
+                    updated: Some(at),
+                };
+                put_rec(&mut t, 9, &old).unwrap();
+                let mut meta = tx.open_table(crate::tables::META).unwrap();
+                meta.insert(crate::META_SCHEMA, 2u32.to_le_bytes().as_slice()).unwrap();
+            }
+            tx.commit().unwrap();
+        }
+        let s = Store::open(dir.path()).unwrap();
+        let e = s.get_event(EventId(9)).unwrap().unwrap();
+        assert_eq!((e.summary.as_str(), e.sequence, e.rrule.as_deref()), ("Revisión", 3, Some("FREQ=WEEKLY")));
+        assert_eq!(e.reminders, vec![Reminder { minutes_before: 10 }]);
+        assert_eq!(e.online_meeting, None);
     }
 }
