@@ -313,8 +313,10 @@ enum Inverse {
     Calendar(Box<cal::CalUndo>),
     /// Contactos borrados.
     Contacts(Vec<contacts::ContactSnap>),
-    /// Contactos agregados desde un `.vcf` (se borran) (R1.2).
+    /// Contactos agregados desde un `.vcf` o el editor (se borran) (R1.2, UX-10).
     ContactsAdded(Vec<iuredesk_model::ContactId>),
+    /// Contacto editado: vuelve a como estaba (UX-10).
+    ContactEdit(Box<iuredesk_model::Contact>),
     /// Reglas, posponer, seguimientos (F5.3).
     Rules(Box<rules_glue::RulesUndo>),
     /// Notas (F7.1).
@@ -1155,6 +1157,7 @@ impl Session {
             "mail.edit_draft" => self.focused.is_some_and(|m| self.is_draft(m)),
             "notes.delete" | "notes.open_editor" | "notes.toggle_preview" => self.note_focus.is_some(),
             "tasks.edit" => self.module == Module::Tasks || self.module == Module::Today,
+            "contacts.edit" => self.contact_selection.len() == 1,
             "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
                 !self.contact_selection.is_empty()
             }
@@ -1182,7 +1185,9 @@ impl Session {
         if !self.is_enabled(id) {
             return Ok(Outcome::Notice(match base {
                 "undo" => Notice::info("Nothing to undo.", "No hay nada que deshacer."),
-                "contacts.delete" => Notice::info("Select a contact first.", "Primero selecciona un contacto."),
+                "contacts.delete" | "contacts.edit" => {
+                    Notice::info("Select a contact first.", "Primero selecciona un contacto.")
+                }
                 "mail.delete" if self.module == Module::Contacts => {
                     Notice::info("Select a contact first.", "Primero selecciona un contacto.")
                 }
@@ -1202,6 +1207,11 @@ impl Session {
             b if b.starts_with("print.") || b.starts_with("security.") => Ok(Outcome::Assist(b.to_string())),
             b if b.starts_with("ai.") || b.starts_with("suite.") || b == "app.import" => self.run_assist(b),
             b if rules_glue::handles(b) => self.run_rules(b, arg),
+            // UX-10: «Nuevo» en Contactos es un contacto; el editor lo abre la UI.
+            "mail.new" | "contacts.new" if self.module == Module::Contacts || base == "contacts.new" => {
+                Ok(Outcome::Assist("contacts.new".into()))
+            }
+            "contacts.edit" => Ok(Outcome::Assist("contacts.edit".into())),
             // «Nuevo» en Notas es una nota.
             "mail.new" | "notes.new" if self.module == Module::Notes || base == "notes.new" => self.new_note(),
             "mail.new" => {
@@ -1533,6 +1543,7 @@ impl Session {
                 Inverse::Calendar(u) => self.undo_calendar(*u)?,
                 Inverse::Contacts(s) => self.undo_contacts(s)?,
                 Inverse::ContactsAdded(ids) => self.undo_contacts_added(&ids)?,
+                Inverse::ContactEdit(c) => self.undo_contact_edit(*c)?,
                 Inverse::Rules(u) => self.undo_rules(*u)?,
                 Inverse::Note(u) => self.undo_note(*u)?,
                 Inverse::TaskAdded(id) => self.undo_task_added(id)?,

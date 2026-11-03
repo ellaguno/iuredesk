@@ -6,7 +6,7 @@
 //!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]
 //!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]
 //!  [--reader] [--focus] [--context-collapsed] [--strip] [--attachments [--attachments-menu]] [--emoji]
-//!  [--note [--note-edit]]`
+//!  [--note [--note-edit]] [--contact-editor[=new]]`
 //!
 //! UX-8: `--note` agrega una nota con tablas, casillas, código, cita, Mermaid, fórmula, nota al
 //! pie y una imagen local (en una carpeta de notas temporal si no hay `--notes-dir`) y la muestra
@@ -424,6 +424,11 @@ fn main() -> Result<(), String> {
         if let Some(t) = pick_task {
             app.demo_task_editor(t.id);
         }
+    }
+    // UX-10: editor de contactos (el primero de la lista, o uno nuevo con `=new`).
+    if let Some(a) = args.iter().find(|a| a.starts_with("--contact-editor")) {
+        let id = if a.ends_with("=new") { None } else { app.session.contacts().first().map(|c| c.id) };
+        app.demo_contact_editor(id);
     }
     if module == "provider" {
         app.demo_provider_step("laura.mendez@gmail.com");

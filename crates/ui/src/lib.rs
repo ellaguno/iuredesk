@@ -17,6 +17,7 @@ mod assistant;
 mod attach_ui;
 mod calendar;
 mod compose;
+mod contact_editor;
 mod diagnostics;
 mod event_editor;
 mod header;

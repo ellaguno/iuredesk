@@ -320,6 +320,7 @@ impl DeskApp {
 
         crate::event_editor::show(self, &ctx);
         crate::task_editor::show(self, &ctx);
+        crate::contact_editor::show(self, &ctx);
         crate::opened::frame(self, &ctx);
         crate::reminders::show(self, &ctx);
         crate::compose::show_all(self, &ctx);
@@ -480,6 +481,23 @@ impl DeskApp {
     /// UX-6: ¿está abierto el editor de tareas? (pruebas)
     pub fn task_editor_open(&self) -> bool {
         crate::task_editor::is_open(self)
+    }
+
+    /// UX-10: ¿está abierto el editor de contactos? (pruebas)
+    pub fn contact_editor_open(&self) -> bool {
+        crate::contact_editor::is_open(self)
+    }
+
+    /// UX-10: abre el editor de un contacto en Contactos (capturas); `None` = contacto nuevo.
+    pub fn demo_contact_editor(&mut self, id: Option<iuredesk_model::ContactId>) {
+        self.session.module = iuredesk_engine::Module::Contacts;
+        match id {
+            Some(id) => {
+                self.pim.reveal_contact = Some(id);
+                crate::contact_editor::open(self, id);
+            }
+            None => crate::contact_editor::open_new(self),
+        }
     }
 
     /// UX-6: abre el editor de una tarea (capturas).

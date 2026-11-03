@@ -191,6 +191,23 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::App,
         "contacts people remove borrar eliminar personas",
     ),
+    // UX-10: crear y editar contactos (el editor lo abre la UI).
+    c(
+        "contacts.new",
+        "New contact",
+        "Nuevo contacto",
+        "person",
+        Group::App,
+        "contact add person nuevo contacto persona",
+    ),
+    c(
+        "contacts.edit",
+        "Edit contact…",
+        "Editar contacto…",
+        "rename",
+        Group::App,
+        "contact edit person editar contacto",
+    ),
     // F5.4: imprimir / PDF y correo seguro (los atiende la UI).
     c("print.message", "Print…", "Imprimir…", "print", Group::Mail, "print imprimir impresora"),
     c("print.message_pdf", "Save as PDF…", "Guardar como PDF…", "export", Group::Mail, "pdf export exportar guardar"),

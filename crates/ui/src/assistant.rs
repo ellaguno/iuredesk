@@ -197,6 +197,14 @@ pub fn command(app: &mut DeskApp, ctx: &Context, id: &str) {
             Some(id) => crate::task_editor::open(app, id),
             None => app.notice(iuredesk_engine::Notice::info("Select a task first.", "Primero elige una tarea.")),
         },
+        "contacts.new" => crate::contact_editor::open_new(app),
+        "contacts.edit" => match app.session.contact_selection() {
+            [id] => {
+                let id = *id;
+                crate::contact_editor::open(app, id);
+            }
+            _ => app.notice(iuredesk_engine::Notice::info("Select one contact.", "Elige un contacto.")),
+        },
         "suite.read_aloud" => crate::suite_ui::read_aloud(app),
         "suite.connect_agents" => app.suite.hub.run(iuredesk_engine::suite::SuiteAction::RegisterAgents),
         _ => {}

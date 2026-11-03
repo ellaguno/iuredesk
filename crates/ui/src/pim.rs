@@ -30,6 +30,9 @@ pub struct PimState {
     pub(crate) task_sel: Option<iuredesk_model::TaskId>,
     pub(crate) task_rename: Option<TaskRename>,
     pub(crate) task_editor: Option<crate::task_editor::TaskEditor>,
+    /// UX-10: editor de contactos y contacto que la lista debe seleccionar y mostrar.
+    pub(crate) contact_editor: Option<crate::contact_editor::ContactEditor>,
+    pub(crate) reveal_contact: Option<ContactId>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -89,6 +92,9 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
                 if r.clicked() {
                     app.run(&ctx, "contacts.delete");
                 }
+                if icons::icon_button(ui, Icon::Plus, pick("New contact", "Nuevo contacto"), true).clicked() {
+                    app.run(&ctx, "contacts.new");
+                }
             });
         });
         ui.add_space(6.0);
@@ -102,7 +108,20 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
                     "Las personas con quienes te escribes aparecerán aquí.",
                 ))
                 .show(ui);
+            ui.vertical_centered(|ui| {
+                if iurefficient_ui::primary_button(ui, pick("New contact", "Nuevo contacto")).clicked() {
+                    app.run(&ctx, "contacts.new");
+                }
+            });
             return;
+        }
+        // UX-10: el contacto recién guardado queda elegido y a la vista.
+        if let Some(id) = app.pim.reveal_contact.take()
+            && let Some(i) = shown.iter().position(|&k| all.get(k).is_some_and(|c| c.id == id))
+        {
+            app.pim.contact_list.selection.select_only(i, id.get());
+            app.pim.contact_list.scroll_to(i);
+            app.pim.contact = Some(id);
         }
         if app.pim.contact_list.selection.is_empty()
             && let Some(ct) = shown.first().and_then(|&k| all.get(k))
@@ -192,6 +211,10 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
         if out.context.is_some() {
             contact_menu(app, &out.response);
         }
+        // UX-10: doble clic o Intro abren el editor.
+        if let Some(id) = out.activated.and_then(|i| shown.get(i)).and_then(|&k| all.get(k)).map(|c| c.id) {
+            crate::contact_editor::open(app, id);
+        }
         // Supr (o Retroceso) con la lista enfocada: la lista se queda con el teclado, así que los
         // atajos de una tecla de la aplicación no llegan; se atiende aquí.
         if out.response.has_focus()
@@ -274,6 +297,14 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
                 }
                 if app.session.contact_deletable(ct.id)
                     && ui
+                        .button(pick("Edit", "Editar"))
+                        .on_hover_text(pick("Edit this contact", "Editar este contacto"))
+                        .clicked()
+                {
+                    crate::contact_editor::open(app, ct.id);
+                }
+                if app.session.contact_deletable(ct.id)
+                    && ui
                         .button(pick("Delete", "Eliminar"))
                         .on_hover_text(pick("Delete this contact", "Eliminar este contacto"))
                         .clicked()
@@ -318,8 +349,13 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
 fn contact_menu(app: &mut DeskApp, resp: &egui::Response) {
     let ctx = resp.ctx.clone();
     let mut delete = false;
+    let mut edit = false;
     let n = app.pim.contact_list.selection.len();
     egui::Popup::context_menu(resp).show(|ui| {
+        if n == 1 && icons::menu_item(ui, Some(Icon::Rename), pick("Edit…", "Editar…")).clicked() {
+            edit = true;
+            ui.close();
+        }
         let label = if n > 1 {
             format!("{} ({n})", pick("Delete", "Eliminar"))
         } else {
@@ -332,6 +368,9 @@ fn contact_menu(app: &mut DeskApp, resp: &egui::Response) {
     });
     if delete {
         app.run(&ctx, "contacts.delete");
+    }
+    if edit {
+        app.run(&ctx, "contacts.edit");
     }
 }
 
