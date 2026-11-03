@@ -19,6 +19,10 @@
 //!   para probar con una cuenta real sin tocar la instalación normal.
 //! - `IUREDESK_NATIVE_DECORATIONS=1` usa la barra de título del sistema (`0`, la integrada); sin
 //!   la variable decide la preferencia «Barra de título del sistema».
+//! - **Windows**: en las compilaciones de entrega es una app de ventanas (sin consola detrás; la
+//!   terminal mostraba además el registro de Mesa en máquinas virtuales). `--mcp` sigue funcionando
+//!   porque el cliente le pasa sus tuberías de entrada y salida; `--help` en una consola no se ve.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -442,6 +446,14 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
+    /// Regresión (dueño 2026-11-03): en Windows se abría una terminal junto a la ventana.
+    #[test]
+    fn windows_release_has_no_console() {
+        let src = include_str!("main.rs");
+        let attr = concat!("#![cfg_attr(all(windows, not(debug_assertions)), ", "windows_subsystem = \"windows\")]");
+        assert!(src.lines().any(|l| l.trim() == attr), "falta el subsistema de ventanas");
+    }
+
     #[test]
     fn surfaces_never_wait_for_vsync() {
         // Regresión BUG-FREEZE: con vsync, una ventana de lectura oculta congelaba la app.
