@@ -25,6 +25,7 @@
 mod engine;
 mod fonts;
 pub mod markdown;
+pub mod mermaid;
 pub mod mindmap;
 mod net;
 pub mod print;

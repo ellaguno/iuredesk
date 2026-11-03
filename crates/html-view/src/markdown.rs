@@ -15,9 +15,11 @@
 //! - Mapas mentales de IureEditor (`> [!MINDMAP] Centro` + lista, UX-12): se dibujan como SVG
 //!   propio ([`crate::mindmap`]) y se entregan como imagen `cid:note-diagram-N`, en
 //!   [`NoteHtml::diagrams`]; con la vista `map` la lista no se muestra.
-//! - Mermaid y matemáticas: no hay motor en Rust puro que Blitz pueda pintar (Blitz no pinta
-//!   MathML y los renderizadores de Mermaid son JS), así que salen como bloque de código con una
-//!   etiqueta que invita a abrirlos en IureEditor.
+//! - Mermaid (UX-12): se dibuja con `mermaid-svg` (Rust puro) como imagen `cid:note-diagram-N`,
+//!   con el tema claro u oscuro de la nota, en [`crate::mermaid`] (acotado, en su hilo, con
+//!   tiempo máximo y sin pánicos que salgan). Si no se puede (sintaxis que no entiende, muy
+//!   grande), queda el bloque de código con la etiqueta que invita a abrirlo en IureEditor.
+//! - Fórmulas: Blitz no pinta MathML, así que salen como bloque de código con su etiqueta.
 //! - El HTML crudo de la nota pasa tal cual: lo neutraliza el saneador de `render`.
 //! - Anidamiento acotado ([`MAX_DEPTH`]): una nota con 10 000 `>` no produce un árbol que agote la
 //!   pila de estilo/layout.
@@ -72,6 +74,8 @@ pub struct NoteOptions {
     pub math_label: String,
     /// Centro de un mapa mental sin título («Mapa mental»).
     pub mindmap_label: String,
+    /// Texto alternativo de un diagrama Mermaid dibujado («Diagrama»).
+    pub mermaid_alt: String,
 }
 
 /// Resultado de la conversión.
@@ -356,7 +360,7 @@ enum Frame {
 /// Convierte la nota en HTML. Nunca falla (Markdown no tiene errores); la salida aún debe pasar
 /// por el saneador, cosa que hace [`crate::render`].
 pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
-    let (md, diagrams) = with_diagrams(md, opts);
+    let (md, mut diagrams) = with_diagrams(md, opts);
     let md = md.as_str();
     let events: Vec<Event<'_>> = Parser::new_ext(md, parser_options()).collect();
     let mut out: Vec<Event<'_>> = Vec::with_capacity(events.len());
@@ -430,6 +434,41 @@ pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
                         };
                         out.push(Event::Start(Tag::Image { dest_url: src, title, link_type, id }));
                         stack.push(Frame::Kept);
+                    }
+                    Tag::CodeBlock(CodeBlockKind::Fenced(lang)) if lang.trim().eq_ignore_ascii_case("mermaid") => {
+                        // El código entero; luego, dibujo o bloque etiquetado.
+                        let mut code = String::new();
+                        for e in iter.by_ref() {
+                            match e {
+                                Event::Text(t) => code.push_str(&t),
+                                Event::End(TagEnd::CodeBlock) => break,
+                                _ => {}
+                            }
+                        }
+                        depth = depth.saturating_sub(1);
+                        match crate::mermaid::to_svg(&code, &opts.style) {
+                            Some(svg) => {
+                                let i = diagrams.len();
+                                diagrams.push((diagram_cid(i), svg.into_bytes()));
+                                out.push(Event::Html(
+                                    format!(
+                                        "<p class=\"diagram\"><img alt=\"{}\" src=\"cid:{}\"></p>\n",
+                                        escape(&opts.mermaid_alt),
+                                        diagram_cid(i)
+                                    )
+                                    .into(),
+                                ));
+                            }
+                            None => out.push(Event::Html(
+                                format!(
+                                    "<div class=\"special\"><div class=\"label\">{}</div><pre><code>{}</code></pre></div>\n",
+                                    escape(&opts.mermaid_label),
+                                    escape(&code)
+                                )
+                                .into(),
+                            )),
+                        }
+                        continue;
                     }
                     Tag::CodeBlock(CodeBlockKind::Fenced(lang)) if is_special(&lang) => {
                         let label = if is_math(&lang) { &opts.math_label } else { &opts.mermaid_label };
@@ -595,6 +634,7 @@ mod tests {
             &NoteOptions {
                 mermaid_label: "Diagrama Mermaid".into(),
                 mindmap_label: "Mapa mental".into(),
+                mermaid_alt: "Diagrama".into(),
                 math_label: "Fórmula".into(),
                 ..Default::default()
             },
@@ -688,10 +728,14 @@ mod tests {
     }
 
     #[test]
-    fn mermaid_and_math_are_labelled_code() {
-        let h = conv("```mermaid\ngraph TD; A-->B\n```\n\n$e=mc^2$ y\n\n$$\\int x$$\n");
-        assert!(h.html.contains("Diagrama Mermaid"));
-        assert!(h.html.contains("graph TD; A--&gt;B"));
+    fn mermaid_is_drawn_and_math_labelled() {
+        // UX-12: Mermaid válido se dibuja (imagen); el que no se entiende queda como código.
+        let h = conv("```mermaid\ngraph TD; A-->B\n```\n\n```mermaid\nesto no\n```\n\n$e=mc^2$ y\n\n$$\\int x$$\n");
+        assert_eq!(h.diagrams.len(), 1);
+        assert!(h.html.contains("cid:note-diagram-0@iuredesk"), "{}", h.html);
+        assert!(String::from_utf8_lossy(&h.diagrams[0].1).starts_with("<svg"));
+        assert!(h.html.contains("Diagrama Mermaid") && h.html.contains("esto no"));
+        assert!(!h.html.contains("graph TD; A--&gt;B"));
         assert!(h.html.contains("<code class=\"math\">e=mc^2</code>"));
         assert!(h.html.contains("Fórmula"));
     }

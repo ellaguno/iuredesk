@@ -30,6 +30,7 @@ pdf-writer = { workspace = true }
 flate2 = { workspace = true }
 # UX-8: vista previa de notas (Markdown → HTML; Rust puro).
 pulldown-cmark = { workspace = true, features = ["html"] }
+mermaid-svg = { workspace = true }
 
 [dev-dependencies]
 png = { workspace = true }

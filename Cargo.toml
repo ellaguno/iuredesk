@@ -93,6 +93,8 @@ mail-parser = "0.11"
 mail-builder = { version = "0.4", default-features = false }
 # redactor (F1.2): Markdown e IDNA, Rust puro
 pulldown-cmark = { version = "0.13", default-features = false }
+# UX-12: diagramas Mermaid → SVG en Rust puro (solo depende de thiserror; MIT). Aprobado por el dueño 2026-11-03.
+mermaid-svg = { version = "=0.7.0", default-features = false }
 idna = "1"
 proptest = "1"
 # reglas (F5.3): expresiones regulares en tiempo lineal y con tope de tamaño (Rust puro)

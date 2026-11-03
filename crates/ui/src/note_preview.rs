@@ -189,9 +189,10 @@ fn options(ui: &Ui) -> NoteOptions {
     NoteOptions {
         style: style(ui),
         mindmap_label: pick("Mind map", "Mapa mental").to_string(),
+        mermaid_alt: pick("Diagram", "Diagrama").to_string(),
         mermaid_label: pick(
-            "Mermaid diagram — open it in IureEditor to see it drawn",
-            "Diagrama Mermaid — ábrelo en IureEditor para verlo dibujado",
+            "Mermaid diagram that couldn't be drawn here — open it in IureEditor",
+            "Diagrama Mermaid que no se pudo dibujar aquí — ábrelo en IureEditor",
         )
         .to_string(),
         math_label: pick(

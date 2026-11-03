@@ -633,6 +633,15 @@ fn honorarios(horas: u32) -> u32 {
 graph LR; Propuesta --> Firma --> Audiencia
 ```
 
+```mermaid
+gantt
+    title Plan
+    dateFormat YYYY-MM-DD
+    section Fase 1
+    Tarea A :a1, 2024-01-01, 7d
+    Tarea B :after a1, 5d
+```
+
 Interés moratorio: $i = r \\cdot t$ (ver nota[^1]).
 
 [^1]: Cláusula 7 del contrato de prestación de servicios.
