@@ -472,7 +472,7 @@ impl ImageCache {
 }
 
 /// Carpeta solo para el usuario (Unix: 0700); no sigue un enlace.
-fn private_dir(p: &Path) -> std::io::Result<()> {
+pub(crate) fn private_dir(p: &Path) -> std::io::Result<()> {
     if let Ok(m) = std::fs::symlink_metadata(p)
         && (m.file_type().is_symlink() || !m.is_dir())
     {
@@ -495,7 +495,7 @@ fn private_dir(p: &Path) -> std::io::Result<()> {
 }
 
 /// Archivo privado (Unix: 0600), sin seguir un enlace plantado.
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     if std::fs::symlink_metadata(path).is_ok() {
         std::fs::remove_file(path)?;

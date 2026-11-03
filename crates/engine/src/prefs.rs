@@ -217,6 +217,9 @@ pub struct Prefs {
     /// UX-5: dominios cuyas imágenes se muestran siempre (minúsculas; incluye subdominios).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_domains: Vec<String>,
+    /// UX-13: fondo de «Mi día».
+    #[serde(default)]
+    pub today_background: crate::today_bg::TodayBackground,
 }
 
 /// UX-3: dónde se muestra el panel contextual.
@@ -341,6 +344,7 @@ impl Default for Prefs {
             text_scale_pct: default_text_scale(),
             crisp_text: false,
             show_empty_contacts: false,
+            today_background: Default::default(),
             notes_dir: None,
             reading_width: None,
             reading_zoom_pct: default_reading_zoom(),
@@ -406,6 +410,7 @@ mod tests {
             text_scale_pct: 115,
             crisp_text: true,
             show_empty_contacts: true,
+            today_background: Default::default(),
             ..Default::default()
         };
         prefs.save(&p).unwrap();

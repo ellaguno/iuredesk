@@ -6,7 +6,7 @@
 //!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]
 //!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]
 //!  [--reader] [--focus] [--context-collapsed] [--strip] [--attachments [--attachments-menu]] [--emoji]
-//!  [--note] [--contact-editor[=new]] [--meeting[=email]] [--google-description]`
+//!  [--note] [--contact-editor[=new]] [--meeting[=email]] [--google-description] [--today-bg color|gradient|image|commons-demo|commons]`
 //!
 //! UX-8: `--note` agrega una nota con tablas, casillas, código, cita, Mermaid, fórmula, nota al
 //! pie y una imagen local (en una carpeta de notas temporal si no hay `--notes-dir`) y la muestra
@@ -357,6 +357,28 @@ fn main() -> Result<(), String> {
     };
     let mut app =
         DeskApp::new(session, Options { system_fonts: true, no_theme_watch: true, chrome, ..Default::default() });
+    // UX-13: `--today-bg color|gradient|image|commons-demo|commons` (`commons` descarga de verdad).
+    if let Some(kind) = flag("--today-bg") {
+        use iuredesk_engine::today_bg::{Potd, TodayBackground as Bg};
+        let png = demo_landscape();
+        let credit = Potd {
+            date: app.session.today(),
+            title: "Paisaje de muestra.jpg".into(),
+            artist: "IureDesk".into(),
+            license: "CC0".into(),
+            page_url: "https://commons.wikimedia.org/wiki/Commons:Picture_of_the_day".into(),
+            file: Default::default(),
+        };
+        match kind.as_str() {
+            "color" => app.session.prefs.today_background = Bg::Color { rgb: [0x1e, 0x40, 0xaf] },
+            "gradient" => {
+                app.session.prefs.today_background = Bg::Gradient { from: [0x1e, 0x3a, 0x8a], to: [0x0f, 0x76, 0x6e] }
+            }
+            "image" => app.demo_today_background(Bg::Image { path: "muestra.png".into() }, Some((&png, None))),
+            "commons-demo" => app.demo_today_background(Bg::Commons, Some((&png, Some(credit)))),
+            _ => app.session.prefs.today_background = Bg::Commons,
+        }
+    }
     // UX-12: Notas solo se ve con IureEditor; las capturas no dependen de lo instalado.
     if module == "notes" || args.iter().any(|a| a == "--note") {
         use iuredesk_engine::iuredesk_integrations::{SisterApp, Suite};
@@ -646,6 +668,35 @@ Interés moratorio: $i = r \\cdot t$ (ver nota[^1]).
 
 [^1]: Cláusula 7 del contrato de prestación de servicios.
 ";
+
+/// Paisaje dibujado aquí (cielo, sol y colinas) para las capturas del fondo: sin activos ajenos.
+fn demo_landscape() -> Vec<u8> {
+    let (w, h) = (1600u32, 1000u32);
+    let img = image::RgbaImage::from_fn(w, h, |x, y| {
+        let (fx, fy) = (x as f32 / w as f32, y as f32 / h as f32);
+        let hill1 = 0.70 + 0.06 * (fx * 6.0).sin();
+        let hill2 = 0.80 + 0.05 * (fx * 9.0 + 1.0).cos();
+        let sun = ((fx - 0.72).powi(2) + (fy - 0.38).powi(2)).sqrt();
+        let px = if fy > hill2 {
+            [0x1f, 0x4d, 0x2e]
+        } else if fy > hill1 {
+            [0x2f, 0x6b, 0x3f]
+        } else if sun < 0.07 {
+            [0xff, 0xd2, 0x7a]
+        } else {
+            let t = fy / hill1;
+            [
+                (0x3b as f32 + t * 0xb0 as f32) as u8,
+                (0x6e as f32 + t * 0x60 as f32) as u8,
+                (0xc9 as f32 - t * 0x30 as f32) as u8,
+            ]
+        };
+        image::Rgba([px[0], px[1], px[2], 255])
+    });
+    let mut out = Vec::new();
+    let _ = img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png);
+    out
+}
 
 /// Imagen local de la nota de ejemplo (dibujada aquí: sin activos de terceros).
 fn demo_image() -> image::RgbaImage {

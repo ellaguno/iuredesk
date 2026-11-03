@@ -32,6 +32,7 @@ pub mod session;
 pub mod suite;
 pub mod time;
 pub mod today;
+pub mod today_bg;
 
 pub use background::{JobId, JobOutput};
 /// Reexportados para la UI y la app (redactor, envío, sincronización).

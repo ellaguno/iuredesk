@@ -735,6 +735,8 @@ fn appearance(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
     ui.add_space(14.0);
     typography(app, ui);
     ui.add_space(14.0);
+    today_background(app, ui);
+    ui.add_space(14.0);
     section_label(ui, pick("Window", "Ventana"));
     let mut native = app.session.prefs.native_decorations;
     if ui.checkbox(&mut native, pick("System title bar", "Barra de título del sistema")).changed() {
@@ -748,6 +750,110 @@ fn appearance(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
             "Usa el marco de ventana de tu escritorio en lugar de la barra integrada. Se aplica al reiniciar IureDesk.",
         ),
     );
+}
+
+/// UX-13: fondo de «Mi día»: del tema, color, degradado, imagen o la imagen del día de Commons.
+fn today_background(app: &mut DeskApp, ui: &mut Ui) {
+    use iuredesk_engine::today_bg::TodayBackground as Bg;
+    section_label(ui, pick("“My day” background", "Fondo de «Mi día»"));
+    let c = theme::colors(ui);
+    let picked_id = egui::Id::unique("today-bg-picked");
+    if let Some(path) = ui.ctx().data_mut(|d| d.remove_temp::<String>(picked_id)) {
+        app.session.prefs.today_background = Bg::Image { path };
+        app.session.save_prefs();
+    }
+    let current = app.session.prefs.today_background.clone();
+    let options = [
+        Bg::None,
+        Bg::Color { rgb: [0x1e, 0x40, 0xaf] },
+        Bg::Gradient { from: [0x1e, 0x3a, 0x8a], to: [0x0f, 0x76, 0x6e] },
+        Bg::Image { path: String::new() },
+        Bg::Commons,
+    ];
+    let same_kind = |a: &Bg, b: &Bg| std::mem::discriminant(a) == std::mem::discriminant(b);
+    let mut next: Option<Bg> = None;
+    let combo =
+        egui::ComboBox::from_id_salt("today-bg").width(300.0).selected_text(current.label()).show_ui(ui, |ui| {
+            for o in &options {
+                if ui.selectable_label(same_kind(o, &current), o.label()).clicked() && !same_kind(o, &current) {
+                    next = Some(o.clone());
+                }
+            }
+        });
+    crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("“My day” background", "Fondo de «Mi día»"));
+    let set = |bg: Bg, app: &mut DeskApp| {
+        app.session.prefs.today_background = bg;
+        app.session.save_prefs();
+    };
+    if let Some(n) = next {
+        // «Imagen» abre el selector; hasta elegir una no cambia nada.
+        if matches!(n, Bg::Image { .. }) {
+            pick_background_image(ui, picked_id);
+        } else {
+            set(n, app);
+        }
+    }
+    match app.session.prefs.today_background.clone() {
+        Bg::Color { rgb } => {
+            let mut v = rgb;
+            ui.horizontal(|ui| {
+                ui.label(pick("Color", "Color"));
+                if ui.color_edit_button_srgb(&mut v).changed() {
+                    set(Bg::Color { rgb: v }, app);
+                }
+            });
+        }
+        Bg::Gradient { from, to } => {
+            let (mut a, mut b) = (from, to);
+            ui.horizontal(|ui| {
+                ui.label(pick("From", "De"));
+                let ra = ui.color_edit_button_srgb(&mut a).changed();
+                ui.label(pick("to", "a"));
+                let rb = ui.color_edit_button_srgb(&mut b).changed();
+                if ra || rb {
+                    set(Bg::Gradient { from: a, to: b }, app);
+                }
+            });
+        }
+        Bg::Image { path } => {
+            ui.horizontal(|ui| {
+                let name = std::path::Path::new(&path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                ui.label(RichText::new(name).color(c.text)).on_hover_text(&path);
+                if ui.button(pick("Choose another…", "Elegir otra…")).clicked() {
+                    pick_background_image(ui, picked_id);
+                }
+            });
+        }
+        Bg::Commons => muted(
+            ui,
+            pick(
+                "A different photo every day, chosen by the Wikimedia Commons community. It is downloaded once a day from commons.wikimedia.org; its author and license are shown in a corner.",
+                "Una foto distinta cada día, elegida por la comunidad de Wikimedia Commons. Se descarga una vez al día de commons.wikimedia.org; su autor y su licencia se ven en una esquina.",
+            ),
+        ),
+        Bg::None => {}
+    }
+    if let Some(e) = &app.today.bg.error {
+        ui.label(RichText::new(e.get()).color(c.danger));
+    }
+}
+
+/// Selector de imagen (portal del escritorio) en su hilo; la ruta vuelve por `picked_id`.
+fn pick_background_image(ui: &Ui, picked_id: egui::Id) {
+    let ctx = ui.ctx().clone();
+    let _ = std::thread::Builder::new().name("today-bg-pick".into()).spawn(move || {
+        if let Some(f) = rfd::FileDialog::new()
+            .set_title(pick("Background image", "Imagen de fondo"))
+            .add_filter(pick("Images", "Imágenes"), &["jpg", "jpeg", "png", "webp", "gif"])
+            .pick_file()
+        {
+            ctx.data_mut(|d| d.insert_temp(picked_id, f.to_string_lossy().into_owned()));
+            ctx.request_repaint();
+        }
+    });
 }
 
 /// «Tipografía»: familia, tamaño del texto y nitidez. Se aplica en vivo.

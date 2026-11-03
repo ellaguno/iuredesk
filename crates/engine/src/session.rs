@@ -1593,6 +1593,31 @@ impl Session {
 
     // ------------------------------------------------------------------ fondo
 
+    /// UX-13: trae en segundo plano la imagen del fondo de «Mi día» (la del día de Commons o la
+    /// elegida). Responde con [`Event::Custom`] y un [`crate::today_bg::TodayImage`]. `None` si
+    /// el fondo elegido no lleva imagen.
+    pub fn request_today_image(&mut self) -> Option<JobId> {
+        use crate::today_bg::{TodayBackground, TodayImage};
+        let bg = self.prefs.today_background.clone();
+        let today = self.today();
+        match bg.clone() {
+            TodayBackground::Commons => {
+                let dir = crate::today_bg::cache_dir();
+                Some(self.bg.spawn(async move {
+                    let result = crate::today_bg::fetch_potd(crate::today_bg::COMMONS_API, today, &dir)
+                        .await
+                        .map(|(b, p)| (b, Some(p)));
+                    JobOutput::Custom(Box::new(TodayImage { for_bg: bg, result }))
+                }))
+            }
+            TodayBackground::Image { path } => Some(self.bg.spawn_blocking(move || {
+                let result = crate::today_bg::read_local_image(&path).map(|b| (b, None));
+                JobOutput::Custom(Box::new(TodayImage { for_bg: bg, result }))
+            })),
+            _ => None,
+        }
+    }
+
     /// Encola trabajo de la UI (p. ej. el render de HTML) en el runtime de fondo.
     pub fn spawn_blocking(&mut self, f: impl FnOnce() -> JobOutput + Send + 'static) -> JobId {
         self.bg.spawn_blocking(f)

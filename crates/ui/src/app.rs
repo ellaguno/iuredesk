@@ -784,6 +784,14 @@ impl DeskApp {
                         if let Ok(f) = value.downcast::<iuredesk_engine::session::FileOpened>() {
                             crate::opened::on_loaded(self, id, *f);
                         }
+                    } else if value.is::<iuredesk_engine::today_bg::TodayImage>() {
+                        if let Ok(i) = value.downcast::<iuredesk_engine::today_bg::TodayImage>() {
+                            crate::today_bg::on_image(self, *i);
+                        }
+                    } else if value.is::<crate::today_bg::BgDecoded>() {
+                        if let Ok(d) = value.downcast::<crate::today_bg::BgDecoded>() {
+                            crate::today_bg::on_decoded(self, ctx, *d);
+                        }
                     } else if value.is::<crate::diagnostics::StoreReport>() {
                         if let Ok(r) = value.downcast::<crate::diagnostics::StoreReport>() {
                             self.diag.on_store(id, *r);

@@ -43,6 +43,7 @@ mod settings;
 mod suite_ui;
 mod task_editor;
 mod today;
+mod today_bg;
 mod widgets;
 
 pub use app::{DeskApp, Incoming, Notifier, Options};

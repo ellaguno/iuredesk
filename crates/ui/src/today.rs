@@ -38,6 +38,8 @@ pub struct TodayState {
     done: HashSet<TaskId>,
     /// El resumen que se veía al terminarlas.
     seen: Option<Arc<DaySummary>>,
+    /// UX-13: fondo propio.
+    pub(crate) bg: crate::today_bg::BgState,
 }
 
 /// Qué se pulsó.
@@ -75,7 +77,9 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
     let mut acts: Vec<Act> = Vec::new();
     split::center(ui, PaneKind::Content, |ui| {
         let c = theme::colors(ui);
-        ui.painter().rect_filled(ui.max_rect(), 0.0, c.bg);
+        let page = ui.max_rect();
+        // UX-13: color, degradado o imagen (o el fondo del tema).
+        crate::today_bg::paint(app, ui, page, c.bg);
         egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("today-page").show(ui, |ui| {
             let full = ui.available_width();
             let pad = ((full - MAX_WIDTH) / 2.0).max(if full < 760.0 { 16.0 } else { 28.0 });
@@ -88,7 +92,21 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
                         loading(ui);
                         return;
                     };
-                    header(app, ui, s, now, &mut acts);
+                    if crate::today_bg::active(app) {
+                        // Sobre un fondo propio, el encabezado va en un panel para leerse siempre.
+                        let c = theme::colors(ui);
+                        egui::Frame::new()
+                            .fill(c.surface.gamma_multiply(0.9))
+                            .corner_radius(14)
+                            .inner_margin(Margin::same(16))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                header(app, ui, s, now, &mut acts);
+                                crate::today_bg::credit(app, ui);
+                            });
+                    } else {
+                        header(app, ui, s, now, &mut acts);
+                    }
                     ui.add_space(18.0);
                     columns(app, ui, s, now, w, &mut acts);
                 },
