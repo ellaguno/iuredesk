@@ -223,16 +223,6 @@ impl DeskApp {
         self.run(&ctx, "mail.edit_draft");
     }
 
-    /// Notas en «Vista previa» (capturas).
-    pub fn set_note_preview(&mut self, on: bool) {
-        self.pim.note_preview = on;
-    }
-
-    /// UX-8: ¿se ve la vista previa de la nota? (pruebas)
-    pub fn note_preview_on(&self) -> bool {
-        self.pim.note_preview
-    }
-
     /// UX-8: lo mismo que pulsar la casilla `n` de la vista previa de la nota enfocada (pruebas).
     pub fn toggle_note_task(&mut self, n: usize) {
         if let Some(id) = self.session.note_focus() {
@@ -302,6 +292,13 @@ impl DeskApp {
             self.palette_mode = PaletteMode::Commands;
         }
 
+        // UX-12: Notas solo con IureEditor (cuando ya se sabe qué hay instalado).
+        if self.suite.hub.suite().is_some() {
+            let yes = self.suite.hub.installed(iuredesk_engine::iuredesk_integrations::SisterApp::Editor);
+            if yes != self.session.notes_available() {
+                self.session.set_notes_available(yes);
+            }
+        }
         crate::header::show(self, ui, true);
         self.rail(ui);
         // F7.1: lo escrito en una nota se guarda al salir de Notas.
@@ -820,6 +817,12 @@ impl DeskApp {
 
     /// Ejecuta un comando y atiende lo que pida.
     pub fn run(&mut self, ctx: &Context, id: &str) {
+        // UX-12: una nota nueva se escribe en IureEditor (la CLI y MCP solo la crean).
+        let in_notes = self.session.module == Module::Notes;
+        if (id == "notes.new" || (id == "mail.new" && in_notes)) && self.session.notes_available() {
+            crate::pim::new_note_in_editor(self, ctx);
+            return;
+        }
         match self.session.run(id) {
             Ok(out) => self.outcome(ctx, out),
             Err(e) => self.notice(Notice::error(e.text())),
@@ -862,7 +865,6 @@ impl DeskApp {
         let typing = ctx.egui_wants_keyboard_input();
         let in_calendar = self.session.module == Module::Calendar;
         let in_mail = self.session.module == Module::Mail;
-        let in_notes = self.session.module == Module::Notes;
         let mut fire: Option<&'static str> = None;
         ctx.input_mut(|i| {
             let mut consumed = None;
@@ -877,7 +879,6 @@ impl DeskApp {
                         // El zoom del mensaje solo en el correo (en lo demás, el de egui).
                         || (cmd.starts_with("view.zoom") && !in_mail)
                         || ((cmd == "mail.open_window" || cmd == "view.reading_focus") && !in_mail)
-                        || (cmd == "notes.toggle_preview" && !in_notes)
                     {
                         continue;
                     }
@@ -930,7 +931,7 @@ impl DeskApp {
         } else {
             self.last_sync_error = None;
         }
-        let items = [
+        let mut items = vec![
             NavItem::new("today", iurefficient_ui::Icon::Sun, Module::Today.label()).shortcut(&s_today),
             NavItem::new("mail", iurefficient_ui::Icon::Mail, Module::Mail.label())
                 .badge(u32::try_from(unread).unwrap_or(u32::MAX))
@@ -945,6 +946,10 @@ impl DeskApp {
             NavItem::new("settings", iurefficient_ui::Icon::Settings, pick("Settings", "Ajustes")).bottom(),
             NavItem::new("sync", sync_icon, &sync_label).bottom(),
         ];
+        // UX-12: sin IureEditor no hay Notas.
+        if !self.session.notes_available() {
+            items.retain(|it| it.id != "notes");
+        }
         // La campana de Iurefficient está en la barra de título (UI-HEADER).
         let w = rail_width(ui.ctx());
         let current = self.session.module.key();

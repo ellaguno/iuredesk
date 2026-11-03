@@ -316,15 +316,6 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::App,
         "note editor iureeditor nota editor",
     ),
-    // UX-8: vista previa nativa ↔ editor ligero.
-    c(
-        "notes.toggle_preview",
-        "Toggle note preview / edit",
-        "Alternar vista previa / edición de la nota",
-        "notes",
-        Group::App,
-        "note preview view edit markdown render nota vista previa editar",
-    ),
     // F5.3
     c("mail.snooze", "Snooze…", "Posponer…", "clock", Group::Mail, "snooze later remind posponer despues recordar"),
     c("mail.unsnooze", "Unsnooze", "Quitar posposición", "undo", Group::Mail, "unsnooze despertar"),
@@ -595,7 +586,6 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
         // UX-5: Ctrl+Alt+I, «I» de Iurefficient.
         "mail.tab.iurefficient" => Some(Chord::cmd_alt("I")),
         // UX-8: «E» de editar; solo en Notas.
-        "notes.toggle_preview" => Some(Chord::cmd_shift("E")),
         _ => None,
     };
     if common.is_some() {

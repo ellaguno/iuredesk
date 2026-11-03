@@ -161,6 +161,10 @@ fn note_has_its_markdown_file() {
     assert!(a.session.notes_fs_flush(Duration::from_secs(10)));
     assert!(a.session.notes_fs_flush(Duration::from_secs(10)));
     a.session.module = Module::Notes;
+    a.set_suite(
+        iuredesk_engine::iuredesk_integrations::Suite::empty()
+            .with_app(iuredesk_engine::iuredesk_integrations::SisterApp::Editor, "/opt/iureditor/iureditor"),
+    );
     let mut h = harness(a);
     settle(&mut h);
     assert!(h.query_by_label("Editar en IureEditor").is_some());
@@ -176,7 +180,6 @@ fn note_has_its_markdown_file() {
         h.state_mut().session.notes_fs_flush(Duration::from_secs(5));
         std::thread::sleep(Duration::from_millis(40));
     }
-    h.state_mut().set_note_preview(true);
     settle(&mut h);
-    assert!(h.query_all_by_label_contains("Agregado en IureEditor").next().is_some(), "el editor muestra lo nuevo");
+    assert!(h.query_all_by_label_contains("Agregado en IureEditor").next().is_some(), "la vista muestra lo nuevo");
 }

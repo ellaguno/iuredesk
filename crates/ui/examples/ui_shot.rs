@@ -6,11 +6,11 @@
 //!  [--ai reading|datascope|compose|triage|chat|minutes] [--import]
 //!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]
 //!  [--reader] [--focus] [--context-collapsed] [--strip] [--attachments [--attachments-menu]] [--emoji]
-//!  [--note [--note-edit]] [--contact-editor[=new]] [--meeting[=email]]`
+//!  [--note] [--contact-editor[=new]] [--meeting[=email]] [--google-description]`
 //!
 //! UX-8: `--note` agrega una nota con tablas, casillas, código, cita, Mermaid, fórmula, nota al
 //! pie y una imagen local (en una carpeta de notas temporal si no hay `--notes-dir`) y la muestra
-//! en la vista previa nativa; `--note-edit`, en el editor.
+//! en la vista previa nativa (UX-12: con IureEditor de mentira, para que se vea Notas).
 //!
 //! UX-3: `--reader` abre el mensaje en su ventana (sin pantalla, egui la dibuja dentro de la
 //! principal); `--attachments` elige un mensaje con adjuntos y `--attachments-menu` abre el menú
@@ -357,6 +357,11 @@ fn main() -> Result<(), String> {
     };
     let mut app =
         DeskApp::new(session, Options { system_fonts: true, no_theme_watch: true, chrome, ..Default::default() });
+    // UX-12: Notas solo se ve con IureEditor; las capturas no dependen de lo instalado.
+    if module == "notes" || args.iter().any(|a| a == "--note") {
+        use iuredesk_engine::iuredesk_integrations::{SisterApp, Suite};
+        app.set_suite(Suite::empty().with_app(SisterApp::Editor, "/opt/iureditor/iureditor"));
+    }
     if args.iter().any(|a| a == "--compose") {
         // `--secure`: clave propia y de los destinatarios (Autocrypt mutuo) → «Cifrar» se enciende.
         if args.iter().any(|a| a == "--secure")
@@ -382,9 +387,6 @@ fn main() -> Result<(), String> {
     }
     if args.iter().any(|a| a == "--draft") {
         app.demo_reopen_draft();
-    }
-    if args.iter().any(|a| a == "--note-preview") {
-        app.set_note_preview(true);
     }
     // UX-6: `--notes-dir RUTA` escribe las notas como Markdown en esa carpeta (la cabecera de la
     // nota muestra su archivo); `--task-editor` abre el editor de una tarea con vencimiento.
@@ -447,6 +449,9 @@ fn main() -> Result<(), String> {
     }
     if args.iter().any(|a| a == "--editor") {
         app.demo_event_editor();
+    }
+    if args.iter().any(|a| a == "--google-description") {
+        app.demo_google_description();
     }
     // UX-11: cita nueva con invitados y videollamada (`=email`: invitaciones por correo).
     if let Some(a) = args.iter().find(|a| a.starts_with("--meeting")) {
@@ -571,10 +576,6 @@ fn main() -> Result<(), String> {
         harness.state_mut().run(&ctx, "view.reading_focus");
         later(&mut harness);
     }
-    if args.iter().any(|a| a == "--note-edit") {
-        harness.state_mut().set_note_preview(false);
-        later(&mut harness);
-    }
     if args.iter().any(|a| a == "--attachments-menu") {
         use egui_kittest::kittest::Queryable;
         if let Some(n) = harness.query_all_by_label_contains("Adjunto ").next() {
@@ -597,6 +598,14 @@ const DEMO_NOTE: &str = "Acuerdos de la **reunión del 21 de octubre** con *Alta
 Expediente: [caso 241/2026](https://iurefficient.com/casos/241).
 
 ![Sello del despacho](img/sello.png)
+
+> [!MINDMAP|map] Estrategia del caso
+> - Análisis
+>   - Contrato
+>   - Pruebas
+> - Negociación
+> - Audiencia
+>   - Testigos
 
 ## Pendientes
 

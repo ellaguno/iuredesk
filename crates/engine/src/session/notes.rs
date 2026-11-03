@@ -70,6 +70,20 @@ impl Session {
         self.notes().into_iter().filter(|n| note_matches(n, query)).collect()
     }
 
+    /// UX-12: ¿hay con qué escribir las notas (IureEditor instalado)? Lo fija la UI al detectar
+    /// la suite; sin él, `nav.notes` y `notes.*` quedan apagados y Notas se oculta.
+    pub fn set_notes_available(&mut self, yes: bool) {
+        self.notes_available = yes;
+        if !yes && self.module == super::Module::Notes {
+            self.module = super::Module::Today;
+        }
+    }
+
+    /// ¿Se muestran las notas?
+    pub fn notes_available(&self) -> bool {
+        self.notes_available
+    }
+
     /// Nota nueva vacía (con deshacer) y enfocada.
     pub fn new_note(&mut self) -> Result<Outcome> {
         let now = self.now();

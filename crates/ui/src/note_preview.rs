@@ -188,6 +188,7 @@ fn style(ui: &Ui) -> NoteStyle {
 fn options(ui: &Ui) -> NoteOptions {
     NoteOptions {
         style: style(ui),
+        mindmap_label: pick("Mind map", "Mapa mental").to_string(),
         mermaid_label: pick(
             "Mermaid diagram — open it in IureEditor to see it drawn",
             "Diagrama Mermaid — ábrelo en IureEditor para verlo dibujado",
@@ -252,6 +253,10 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui, id: NoteId, body: &str) -> Option<Pr
         app.session.spawn_blocking(move || {
             let doc = markdown::to_html(&md, &opts);
             let mut inline = HashMap::new();
+            // UX-12: mapas mentales dibujados aquí, como imágenes SVG.
+            for (cid, svg) in &doc.diagrams {
+                inline.insert(cid.clone(), Bytes::from(svg.clone()));
+            }
             if let Some(root) = root {
                 let mut total = 0usize;
                 for (i, rel) in doc.images.iter().enumerate() {

@@ -412,6 +412,8 @@ pub struct Session {
     contact_selection: Vec<iuredesk_model::ContactId>,
     /// Nota enfocada (F7.1).
     note_focus: Option<iuredesk_model::NoteId>,
+    /// UX-12: las notas se escriben en IureEditor; sin él, Notas no aparece (lo fija la UI).
+    notes_available: bool,
     /// UX-6: carpeta de notas en Markdown.
     notes_fs: notes_files::NotesFs,
     /// Última «Probar conexión» del editor de cuentas (id de la cuenta y estado).
@@ -497,6 +499,7 @@ impl Session {
             contacts_cache: None,
             contact_selection: Vec::new(),
             note_focus: None,
+            notes_available: true,
             notes_fs: notes_files::NotesFs::default(),
             connection_test: None,
             calendars: Vec::new(),
@@ -1158,7 +1161,8 @@ impl Session {
                 self.focused.is_some()
             }
             "mail.edit_draft" => self.focused.is_some_and(|m| self.is_draft(m)),
-            "notes.delete" | "notes.open_editor" | "notes.toggle_preview" => self.note_focus.is_some(),
+            b if (b == "nav.notes" || b.starts_with("notes.")) && !self.notes_available => false,
+            "notes.delete" | "notes.open_editor" => self.note_focus.is_some(),
             "tasks.edit" => self.module == Module::Tasks || self.module == Module::Today,
             "contacts.edit" => self.contact_selection.len() == 1,
             "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
@@ -1188,6 +1192,10 @@ impl Session {
         if !self.is_enabled(id) {
             return Ok(Outcome::Notice(match base {
                 "undo" => Notice::info("Nothing to undo.", "No hay nada que deshacer."),
+                b if (b == "nav.notes" || b.starts_with("notes.")) && !self.notes_available => Notice::info(
+                    "Notes are written in IureEditor: install it to use them here.",
+                    "Las notas se escriben en IureEditor: instálalo para usarlas aquí.",
+                ),
                 "contacts.delete" | "contacts.edit" => {
                     Notice::info("Select a contact first.", "Primero selecciona un contacto.")
                 }
@@ -1233,7 +1241,6 @@ impl Session {
             "mail.new_folder" | "mail.rename_folder" | "mail.delete_folder" => self.run_folder_command(base, arg),
             "notes.delete" => self.run_delete_note(arg),
             "notes.open_editor" => Ok(Outcome::Assist("notes.open_editor".into())),
-            "notes.toggle_preview" => Ok(Outcome::Assist("notes.toggle_preview".into())),
             "tasks.edit" => Ok(Outcome::Assist("tasks.edit".into())),
             "mail.archive" => self.archive(),
             "mail.delete" => self.delete(),

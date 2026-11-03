@@ -224,7 +224,14 @@ fn gmail_scheme_archives_with_e_and_outlook_does_not() {
 fn modules_render_without_unnamed_controls() {
     let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
-    let mut h = harness(sample_app(dir.path(), true), vec2(1280.0, 800.0));
+    let mut a = sample_app(dir.path(), true);
+    // UX-12: Notas solo con IureEditor (sin depender de lo instalado en la máquina).
+    a.set_suite(
+        iuredesk_engine::iuredesk_integrations::Suite::empty()
+            .with_app(iuredesk_engine::iuredesk_integrations::SisterApp::Editor, "/opt/iureditor/iureditor")
+            .with_opener(Arc::new(Recorder::default())),
+    );
+    let mut h = harness(a, vec2(1280.0, 800.0));
     settle(&mut h);
     for (label, expect) in [
         ("Calendario", "Semana laboral"),
@@ -417,12 +424,19 @@ fn saved_draft_reopens_in_the_composer() {
     assert!(h.query_all_by_label_contains("Editar borrador").next().is_some(), "botón en la barra");
 }
 
-/// F7.1: «Nueva nota» abre el editor con título y texto (Markdown) y se guarda sola.
+/// F7.1 → UX-12: «Nueva nota» crea la nota y la abre en IureEditor (aquí no hay editor ligero).
 #[test]
-fn new_note_is_edited_and_autosaved() {
+fn new_note_goes_to_iureditor() {
     let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
-    let mut h = harness(sample_app(dir.path(), true), vec2(1280.0, 800.0));
+    let mut a = sample_app(dir.path(), true);
+    let rec = Arc::new(Recorder::default());
+    a.set_suite(
+        iuredesk_engine::iuredesk_integrations::Suite::empty()
+            .with_app(iuredesk_engine::iuredesk_integrations::SisterApp::Editor, "/opt/iureditor/iureditor")
+            .with_opener(rec.clone()),
+    );
+    let mut h = harness(a, vec2(1280.0, 800.0));
     settle(&mut h);
     h.query_all_by_label_contains("Notas").next().unwrap().click();
     settle(&mut h);
@@ -430,13 +444,26 @@ fn new_note_is_edited_and_autosaved() {
     h.query_by_label("Nueva nota").expect("botón Nueva nota").click();
     settle(&mut h);
     assert_eq!(h.state().session.notes().len(), before + 1);
-    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Título de la nota").focus();
-    h.run();
-    h.event(egui::Event::Text("Minuta".into()));
-    settle(&mut h);
-    assert!(h.query_by_label("Texto de la nota").is_some());
-    // Al salir de Notas se guarda lo escrito (y antes, tras una breve pausa).
-    h.query_all_by_label_contains("Correo (").next().unwrap().click();
-    settle(&mut h);
-    assert!(h.state().session.notes().iter().any(|n| n.title == "Minuta"), "se guardó");
+    assert!(h.query_by_label("Texto de la nota").is_none(), "sin editor ligero");
+    let start = std::time::Instant::now();
+    while rec.0.lock().unwrap().is_empty() {
+        assert!(start.elapsed() < std::time::Duration::from_secs(15), "no se abrió IureEditor");
+        h.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Anota lo que se abriría (las pruebas nunca lanzan nada).
+#[derive(Default)]
+struct Recorder(std::sync::Mutex<Vec<String>>);
+
+impl iuredesk_engine::iuredesk_integrations::Opener for Recorder {
+    fn open_url(&self, url: &str) -> std::io::Result<()> {
+        self.0.lock().unwrap().push(url.to_string());
+        Ok(())
+    }
+    fn launch(&self, program: &std::path::Path, args: &[String]) -> std::io::Result<()> {
+        self.0.lock().unwrap().push(format!("{} {}", program.display(), args.join(" ")));
+        Ok(())
+    }
 }

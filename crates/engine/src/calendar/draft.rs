@@ -108,6 +108,9 @@ pub struct EventDraft {
     pub private: bool,
     /// UX-11: «Agregar videollamada» (Meet o Teams, según el calendario).
     pub video_call: bool,
+    /// La descripción tal como se preparó para el editor (HTML de Google pasado a Markdown, bloque
+    /// de la videollamada aparte); al guardar se rehace con [`super::description::join`].
+    pub description_shown: super::description::EditDescription,
     /// Evento original (base de la edición).
     pub base: Option<Event>,
 }
@@ -163,6 +166,7 @@ impl EventDraft {
             busy: !all_day,
             private: false,
             video_call: false,
+            description_shown: Default::default(),
             base: None,
         }
     }
@@ -195,7 +199,9 @@ impl EventDraft {
         d.occurrence = if ev.is_recurring() { occurrence.map(|(s, _)| s) } else { None };
         d.title = ev.summary.clone();
         d.location = ev.location.clone();
-        d.description = ev.description.clone();
+        // HTML de Google → Markdown; el bloque de la videollamada, aparte.
+        d.description_shown = super::description::split(&ev.description);
+        d.description = d.description_shown.text.clone();
         d.tz = None;
         d.repeat = Repeat::from_rrule(ev.rrule.as_deref(), d.start_date);
         d.reminders = ev.reminders.iter().map(|r| r.minutes_before).collect();
@@ -316,7 +322,11 @@ impl EventDraft {
         ev.calendar = self.calendar;
         ev.summary = self.title.trim().to_string();
         ev.location = self.location.trim().to_string();
-        ev.description = self.description.clone();
+        ev.description = super::description::join(
+            &self.description,
+            &self.description_shown,
+            self.base.as_ref().map(|b| b.description.as_str()),
+        );
         let (s, e) = self.times(zone);
         ev.start = s;
         ev.end = e;

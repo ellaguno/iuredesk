@@ -65,6 +65,8 @@ impl Full {
             RepeatEnd::Until(d) => d.format("%Y-%m-%d").to_string(),
             _ => String::new(),
         };
+        // Una cita que ya tiene descripción se abre leyéndola (con formato).
+        let preview = draft.id.is_some() && !draft.description.trim().is_empty();
         Full {
             start_text: draft.start_date.format("%Y-%m-%d").to_string(),
             end_text: draft.end_date.format("%Y-%m-%d").to_string(),
@@ -73,7 +75,7 @@ impl Full {
             occ,
             attendee: String::new(),
             optional: false,
-            preview: false,
+            preview,
             focused: false,
             read_only,
         }
@@ -666,6 +668,22 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
         );
         crate::widgets::named(&r, egui::Role::TextInput, pick("Description", "Descripción"));
     }
+    // El bloque que añade Google (Meet, teléfonos): plegado, tal cual y sin editar.
+    let conference = f.draft.description_shown.conference.clone();
+    if !conference.trim().is_empty() {
+        egui::CollapsingHeader::new(pick("Video call details", "Detalles de la videollamada"))
+            .id_salt("ev-conference")
+            .default_open(false)
+            .show(ui, |ui| {
+                for line in conference.lines().filter(|l| !l.trim().is_empty()).take(60) {
+                    let t = line.trim();
+                    if t.starts_with("-::~") {
+                        continue;
+                    }
+                    ui.label(RichText::new(t).color(c.text_muted).size(theme::density(ui.ctx()).small_size()));
+                }
+            });
+    }
 }
 
 fn repeat_editor(ui: &mut Ui, f: &mut Full) {
@@ -1111,6 +1129,22 @@ impl DeskApp {
             }
             None => false,
         }
+    }
+
+    /// Una cita con la descripción en HTML de Google y su bloque de Meet (capturas).
+    pub fn demo_google_description(&mut self) -> bool {
+        let zone = self.session.zone();
+        let mon = iuredesk_engine::time::monday_of(self.session.today());
+        let occ = self.session.visible_occurrences(zone.day_start(mon), zone.day_start(mon + Duration::days(5)));
+        let Some(o) = occ.iter().find(|o| !o.recurring && !o.all_day).cloned() else { return false };
+        let Some(mut ev) = self.session.calendar_event(o.id) else { return false };
+        ev.description = "<p><strong>Agenda de la reunión</strong><br>📅 <strong>Fecha:</strong> 3 de noviembre de 2026<br>🕐 <strong>Hora:</strong> 13:00 hrs<br>💻 <strong>Modalidad:</strong> Google Meet</p><p><strong>Temas a tratar:</strong></p><ol><li><p><strong>Fintechs:</strong> Planear las visitas a dos fintechs</p></li><li><p><strong>Estatus de proyectos:</strong> Dar un estatus de AI, ACC y VT</p></li></ol>\n\n-::~:~::~:~:~:~:~:~:~:~:~:~:~:~:~:~::~:~::-\nÚnase con Google Meet: https://meet.google.com/abc-defg-hij\n\nO marca: (MX) +52 55 0000 0000 PIN: 123456#\n\nNo edites esta sección.\n-::~:~::~:~:~:~:~:~:~:~:~:~:~:~:~:~::~:~::-".into();
+        if self.session.store().put_event(&ev).is_err() {
+            return false;
+        }
+        self.session.module = iuredesk_engine::Module::Calendar;
+        open_occurrence(self, &o);
+        true
     }
 
     /// UX-11: editor de una cita nueva con dos invitados y videollamada (capturas y pruebas).

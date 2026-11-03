@@ -216,3 +216,27 @@ fn local_calendars_say_nothing_is_sent_and_no_video_option() {
     // Sin asistentes no hay nada que decir.
     assert!(s.invite_summary(&new_meeting(&s, &[])).is_none());
 }
+
+#[test]
+fn google_html_descriptions_open_as_markdown_and_save_back_as_html() {
+    // Regresión (dueño 2026-11-03): la descripción de una cita de Google se veía como HTML crudo.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _) = session(dir.path());
+    let d = new_meeting(&s, &[]);
+    s.save_event_draft(&d, SeriesScope::All).unwrap();
+    let mut ev = saved(&s, "Revisión del contrato");
+    ev.description = "<p><strong>Agenda</strong><br>📅 <strong>Fecha:</strong> 3 nov</p>\n\n-::~:~::~:~:~:~::~:~::-\nÚnase con Google Meet: https://meet.google.com/abc\n-::~:~::~:~:~:~::~:~::-".into();
+    s.store().put_event(&ev).unwrap();
+    let ev = saved(&s, "Revisión del contrato");
+    let mut e = iuredesk_engine::calendar::draft::EventDraft::from_event(&ev, None, Zone::utc(), false);
+    assert!(e.description.contains("**Agenda**") && !e.description.contains("<p>"), "{}", e.description);
+    assert!(e.description_shown.conference.contains("meet.google.com/abc"));
+    // Guardar sin tocarla: idéntica.
+    s.save_event_draft(&e, SeriesScope::All).unwrap();
+    assert_eq!(saved(&s, "Revisión del contrato").description, ev.description);
+    // Editada: vuelve como HTML y con el bloque de Meet.
+    e.description.push_str("\n\nTraer el **contrato**");
+    s.save_event_draft(&e, SeriesScope::All).unwrap();
+    let out = saved(&s, "Revisión del contrato").description;
+    assert!(out.contains("<strong>contrato</strong>") && out.contains("meet.google.com/abc"), "{out}");
+}

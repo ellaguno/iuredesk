@@ -12,6 +12,9 @@
 //!   red las bloquea salvo que se permitan (UX-5). Cualquier otro esquema se descarta.
 //! - Casillas de tareas: `#iuredesk-task-N` (N = orden en el documento), para que la UI las marque
 //!   con [`toggle_task`], que usa el mismo análisis.
+//! - Mapas mentales de IureEditor (`> [!MINDMAP] Centro` + lista, UX-12): se dibujan como SVG
+//!   propio ([`crate::mindmap`]) y se entregan como imagen `cid:note-diagram-N`, en
+//!   [`NoteHtml::diagrams`]; con la vista `map` la lista no se muestra.
 //! - Mermaid y matemáticas: no hay motor en Rust puro que Blitz pueda pintar (Blitz no pinta
 //!   MathML y los renderizadores de Mermaid son JS), así que salen como bloque de código con una
 //!   etiqueta que invita a abrirlos en IureEditor.
@@ -67,6 +70,8 @@ pub struct NoteOptions {
     pub mermaid_label: String,
     /// Etiqueta de las fórmulas en bloque.
     pub math_label: String,
+    /// Centro de un mapa mental sin título («Mapa mental»).
+    pub mindmap_label: String,
 }
 
 /// Resultado de la conversión.
@@ -81,6 +86,8 @@ pub struct NoteHtml {
     pub deep_links: Vec<String>,
     /// Casillas de tareas.
     pub tasks: usize,
+    /// Diagramas dibujados aquí (mapas mentales): `cid` y SVG, para entregarlos como imágenes.
+    pub diagrams: Vec<(String, Vec<u8>)>,
 }
 
 /// Qué hacer al pulsar un enlace de la vista previa.
@@ -118,6 +125,45 @@ pub fn classify(href: &str, deep_links: &[String]) -> NoteLink {
         LinkKind::External => NoteLink::Open(h.to_string()),
         _ => NoteLink::None,
     }
+}
+
+/// Esquema interno con que se marca el sitio de un diagrama antes de convertir.
+const DIAGRAM_SCHEME: &str = "iuredesk-diagram:";
+
+/// `cid` del diagrama `i`.
+pub fn diagram_cid(i: usize) -> String {
+    format!("note-diagram-{i}@iuredesk")
+}
+
+/// La nota con cada mapa mental cambiado por su imagen (y, salvo en la vista `map`, su lista
+/// debajo como cita), y los SVG.
+fn with_diagrams(md: &str, opts: &NoteOptions) -> (String, Vec<(String, Vec<u8>)>) {
+    let blocks = crate::mindmap::find(md);
+    if blocks.is_empty() {
+        return (md.to_string(), Vec::new());
+    }
+    let mut out = String::with_capacity(md.len() + blocks.len() * 64);
+    let mut diagrams = Vec::new();
+    let mut last = 0usize;
+    for (i, b) in blocks.iter().enumerate() {
+        out.push_str(md.get(last..b.range.start).unwrap_or(""));
+        let mut root = b.root.clone();
+        if root.label.is_empty() {
+            root.label = opts.mindmap_label.clone();
+        }
+        let alt = escape(&root.label).replace(['[', ']'], "");
+        let _ = write!(out, "\n![{alt}]({DIAGRAM_SCHEME}{i})\n\n");
+        if b.view == crate::mindmap::View::ListAndMap {
+            for l in &b.body {
+                let _ = writeln!(out, "> {l}");
+            }
+            out.push('\n');
+        }
+        diagrams.push((diagram_cid(i), crate::mindmap::svg(&root, &opts.style).into_bytes()));
+        last = b.range.end;
+    }
+    out.push_str(md.get(last..).unwrap_or(""));
+    (out, diagrams)
 }
 
 /// `cid` de la imagen local `i`.
@@ -310,6 +356,8 @@ enum Frame {
 /// Convierte la nota en HTML. Nunca falla (Markdown no tiene errores); la salida aún debe pasar
 /// por el saneador, cosa que hace [`crate::render`].
 pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
+    let (md, diagrams) = with_diagrams(md, opts);
+    let md = md.as_str();
     let events: Vec<Event<'_>> = Parser::new_ext(md, parser_options()).collect();
     let mut out: Vec<Event<'_>> = Vec::with_capacity(events.len());
     let mut stack: Vec<Frame> = Vec::new();
@@ -370,7 +418,16 @@ pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
                         }
                     },
                     Tag::Image { dest_url, title, link_type, id } => {
-                        let src: CowStr<'_> = image_src(&dest_url, &mut images).into();
+                        let src: CowStr<'_> = match dest_url.strip_prefix(DIAGRAM_SCHEME) {
+                            Some(n) => n
+                                .parse::<usize>()
+                                .ok()
+                                .filter(|n| *n < diagrams.len())
+                                .map(|n| format!("cid:{}", diagram_cid(n)))
+                                .unwrap_or_default()
+                                .into(),
+                            None => image_src(&dest_url, &mut images).into(),
+                        };
                         out.push(Event::Start(Tag::Image { dest_url: src, title, link_type, id }));
                         stack.push(Frame::Kept);
                     }
@@ -451,7 +508,7 @@ pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
     html.push_str("</style></head><body>");
     html.push_str(&body);
     html.push_str("</body></html>");
-    NoteHtml { html, images, deep_links, tasks }
+    NoteHtml { html, images, deep_links, tasks, diagrams }
 }
 
 fn is_math(lang: &str) -> bool {
@@ -492,8 +549,19 @@ fn image_src(dest: &str, images: &mut Vec<String>) -> String {
 /// Marca o desmarca la casilla `n` (en el orden de [`to_html`]) y devuelve el Markdown nuevo; solo
 /// cambia el carácter entre corchetes. `None` si no existe.
 pub fn toggle_task(md: &str, n: usize) -> Option<String> {
+    // Las casillas de un mapa mental en vista `map` no se ven: no cuentan.
+    let hidden: Vec<std::ops::Range<usize>> = crate::mindmap::find(md)
+        .into_iter()
+        .filter(|b| b.view == crate::mindmap::View::MapOnly)
+        .map(|b| b.range)
+        .collect();
     let mut seen = 0usize;
     for (ev, range) in Parser::new_ext(md, parser_options()).into_offset_iter() {
+        if let Event::TaskListMarker(_) = ev
+            && hidden.iter().any(|h| h.contains(&range.start))
+        {
+            continue;
+        }
         if let Event::TaskListMarker(done) = ev {
             if seen == n {
                 let slice = md.get(range.clone())?;
@@ -526,6 +594,7 @@ mod tests {
             md,
             &NoteOptions {
                 mermaid_label: "Diagrama Mermaid".into(),
+                mindmap_label: "Mapa mental".into(),
                 math_label: "Fórmula".into(),
                 ..Default::default()
             },
@@ -625,6 +694,29 @@ mod tests {
         assert!(h.html.contains("graph TD; A--&gt;B"));
         assert!(h.html.contains("<code class=\"math\">e=mc^2</code>"));
         assert!(h.html.contains("Fórmula"));
+    }
+
+    #[test]
+    fn mindmaps_become_diagrams() {
+        // UX-12: el mapa de la nota del dueño (vista `map`: sin la lista).
+        let md = "Texto\n\n> [!MINDMAP|map] Idea central\n> - Analisis\n> - [ ] Diseño\n\n- [ ] fuera\n";
+        let h = conv(md);
+        assert_eq!(h.diagrams.len(), 1);
+        assert_eq!(h.diagrams[0].0, diagram_cid(0));
+        assert!(String::from_utf8_lossy(&h.diagrams[0].1).contains("Idea central"));
+        assert!(h.html.contains("cid:note-diagram-0@iuredesk"), "{}", h.html);
+        assert!(!h.html.contains("[!MINDMAP") && !h.html.contains("Analisis"), "{}", h.html);
+        // La casilla escondida en el mapa no cuenta: la 0 es la de fuera.
+        assert_eq!(h.tasks, 1);
+        assert_eq!(toggle_task(md, 0).unwrap(), md.replace("- [ ] fuera", "- [x] fuera"));
+        // Con lista: la lista se ve debajo del mapa y sus casillas cuentan en orden.
+        let md = "> [!MINDMAP] Centro\n> - [ ] uno\n\n- [ ] dos\n";
+        let h = conv(md);
+        assert!(h.html.contains("uno") && h.html.contains("cid:note-diagram-0@iuredesk"));
+        assert_eq!(h.tasks, 2);
+        assert_eq!(toggle_task(md, 0).unwrap(), md.replace("[ ] uno", "[x] uno"));
+        // Un `iuredesk-diagram:` escrito a mano que no existe no apunta a nada.
+        assert!(!conv("![x](iuredesk-diagram:7)").html.contains("cid:note-diagram"));
     }
 
     #[test]

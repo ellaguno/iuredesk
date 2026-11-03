@@ -25,6 +25,7 @@
 mod engine;
 mod fonts;
 pub mod markdown;
+pub mod mindmap;
 mod net;
 pub mod print;
 pub mod sanitize;

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
-use egui::{Key, Modifiers, vec2};
+use egui::vec2;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use iuredesk_accounts::MemoryStore;
@@ -46,7 +46,28 @@ fn app(dir: &std::path::Path) -> DeskApp {
     s.module = Module::Notes;
     let mut app = DeskApp::new(s, Options { system_fonts: false, no_theme_watch: true, ..Default::default() });
     app.dismiss_reminders();
+    // UX-12: Notas solo con IureEditor; lo que se abre queda anotado, no se lanza nada.
+    app.set_suite(
+        iuredesk_engine::iuredesk_integrations::Suite::empty()
+            .with_app(iuredesk_engine::iuredesk_integrations::SisterApp::Editor, "/opt/iureditor/iureditor")
+            .with_opener(Arc::new(Recorder::default())),
+    );
     app
+}
+
+/// Anota lo que se abriría.
+#[derive(Default)]
+struct Recorder(std::sync::Mutex<Vec<String>>);
+
+impl iuredesk_engine::iuredesk_integrations::Opener for Recorder {
+    fn open_url(&self, url: &str) -> std::io::Result<()> {
+        self.0.lock().unwrap().push(url.to_string());
+        Ok(())
+    }
+    fn launch(&self, program: &std::path::Path, args: &[String]) -> std::io::Result<()> {
+        self.0.lock().unwrap().push(format!("{} {}", program.display(), args.join(" ")));
+        Ok(())
+    }
 }
 
 fn harness(app: DeskApp) -> Harness<'static, DeskApp> {
@@ -86,32 +107,72 @@ fn body(h: &Harness<'_, DeskApp>) -> String {
     s.notes().into_iter().find(|n| n.id == id).unwrap().body
 }
 
-/// Una nota con texto se abre en la vista; Ctrl+Shift+E y «Editar»/«Vista» alternan.
+/// UX-12: la nota solo se ve (sin editor ligero); se escribe en IureEditor.
 #[test]
-fn preview_is_default_and_toggles() {
+fn notes_are_view_only() {
     let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(app(dir.path()));
     settle(&mut h);
-    assert!(h.state().note_preview_on(), "vista por defecto con texto");
-    assert!(h.query_by_label("Texto de la nota").is_none(), "sin editor en la vista");
+    assert!(h.query_by_label("Texto de la nota").is_none(), "sin editor ligero");
+    assert!(h.query_by_label("Vista").is_none() && h.query_by_label("Editar").is_none(), "sin conmutador");
+    assert!(h.query_by_label("Editar en IureEditor").is_some());
     // El render (imagen) lleva el texto como nombre accesible.
     assert!(h.query_all_by_label_contains("Llamar al notario").next().is_some());
-    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::E);
+    assert!(iuredesk_engine::command::find("notes.toggle_preview").is_none(), "el comando ya no existe");
+}
+
+/// UX-12: «Nueva nota» la crea con título y la abre en IureEditor (donde se escribe).
+#[test]
+fn new_note_opens_in_iureditor() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let notes = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    let rec = Arc::new(Recorder::default());
+    a.set_suite(
+        iuredesk_engine::iuredesk_integrations::Suite::empty()
+            .with_app(iuredesk_engine::iuredesk_integrations::SisterApp::Editor, "/opt/iureditor/iureditor")
+            .with_opener(rec.clone()),
+    );
+    a.session.notes_fs_for_tests(notes.path().to_path_buf(), Duration::from_millis(30));
+    assert!(a.session.notes_fs_flush(Duration::from_secs(10)));
+    let before = a.session.notes().len();
+    let mut h = harness(a);
     settle(&mut h);
-    assert!(!h.state().note_preview_on());
-    assert!(h.query_by_label("Texto de la nota").is_some(), "Ctrl+Shift+E abre el editor");
-    h.get_by_label("Vista").click();
+    h.get_by_label("Nueva nota").click();
     settle(&mut h);
-    assert!(h.state().note_preview_on());
-    h.get_by_label("Editar").click();
+    let start = Instant::now();
+    while rec.0.lock().unwrap().is_empty() {
+        assert!(start.elapsed() < Duration::from_secs(15), "no se abrió IureEditor");
+        h.run_steps(1);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let s = &h.state().session;
+    assert_eq!(s.notes().len(), before + 1);
+    let id = s.note_focus().unwrap();
+    let n = s.notes().into_iter().find(|n| n.id == id).unwrap();
+    assert!(n.title.starts_with("Nota "), "{}", n.title);
+    let opened = rec.0.lock().unwrap().join("\n");
+    assert!(opened.contains(".md"), "abre su archivo: {opened}");
+}
+
+/// UX-12: sin IureEditor no hay Notas: ni en el riel ni por comando, y se sale de ellas.
+#[test]
+fn without_iureditor_notes_disappear() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    a.set_suite(iuredesk_engine::iuredesk_integrations::Suite::empty());
+    let mut h = harness(a);
     settle(&mut h);
-    assert!(!h.state().note_preview_on());
-    // Por id, como desde la paleta o MCP.
+    assert_eq!(h.state().session.module, Module::Today, "salió de Notas");
+    assert!(h.query_by_label("Notas").is_none(), "sin botón en el riel");
     let ctx = h.ctx.clone();
-    h.state_mut().run(&ctx, "notes.toggle_preview");
+    h.state_mut().run(&ctx, "nav.notes");
     settle(&mut h);
-    assert!(h.state().note_preview_on());
+    assert_eq!(h.state().session.module, Module::Today);
+    assert!(h.query_all_by_label_contains("instálalo").next().is_some(), "dice por qué");
 }
 
 /// Marcar una casilla en la vista reescribe el Markdown y se deshace.
@@ -161,6 +222,5 @@ fn preview_follows_the_file() {
         std::thread::sleep(Duration::from_millis(40));
     }
     settle(&mut h);
-    assert!(h.state().note_preview_on());
     assert!(h.query_all_by_label_contains("Desde IureEditor").next().is_some(), "la vista muestra lo nuevo");
 }

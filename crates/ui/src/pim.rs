@@ -20,8 +20,6 @@ pub struct PimState {
     contact_cols: Vec<Column>,
     pub(crate) note_search: String,
     pub(crate) note_edit: Option<NoteEdit>,
-    pub(crate) note_preview: bool,
-    note_focus_editor: bool,
     pub(crate) task_list: Option<TaskListId>,
     show_done: bool,
     /// F7.1: tarea nueva que se está escribiendo.
@@ -404,9 +402,6 @@ impl NoteEdit {
     }
 }
 
-/// Espera tras la última tecla antes del guardado automático.
-const NOTE_AUTOSAVE_SECS: f64 = 0.7;
-
 /// Guarda la nota abierta si tiene cambios (al cambiar de nota o de módulo, o al cumplirse la
 /// espera).
 pub(crate) fn flush_note(app: &mut DeskApp) {
@@ -584,10 +579,6 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         flush_note(app);
         app.session.set_note_focus(Some(id));
         app.pim.note_edit = notes.iter().find(|n| n.id == id).map(NoteEdit::of);
-        // Nota nueva (vacía): se escribe enseguida.
-        app.pim.note_focus_editor = notes.iter().any(|n| n.id == id && n.title.is_empty() && n.body.is_empty());
-        // UX-8: con texto se abre en la vista previa; vacía, en el editor.
-        app.pim.note_preview = notes.iter().any(|n| n.id == id && !n.body.trim().is_empty());
     }
     if focus.is_none() && pick_note.is_none() {
         flush_note(app);
@@ -622,55 +613,25 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             return;
         };
         let mut act: Option<&'static str> = None;
-        let mut fire_toggle = false;
         let mut preview_act = None;
         ui.set_max_width(820.0);
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            // UX-8: Vista (render nativo) / Editar (editor ligero); Ctrl+Shift+E alterna.
-            let preview = app.pim.note_preview;
-            let sc = iuredesk_engine::command::shortcut("notes.toggle_preview", app.session.scheme())
-                .map(|k| k.label(cfg!(target_os = "macos")))
-                .unwrap_or_default();
-            let view = ui
-                .selectable_label(preview, pick("View", "Vista"))
-                .on_hover_text(format!("{} ({sc})", pick("See the note formatted", "Ver la nota con formato")));
-            if view.clicked() && !preview {
-                fire_toggle = true;
+            // UX-12: la nota se ve aquí y se escribe en IureEditor.
+            if let Some(u) = updated {
+                let state = format!("{} {}", pick("Saved", "Guardada"), iuredesk_engine::time::list_date(u, now, zone));
+                ui.label(RichText::new(state).color(c.text_muted).size(theme::density(ui.ctx()).small_size()));
             }
-            let ed = ui
-                .selectable_label(!preview, pick("Edit", "Editar"))
-                .on_hover_text(format!("{} ({sc})", pick("Edit the Markdown text", "Editar el texto Markdown")));
-            if ed.clicked() && preview {
-                fire_toggle = true;
-            }
-            ui.add_space(8.0);
-            let state = match (edit.dirty_at.is_some(), updated) {
-                (true, _) => pick("Saving…", "Guardando…").to_string(),
-                (false, Some(u)) => {
-                    format!("{} {}", pick("Saved", "Guardada"), iuredesk_engine::time::list_date(u, now, zone))
-                }
-                (false, None) => String::new(),
-            };
-            ui.label(RichText::new(state).color(c.text_muted).size(theme::density(ui.ctx()).small_size()));
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                 if icons::icon_button(ui, Icon::Trash, pick("Delete note", "Eliminar nota"), true).clicked() {
                     act = Some("notes.delete");
                 }
-                // UX-6: la forma principal de editar una nota larga.
-                let label = pick("Edit in IureEditor", "Editar en IureEditor");
-                let tip = if editor_installed {
-                    pick(
+                let r = iurefficient_ui::primary_button(ui, pick("Edit in IureEditor", "Editar en IureEditor"))
+                    .on_hover_text(pick(
                         "Opens the note's Markdown file in IureEditor. What you save there comes back here.",
                         "Abre el archivo Markdown de la nota en IureEditor. Lo que guardes allá vuelve aquí.",
-                    )
-                } else {
-                    pick(
-                        "IureEditor is not installed: click to see how to get it. You can keep writing here.",
-                        "IureEditor no está instalado: pulsa para ver cómo obtenerlo. Puedes seguir escribiendo aquí.",
-                    )
-                };
-                if ui.button(label).on_hover_text(tip).clicked() {
+                    ));
+                if r.clicked() {
                     act = Some("notes.open_editor");
                 }
             });
@@ -708,62 +669,39 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         ui.add_space(6.0);
         hairline(ui);
         ui.add_space(8.0);
-        let mut changed = false;
-        let title = ui.add(
-            egui::TextEdit::singleline(&mut edit.title)
-                .font(theme::bold_font(ui.ctx(), 24.0))
-                .hint_text(pick("Title", "Título"))
-                .frame(egui::Frame::NONE)
-                .desired_width(f32::INFINITY),
-        );
-        crate::widgets::text_label(&title, pick("Note title", "Título de la nota"));
-        changed |= title.changed();
+        let shown_title = if edit.title.trim().is_empty() {
+            pick("Untitled note", "Nota sin título").to_string()
+        } else {
+            edit.title.clone()
+        };
+        let t = ui.label(RichText::new(&shown_title).font(theme::bold_font(ui.ctx(), 24.0)).color(c.text));
+        crate::widgets::named(&t, egui::Role::Label, &shown_title);
         ui.add_space(8.0);
-        if app.pim.note_preview {
+        if edit.body.trim().is_empty() {
+            ui.add_space(24.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new(pick(
+                        "This note is empty. Write it in IureEditor: what you save there shows up here.",
+                        "Esta nota está vacía. Escríbela en IureEditor: lo que guardes allá aparece aquí.",
+                    ))
+                    .color(c.text_muted),
+                );
+                ui.add_space(8.0);
+                if ui.button(pick("Write in IureEditor", "Escribir en IureEditor")).clicked() {
+                    act = Some("notes.open_editor");
+                }
+            });
+        } else {
             let (nid, body) = (edit.id, edit.body.clone());
             egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-preview").show(ui, |ui| {
                 preview_act = crate::note_preview::show(app, ui, nid, &body);
             });
-        } else {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-body").show(ui, |ui| {
-                let body = ui.add(
-                    egui::TextEdit::multiline(&mut edit.body)
-                        .hint_text(pick(
-                            "Write in Markdown: # heading, - list, - [ ] checkbox, **bold**…",
-                            "Escribe en Markdown: # título, - lista, - [ ] casilla, **negrita**…",
-                        ))
-                        .font(theme::body_font(ui.ctx()))
-                        .frame(egui::Frame::NONE)
-                        .lock_focus(true)
-                        .desired_rows(24)
-                        .desired_width(f32::INFINITY),
-                );
-                crate::widgets::text_label(&body, pick("Note text", "Texto de la nota"));
-                if app.pim.note_focus_editor {
-                    app.pim.note_focus_editor = false;
-                    title.request_focus();
-                }
-                changed |= body.changed();
-            });
-        }
-        let t = ui.input(|i| i.time);
-        if changed && let Some(e) = app.pim.note_edit.as_mut() {
-            e.dirty_at = Some(t);
-        }
-        if let Some(at) = app.pim.note_edit.as_ref().and_then(|e| e.dirty_at) {
-            if t - at >= NOTE_AUTOSAVE_SECS {
-                flush_note(app);
-            } else {
-                ctx.request_repaint_after(std::time::Duration::from_secs_f64(NOTE_AUTOSAVE_SECS));
-            }
         }
         if let Some(a) = preview_act
             && let Some(id) = app.pim.note_edit.as_ref().map(|e| e.id)
         {
             crate::note_preview::handle(app, id, a);
-        }
-        if fire_toggle {
-            app.run(&ctx, "notes.toggle_preview");
         }
         if let Some(id) = act {
             flush_note(app);
@@ -772,14 +710,29 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
     });
 }
 
-/// UX-8: `notes.toggle_preview`. Al pasar a la vista se guarda lo escrito (la vista muestra lo
-/// mismo que el archivo).
-pub(crate) fn toggle_note_preview(app: &mut DeskApp) {
-    if app.pim.note_edit.is_none() {
+/// UX-12: «Nueva nota» desde la interfaz: se crea con un título (para que tenga su archivo) y se
+/// abre en IureEditor, donde se escribe. Con deshacer (el de la creación).
+pub(crate) fn new_note_in_editor(app: &mut DeskApp, ctx: &egui::Context) {
+    flush_note(app);
+    match app.session.run("notes.new") {
+        Ok(out) => app.outcome(ctx, out),
+        Err(e) => {
+            app.notice(iuredesk_engine::Notice::error(e.text()));
+            return;
+        }
+    }
+    let Some(id) = app.session.note_focus() else { return };
+    let title = format!(
+        "{} {}",
+        pick("Note", "Nota"),
+        iuredesk_engine::time::list_date(app.session.now(), app.session.now(), app.session.zone())
+    );
+    if let Err(e) = app.session.save_note(id, &title, "") {
+        app.notice(iuredesk_engine::Notice::error(e.text()));
         return;
     }
-    flush_note(app);
-    app.pim.note_preview = !app.pim.note_preview;
+    app.pim.note_edit = app.session.notes().into_iter().find(|n| n.id == id).as_ref().map(NoteEdit::of);
+    open_note_in_editor(app);
 }
 
 // ---------------------------------------------------------------------------------------------

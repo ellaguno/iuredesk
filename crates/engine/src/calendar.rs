@@ -8,6 +8,7 @@
 use chrono::{DateTime, Datelike, Duration, Months, NaiveDate, Utc, Weekday};
 use iuredesk_model::{CalendarId, Event, EventId, EventStatus, Transparency};
 
+pub mod description;
 pub mod draft;
 pub mod drag;
 pub mod invite;
