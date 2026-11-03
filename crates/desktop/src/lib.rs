@@ -6,6 +6,7 @@
 //!   `iuredesk-macos-events`).
 //! - [`autostart`]: «Abrir IureDesk al iniciar sesión» (Linux: `~/.config/autostart`; Windows:
 //!   `HKCU\…\Run`; macOS: `~/Library/LaunchAgents`).
+//! - [`launch`]: abrir enlaces y programas sin el entorno del AppImage.
 //! - [`memory`]: memoria del proceso en Windows y macOS (en Linux la lee la UI de `/proc`).
 //!
 //! Todo con las bibliotecas del SO por enlaces en Rust (sin C ni `unsafe` propio; el de macOS
@@ -21,6 +22,7 @@
 )]
 
 pub mod autostart;
+pub mod launch;
 pub mod memory;
 pub mod notify;
 

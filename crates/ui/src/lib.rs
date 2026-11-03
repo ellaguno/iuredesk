@@ -87,5 +87,5 @@ pub fn open_url(href: &str) -> bool {
     if captured.is_some() {
         return true;
     }
-    open::that_detached(h).is_ok()
+    iuredesk_desktop::launch::open_detached(h).is_ok()
 }

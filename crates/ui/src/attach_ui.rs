@@ -442,7 +442,7 @@ fn launch(path: &Path, how: How) -> bool {
     match how {
         How::OpenWith => open_with(path),
         How::Reveal => reveal(path),
-        _ => open::that_detached(path).is_ok(),
+        _ => iuredesk_desktop::launch::open_detached(path).is_ok(),
     }
 }
 
@@ -519,7 +519,7 @@ fn reveal(path: &Path) -> bool {
                 .is_ok()
             });
             if !shown && let Some(dir) = p.parent() {
-                let _ = open::that_detached(dir);
+                let _ = iuredesk_desktop::launch::open_detached(dir);
             }
         });
         true
@@ -536,7 +536,7 @@ fn reveal(path: &Path) -> bool {
     }
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
-        path.parent().is_some_and(|d| open::that_detached(d).is_ok())
+        path.parent().is_some_and(|d| iuredesk_desktop::launch::open_detached(d).is_ok())
     }
 }
 

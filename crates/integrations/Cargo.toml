@@ -14,7 +14,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 dirs = { workspace = true }
 url = { workspace = true }
-open = { workspace = true }
+iuredesk-desktop = { workspace = true }
 # El servidor MCP falso de las pruebas usa el `mcp_server` de connect (devuelve `anyhow::Error`).
 anyhow = { workspace = true }
 

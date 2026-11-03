@@ -124,6 +124,8 @@ impl McpClient {
     pub fn spawn(program: &Path, args: &[&str], opts: &McpOptions) -> Result<Self> {
         let mut cmd = Command::new(program);
         cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        // Las apps hermanas no deben creerse dentro del AppImage de IureDesk.
+        iuredesk_desktop::launch::clean_env(&mut cmd);
         for (k, v) in &opts.env {
             cmd.env(k, v);
         }

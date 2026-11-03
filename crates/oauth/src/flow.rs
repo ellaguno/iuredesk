@@ -106,7 +106,7 @@ impl PendingLogin {
 
     /// Abre la URL en el navegador del sistema sin esperar a que se cierre.
     pub fn open_browser(&self) -> Result<(), Error> {
-        open::that_detached(&self.authorize_url).map_err(|e| Error::Browser(e.to_string()))
+        iuredesk_desktop::launch::open_detached(&self.authorize_url).map_err(|e| Error::Browser(e.to_string()))
     }
 
     /// Espera la redirección del navegador y canjea el código por tokens.

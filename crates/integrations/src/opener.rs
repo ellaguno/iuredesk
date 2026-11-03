@@ -11,26 +11,29 @@ pub trait Opener: Send + Sync {
     fn launch(&self, program: &Path, args: &[String]) -> std::io::Result<()>;
 }
 
-/// El del sistema: `open` (crate en Rust puro) para enlaces; `Command` para lanzar.
+/// El del sistema: `open` (crate en Rust puro) para enlaces; `Command` para lanzar. Los dos sin el
+/// entorno del AppImage de IureDesk (`iuredesk_desktop::launch`): IureEditor lo heredaba y
+/// registraba su `iureditor://` apuntando a nuestro AppImage.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemOpener;
 
 impl Opener for SystemOpener {
     fn open_url(&self, url: &str) -> std::io::Result<()> {
-        open::that_detached(url)
+        iuredesk_desktop::launch::open_detached(url)
     }
 
     fn launch(&self, program: &Path, args: &[String]) -> std::io::Result<()> {
         let is_bundle = program.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"));
         if cfg!(target_os = "macos") && is_bundle {
             let mut c = Command::new("open");
+            iuredesk_desktop::launch::clean_env(&mut c);
             c.arg("-a").arg(program);
             if !args.is_empty() {
                 c.arg("--args").args(args);
             }
             c.spawn().map(drop)
         } else {
-            Command::new(program).args(args).spawn().map(drop)
+            iuredesk_desktop::launch::spawn_program(program, args)
         }
     }
 }

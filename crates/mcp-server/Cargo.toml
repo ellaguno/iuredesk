@@ -21,7 +21,7 @@ chrono-tz = { workspace = true }
 mail-parser = { workspace = true }
 getrandom = { workspace = true }
 dirs = { workspace = true }
-open = { workspace = true }
+iuredesk-desktop = { workspace = true }
 anyhow = { workspace = true }
 
 [dev-dependencies]

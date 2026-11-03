@@ -59,7 +59,7 @@ pub fn register_mcp_agents(open_vscode: bool) -> Registration {
         && let Ok(link) = agents::vscode_install_url(MCP_KEY)
     {
         if open_vscode {
-            r.vscode_opened = open::that_detached(&link).is_ok();
+            r.vscode_opened = iuredesk_desktop::launch::open_detached(&link).is_ok();
         }
         r.vscode_link = Some(link);
     }

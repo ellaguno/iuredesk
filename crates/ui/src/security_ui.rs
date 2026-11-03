@@ -325,7 +325,7 @@ fn print_pdf(path: &std::path::Path) -> Notice {
             return Notice::info("Sent to the printer.", "Enviado a la impresora.");
         }
     }
-    match open::that_detached(path) {
+    match iuredesk_desktop::launch::open_detached(path) {
         Ok(()) => Notice::info(
             "The PDF opened in your viewer: print it from there.",
             "El PDF se abrió en tu visor: imprímelo desde ahí.",

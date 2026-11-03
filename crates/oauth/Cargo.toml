@@ -22,7 +22,7 @@ sha2 = { workspace = true }
 getrandom = { workspace = true }
 url = { workspace = true }
 # Abre el navegador del sistema lanzando `xdg-open` / `open` / `start` (Rust puro, sin C).
-open = { workspace = true }
+iuredesk-desktop = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "net", "io-util", "sync", "signal"] }
