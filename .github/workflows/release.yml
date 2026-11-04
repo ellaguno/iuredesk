@@ -128,6 +128,39 @@ jobs:
           else
             cargo xtask package ${{ matrix.os }} --target ${{ matrix.target }}
           fi
+      # El .msi de verdad: se instala en la máquina, se revisan los archivos, los accesos directos, el
+      # protocolo, «Aplicaciones predeterminadas» y la clave de la suite; luego se desinstala y no debe
+      # quedar nada.
+      - name: Probar el instalador .msi
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem dist\*-windows-x64.msi | Select-Object -First 1
+          if (-not $msi) { throw 'no hay .msi en dist' }
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$($msi.FullName)`" /qn /l*v instalar.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content instalar.log -Tail 100; throw "msiexec /i: $($p.ExitCode)" }
+          $dir = Join-Path $env:ProgramFiles 'IureDesk'
+          foreach ($f in 'iuredesk.exe', 'iuredesk.ico', 'THIRD-PARTY-NOTICES.txt') {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "falta $f" }
+          }
+          $lnk = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\IureDesk.lnk'
+          if (-not (Test-Path $lnk)) { throw 'falta el acceso directo del menú Inicio' }
+          $esc = Join-Path $env:PUBLIC 'Desktop\IureDesk.lnk'
+          if (-not (Test-Path $esc)) { throw 'falta el acceso directo del escritorio' }
+          $cmd = (Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\iuredesk\shell\open\command').'(default)'
+          if ($cmd -notlike "*iuredesk.exe*%1*") { throw "protocolo iuredesk: mal registrado ($cmd)" }
+          $reg = (Get-ItemProperty 'HKLM:\Software\RegisteredApplications').IureDesk
+          if (-not $reg) { throw 'falta en «Aplicaciones predeterminadas»' }
+          $suite = Get-ItemProperty 'HKLM:\Software\Iurefficient\IureDesk' -ErrorAction SilentlyContinue
+          if (-not $suite.Version -or -not $suite.ProductCode -or -not $suite.InstallDir) { throw 'falta la clave de la suite (versión, carpeta y código)' }
+          Write-Host "suite: $($suite.Version) en $($suite.InstallDir) ($($suite.ProductCode))"
+          $p = Start-Process msiexec.exe -ArgumentList "/x `"$($msi.FullName)`" /qn /l*v desinstalar.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content desinstalar.log -Tail 100; throw "msiexec /x: $($p.ExitCode)" }
+          if (Test-Path (Join-Path $dir 'iuredesk.exe')) { throw 'la desinstalación dejó el programa' }
+          if ((Test-Path $lnk) -or (Test-Path $esc)) { throw 'la desinstalación dejó un acceso directo' }
+          if (Test-Path 'Registry::HKEY_CLASSES_ROOT\iuredesk\shell\open\command') { throw 'la desinstalación dejó el protocolo' }
+          if ((Get-ItemProperty 'HKLM:\Software\Iurefficient\IureDesk' -ErrorAction SilentlyContinue).Version) { throw 'la desinstalación dejó la clave de la suite' }
+          Write-Host 'instalador .msi: instalar y desinstalar — ok'
       - name: Firmas minisign (las verifica iureapps)
         shell: bash
         env:

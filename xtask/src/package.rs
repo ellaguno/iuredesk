@@ -9,12 +9,13 @@
 //! - windows: instalador NSIS `.exe` por usuario (sin UAC) que registra el protocolo `iuredesk:`, el
 //!   AUMID de los avisos y `mailto:`, `.eml`, `.ics` y `.vcf` en «Aplicaciones predeterminadas»
 //!   (`packaging/windows/default-apps.nsh`); accesos directos con el AUMID (plantilla de
-//!   cargo-packager).
+//!   cargo-packager). Además un `.msi` por máquina (`Archivos de programa`, para despliegues con
+//!   GPO/Intune) con la misma integración, armado en Rust puro (`msi.rs`, sin WiX).
 //! - macos: `.app` (claves de `packaging/macos/Info.plist`: esquemas `iuredesk` y `mailto`, tipos de
 //!   documento) y `.dmg`.
 //!
 //! Los instaladores se renombran al esquema de iureapps, el lanzador de la suite:
-//! `IureDesk_<versión>-linux-x64.AppImage`, `-linux-x64.deb`, `-windows-x64.exe`,
+//! `IureDesk_<versión>-linux-x64.AppImage`, `-linux-x64.deb`, `-windows-x64.exe`, `-windows-x64.msi`,
 //! `-macos-arm64.app.tar.gz`/`-macos-x64.app.tar.gz` (el `.app` en tar.gz) y `-macos-<arq>.dmg`.
 //! `cargo xtask sign` les agrega la firma minisign `.sig` que verifica iureapps.
 //!
@@ -151,6 +152,9 @@ pub fn package(raw: Vec<String>) -> Res {
 
     run_packager(&config_path, &target)?;
     rename_for_iureapps(args.os, &version, &target, &dist)?;
+    if args.os == Os::Windows {
+        write_msi(&version, &target, &stage, &dist)?;
+    }
     write_sums(&dist)
 }
 
@@ -207,6 +211,50 @@ fn rename_for_iureapps(os: Os, version: &str, target: &str, dist: &Path) -> Res 
         tar_app(&app, &dist.join(asset_name(version, &plat, ".app.tar.gz")))?;
     }
     Ok(())
+}
+
+/// `IureDesk_<versión>-windows-x64.msi` con el `.exe` compilado, su `.ico` y los documentos (lo
+/// mismo que copia el instalador NSIS).
+fn write_msi(version: &str, target: &str, stage: &Path, dist: &Path) -> Res {
+    let read = |path: PathBuf| std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()));
+    let ico = read(root().join("assets/icons/iuredesk.ico"))?;
+    let mut files = vec![
+        crate::msi::MsiFile {
+            name: "iuredesk.exe".into(),
+            bytes: read(root().join("target").join(target).join("dist/iuredesk.exe"))?,
+        },
+        crate::msi::MsiFile { name: "iuredesk.ico".into(), bytes: ico.clone() },
+    ];
+    for f in ["LICENSE.md", "NOTICE", "README.txt", "THIRD-PARTY-NOTICES.txt"] {
+        files.push(crate::msi::MsiFile { name: f.into(), bytes: read(stage.join(f))? });
+    }
+    let out = dist.join(asset_name(version, &platform(Os::Windows, target), ".msi"));
+    let bytes = crate::msi::build(version, IDENTIFIER, &files, &ico)?;
+    std::fs::write(&out, bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+    sign_windows_file(&out)
+}
+
+/// Firma de código del `.msi` con lo mismo que usa cargo-packager para el `.exe` (sin variables,
+/// sale sin firmar).
+fn sign_windows_file(file: &Path) -> Res {
+    let f = file.display().to_string();
+    let status = if let Some(cmd) = env("WINDOWS_SIGN_COMMAND") {
+        // `%1` = archivo, como en cargo-packager.
+        let line = cmd.replace("%1", &format!("\"{f}\""));
+        Command::new("cmd").args(["/C", &line]).status()
+    } else if let Some(thumb) = env("WINDOWS_CERTIFICATE_THUMBPRINT") {
+        let ts = env("WINDOWS_TIMESTAMP_URL").unwrap_or_else(|| "http://timestamp.digicert.com".into());
+        Command::new("signtool")
+            .args(["sign", "/sha1", &thumb, "/fd", "sha256", "/tr", &ts, "/td", "sha256", &f])
+            .status()
+    } else {
+        return Ok(());
+    };
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(format!("la firma de {f} falló ({s})")),
+        Err(e) => Err(format!("no pude firmar {f}: {e}")),
+    }
 }
 
 /// `IureDesk.app` → `.app.tar.gz` con la carpeta en la raíz, permisos y enlaces simbólicos tal cual.

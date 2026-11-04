@@ -121,6 +121,11 @@ url = "2"
 tokio-util = { version = "0.7", default-features = false }
 # xtask: paquetes de publicación
 sha2 = "0.10"
+# Instalador .msi de Windows en Rust puro (solo el xtask): base de datos (msi) y gabinete MSZIP (cab).
+msi = "0.11"
+cab = "0.6"
+uuid = "1"
+time = "0.3"
 flate2 = "1"
 tar = { version = "0.4", default-features = false }
 # xtask sign: firmas minisign (formato del actualizador de Tauri, lo verifica iureapps); Rust puro

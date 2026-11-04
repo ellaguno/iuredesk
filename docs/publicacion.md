@@ -12,6 +12,7 @@ Release normal (el «último»), que es lo que instala y actualiza
 | `cargo xtask dist [--tag vX.Y.Z]` | `iuredesk-<versión>-x86_64-linux.tar.gz` (binario, `LICENSE.md`, `NOTICE`, `README.txt`, `THIRD-PARTY-NOTICES.txt`) + `SHA256SUMS` |
 | `cargo xtask package linux` | lo anterior + `IureDesk_<versión>-linux-x64.deb` + `IureDesk_<versión>-linux-x64.AppImage` |
 | `cargo xtask package windows` | `IureDesk_<versión>-windows-x64.exe` (NSIS, por usuario, sin UAC, silencioso con `/S`) |
+| | `IureDesk_<versión>-windows-x64.msi` (Windows Installer por máquina en `Archivos de programa`, pide elevación; silencioso con `msiexec /i … /qn`, `DESKTOPSHORTCUT=0` omite el acceso del escritorio). Armado en Rust puro (`xtask/src/msi.rs`, crates `msi` + `cab`, sin WiX) con la misma integración que el `.exe`, en HKLM, y la clave `HKLM\Software\Iurefficient\IureDesk` (versión, carpeta, `ProductCode`) que lee iureapps. `release.yml` lo instala y desinstala en la máquina de Windows |
 | `cargo xtask package macos [--target x86_64-apple-darwin]` | `IureDesk.app` + `IureDesk_<versión>-macos-<arm64\|x64>.app.tar.gz` + `IureDesk_<versión>-macos-<arm64\|x64>.dmg` |
 | `cargo xtask sign <archivos…>` | `<archivo>.sig` (minisign; ver «Firmas para iureapps») |
 
@@ -215,6 +216,6 @@ Sin firma, SmartScreen avisará al instalar.
 - macOS: hacer la prueba manual de los Apple Events (ver «Integración con el escritorio»).
 - Probar los instaladores de Windows y macOS en equipos reales (avisos, «Aplicaciones
   predeterminadas», desinstalación).
-- Flatpak; `.msi` (WiX) si algún cliente lo exige; binario universal de macOS.
+- Flatpak; binario universal de macOS.
 - Autoactualización dentro de la app vía el módulo `releases` de connect (hoy la actualiza iureapps).
 - `.rpm` (cargo-packager no lo genera; haría falta otra herramienta).

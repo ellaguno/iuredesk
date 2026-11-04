@@ -31,6 +31,7 @@
 )]
 
 mod icons;
+mod msi;
 mod package;
 mod sign;
 mod unsafety;
