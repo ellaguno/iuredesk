@@ -31,6 +31,14 @@ pub struct State {
     /// BUG-DUP: un segundo usuario («bob», misma contraseña) cuya casa de calendarios lista,
     /// además del suyo, el calendario de Ana compartido con él.
     pub bob: bool,
+    /// Como Google: un alta se guarda en `{UID}.ics` (con `@` → `%40`) sin importar la ruta del
+    /// PUT, y se responde sin `ETag` ni `Location`.
+    pub google_paths: bool,
+}
+
+/// `UID` de un objeto iCalendar (primera línea `UID:`).
+pub fn uid_of(body: &str) -> Option<String> {
+    body.lines().find_map(|l| l.trim_end().strip_prefix("UID:")).map(str::to_string)
 }
 
 impl State {
@@ -236,6 +244,14 @@ fn handle(state: &Mutex<State>, req: Req) -> Resp {
             }
             None => Resp::new(404, ""),
         },
+        ("PUT", p) if st.google_paths && p.starts_with(CAL) && !st.items.contains_key(p) => {
+            let Some(uid) = uid_of(&req.body) else { return Resp::new(400, "") };
+            let canon = format!("{CAL}{}.ics", uid.replace('@', "%40"));
+            let existed = st.items.contains_key(&canon);
+            st.puts.push((canon.clone(), req.body.clone()));
+            st.change(&canon, Some(req.body.clone()));
+            Resp::new(if existed { 204 } else { 201 }, "")
+        }
         ("PUT", p) if coll_of(p).is_some() => {
             let current = st.items.get(p).map(|(e, _)| etag(*e));
             if let Some(m) = req.header("If-Match")

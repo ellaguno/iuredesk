@@ -16,7 +16,7 @@ use iuredesk_pim_sync::{
     ConflictResolution, DavAuth, OP_IMIP_REPLY, PimAccount, PimEvent, PimSource, PimSyncEngine, PimSyncHandle,
     PimSyncOptions, occurrences_between,
 };
-use iuredesk_store::{PimRef, Store};
+use iuredesk_store::{CollectionRef, PimRef, Store, SyncedItem};
 
 const SERIES: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Apple Inc.//macOS 15//EN\r\n\
 BEGIN:VTIMEZONE\r\nTZID:Europe/Madrid\r\nX-LIC-LOCATION:Europe/Madrid\r\nEND:VTIMEZONE\r\n\
@@ -337,4 +337,73 @@ async fn server_scheduling_skips_imip_and_bad_password_needs_reauth() {
     assert!(err.needs_reauth(), "{err}");
     let _ = drain(&mut e.events);
     h.shutdown().await;
+}
+
+/// BUG-DUP2: Google guarda un alta en `{UID}.ics` aunque el PUT pida otra ruta, sin `ETag` ni
+/// `Location`. El evento no debe aparecer dos veces (el nuestro y el que baja de esa ruta).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn google_rehomed_create_is_not_duplicated() {
+    let e = env(State { google_paths: true, ..Default::default() }).await;
+    e.handle.sync_now_wait("ana-icloud").await.unwrap();
+    let cal = e.store.calendars().unwrap()[0].id;
+    let start = Utc.with_ymd_and_hms(2026, 11, 4, 18, 0, 0).unwrap();
+    let id = e
+        .handle
+        .save_event(&Event {
+            calendar: cal,
+            uid: "alta-1@iuredesk".into(),
+            summary: "Plan y revisión".into(),
+            start: EventTime::DateTime { utc: start, tzid: Some("Europe/Madrid".into()) },
+            end: EventTime::DateTime { utc: start + chrono::Duration::hours(1), tzid: Some("Europe/Madrid".into()) },
+            ..Default::default()
+        })
+        .unwrap();
+    e.handle.sync_now_wait("ana-icloud").await.unwrap();
+    e.handle.sync_now_wait("ana-icloud").await.unwrap();
+    let canon = format!("{CAL}alta-1%40iuredesk.ics");
+    assert!(e.server.lock().unwrap().data(&canon).is_some());
+    let evs = e.store.events_in_calendar(cal).unwrap();
+    assert_eq!(evs.len(), 1, "{evs:#?}");
+    // Se conserva el id local y apunta a la ruta real (con su ETag).
+    assert_eq!(evs[0].id, id);
+    assert!(evs[0].remote_id.as_deref().unwrap().ends_with(&canon));
+    assert!(evs[0].etag.is_some());
+    let sync = e.store.collection_sync(CollectionRef::Calendar(cal)).unwrap();
+    assert_eq!(sync.items.len(), 1, "{:?}", sync.items.keys());
+
+    // Borrar en local borra en el servidor la ruta real.
+    e.handle.delete_event(id).unwrap();
+    e.handle.sync_now_wait("ana-icloud").await.unwrap();
+    assert!(e.server.lock().unwrap().data(&canon).is_none());
+    e.handle.shutdown().await;
+}
+
+/// BUG-DUP2: reparación de lo que ya quedó duplicado con la versión anterior (copia local sin
+/// `ETag` en la ruta del PUT + la del servidor ya conocida).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn existing_shadow_copy_is_repaired() {
+    let mut st = State::default();
+    st.change(&format!("{CAL}dup-1%40iuredesk.ics"), Some(INVITE.replace("inv-1", "dup-1@iuredesk")));
+    let e = env(st).await;
+    e.handle.sync_now_wait("ana-icloud").await.unwrap();
+    let cal = e.store.calendars().unwrap()[0].id;
+    let real = event_by_uid(&e.store, "dup-1@iuredesk");
+    // La copia que dejó la versión anterior.
+    let shadow_href = format!("{}/dup-1-iuredesk.ics", real.remote_id.as_deref().unwrap().rsplit_once('/').unwrap().0);
+    let mut shadow = real.clone();
+    shadow.id = iuredesk_model::EventId::UNASSIGNED;
+    shadow.remote_id = Some(shadow_href.clone());
+    shadow.etag = None;
+    let sid = e.store.put_event(&shadow).unwrap();
+    let cref = CollectionRef::Calendar(cal);
+    let mut sync = e.store.collection_sync(cref).unwrap();
+    sync.items.insert(shadow_href, SyncedItem { etag: None, refs: vec![PimRef::Event(sid)] });
+    e.store.put_collection_sync(cref, &sync).unwrap();
+    assert_eq!(e.store.events_in_calendar(cal).unwrap().len(), 2);
+
+    e.handle.sync_now_wait("ana-icloud").await.unwrap();
+    let evs = e.store.events_in_calendar(cal).unwrap();
+    assert_eq!(evs.iter().map(|x| x.id).collect::<Vec<_>>(), vec![real.id]);
+    assert_eq!(e.store.collection_sync(cref).unwrap().items.len(), 1);
+    e.handle.shutdown().await;
 }

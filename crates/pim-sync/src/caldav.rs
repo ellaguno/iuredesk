@@ -288,6 +288,7 @@ impl CalDav {
             }
             changed |= remove_href(ctx, &mut st, &pending, d.as_str())?;
         }
+        changed |= drop_shadows(ctx, &mut st, &pending)?;
         st.sync_token = outcome.state.sync_token;
         st.ctag = outcome.state.ctag;
         st.sync_unsupported = outcome.state.sync_unsupported;
@@ -327,7 +328,8 @@ impl CalDav {
             }
         };
         match self.client.put(&href, &body, D::KIND, cond).await {
-            Ok(res) => self.commit(ctx, cref, &local, &href, res.etag, body).await,
+            // `res.url` sigue el `Location` si el servidor guardó el objeto en otra ruta.
+            Ok(res) => self.commit(ctx, cref, &local, &res.url, res.etag, body).await,
             Err(iuredesk_dav::Error::PreconditionFailed) => self.resolve(ctx, cref, &href, base, local).await,
             Err(iuredesk_dav::Error::NotFound) if base.is_some() => {
                 // Lo borraron en el servidor mientras lo editábamos: gana el servidor.
@@ -370,6 +372,11 @@ impl CalDav {
         current.save(store)?;
         store.put_raw_object(r, body.as_bytes(), href.as_str(), etag.as_deref())?;
         let mut st = store.collection_sync(cref)?;
+        // Si quedó en otra ruta que la pedida, la ruta vieja ya no es suya.
+        for item in st.items.iter_mut().filter(|(h, _)| h.as_str() != href.as_str()).map(|(_, i)| i) {
+            item.refs.retain(|x| *x != r);
+        }
+        st.items.retain(|_, i| !i.refs.is_empty() || i.etag.is_some());
         let item = st.items.entry(href.to_string()).or_default();
         item.etag = etag;
         if !item.refs.contains(&r) {
@@ -407,7 +414,7 @@ impl CalDav {
                 match self.client.put(href, &body, D::KIND, cond).await {
                     Ok(put) => {
                         m.save(store)?;
-                        self.commit(ctx, cref, &m, href, put.etag, body).await?;
+                        self.commit(ctx, cref, &m, &put.url, put.etag, body).await?;
                         ctx.conflict(r, &m.summary(), ConflictResolution::Merged);
                         Ok(())
                     }
@@ -589,10 +596,19 @@ fn apply_resource(
 ) -> Result<bool> {
     let store = &ctx.store;
     let tz = ctx.opts.user_tz;
-    let old_refs = st.items.get(href).map(|i| i.refs.clone()).unwrap_or_default();
+    let mut old_refs = st.items.get(href).map(|i| i.refs.clone()).unwrap_or_default();
+    // Ruta nueva con el `UID` de un alta nuestra sin confirmar: es la misma (Google guarda el
+    // objeto en otra ruta que la del PUT); se adopta para no duplicarla.
+    let shadow = if old_refs.is_empty() { find_shadow(ctx, coll, st, href, data) } else { None };
+    if let Some((_, refs)) = &shadow {
+        old_refs.clone_from(refs);
+    }
     // Con cambios locales pendientes no se pisa nada (ni el ETag: sigue siendo la base del 412).
     if old_refs.iter().any(|r| pending.dirty.contains(r)) {
         return Ok(false);
+    }
+    if let Some((h, _)) = &shadow {
+        st.items.remove(h);
     }
     let mut refs: Vec<PimRef> = Vec::new();
     if let Some(book) = coll.book {
@@ -655,6 +671,81 @@ fn apply_resource(
     item.etag = etag.map(str::to_string);
     item.refs = refs;
     Ok(true)
+}
+
+/// `UID` de un elemento local.
+fn ref_uid(store: &Store, r: PimRef) -> Option<String> {
+    match r {
+        PimRef::Event(id) => store.get_event(id).ok().flatten().map(|e| e.uid),
+        PimRef::Task(id) => store.get_task(id).ok().flatten().map(|t| t.uid),
+        PimRef::Contact(id) => store.get_contact(id).ok().flatten().map(|c| c.uid),
+    }
+}
+
+/// Altas propias sin confirmar (sin `ETag`) de otras rutas: (ruta, elementos, `UID`s).
+fn unconfirmed(store: &Store, st: &CollectionSync, except: &str) -> Vec<(String, Vec<PimRef>, BTreeSet<String>)> {
+    st.items
+        .iter()
+        .filter(|(h, i)| i.etag.is_none() && !i.refs.is_empty() && h.as_str() != except)
+        .take(1_000)
+        .map(|(h, i)| (h.clone(), i.refs.clone(), i.refs.iter().filter_map(|r| ref_uid(store, *r)).collect()))
+        .collect()
+}
+
+/// `UID`s de un objeto descargado.
+fn resource_uids(ctx: &Ctx, coll: &Coll, data: &str) -> BTreeSet<String> {
+    if coll.book.is_some() {
+        let Ok(cards) = VCard::parse_all(data) else { return BTreeSet::new() };
+        return cards.iter().take(1).map(|c| vcard::contact_from_vcard(c).0.uid).collect();
+    }
+    let Ok(cal) = ICalendar::parse(data) else { return BTreeSet::new() };
+    let tz = ctx.opts.user_tz;
+    let mut out: BTreeSet<String> = ical::events_from_ics(&cal, tz).into_iter().map(|e| e.uid).collect();
+    out.extend(ical::tasks_from_ics(&cal, tz).into_iter().map(|t| t.uid));
+    out
+}
+
+/// Ruta y elementos de un alta sin confirmar con los mismos `UID` que `data`.
+fn find_shadow(ctx: &Ctx, coll: &Coll, st: &CollectionSync, href: &str, data: &str) -> Option<(String, Vec<PimRef>)> {
+    let cands = unconfirmed(&ctx.store, st, href);
+    if cands.is_empty() {
+        return None;
+    }
+    let uids = resource_uids(ctx, coll, data);
+    cands.into_iter().find(|(_, _, u)| !u.is_empty() && !u.is_disjoint(&uids)).map(|(h, r, _)| (h, r))
+}
+
+/// Reparación: altas sin confirmar cuyo `UID` ya está en otra ruta confirmada de la colección
+/// (RFC 4791 §5.3.2: un `UID` por colección) son copias; se borran.
+fn drop_shadows(ctx: &Ctx, st: &mut CollectionSync, pending: &Pending) -> Result<bool> {
+    let store = &ctx.store;
+    let cands = unconfirmed(store, st, "");
+    if cands.is_empty() {
+        return Ok(false);
+    }
+    let wanted: BTreeSet<&String> = cands.iter().flat_map(|(_, _, u)| u.iter()).collect();
+    let mut confirmed: BTreeSet<String> = BTreeSet::new();
+    for item in st.items.values().filter(|i| i.etag.is_some()) {
+        for r in &item.refs {
+            if let Some(u) = ref_uid(store, *r)
+                && wanted.contains(&u)
+            {
+                confirmed.insert(u);
+            }
+        }
+    }
+    let mut changed = false;
+    for (h, refs, uids) in cands {
+        if uids.is_empty() || !uids.is_subset(&confirmed) || refs.iter().any(|r| pending.dirty.contains(r)) {
+            continue;
+        }
+        for r in &refs {
+            delete_ref(store, *r)?;
+        }
+        st.items.remove(&h);
+        changed = true;
+    }
+    Ok(changed)
 }
 
 fn delete_ref(store: &Store, r: PimRef) -> Result<()> {
