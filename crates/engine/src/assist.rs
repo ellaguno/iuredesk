@@ -233,6 +233,9 @@ pub struct AssistPrefs {
     /// Generar las respuestas rápidas al abrir un mensaje (por omisión, solo bajo demanda).
     #[serde(default)]
     pub auto_replies: bool,
+    /// Ocultar el globo ✦ flotante (el panel sigue a mano con su atajo y el botón de la cabecera).
+    #[serde(default)]
+    pub hide_bubble: bool,
 }
 
 enum Msg {

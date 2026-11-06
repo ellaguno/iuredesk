@@ -245,6 +245,7 @@ pub(crate) fn show(app: &mut DeskApp, ui: &mut Ui, full: bool) {
         right.spacing_mut().item_spacing.x = 6.0;
         iure_account(app, &mut right);
         quick_menu(app, &mut right);
+        assistant_button(app, &mut right);
         let used = (inner.right() - right.min_rect().left()).max(0.0);
         ctx.data_mut(|d| d.insert_temp(right_width_id(), used));
     });
@@ -391,6 +392,18 @@ fn commands_button(app: &mut DeskApp, ui: &mut Ui) {
     a11y::button(&r, label);
     if r.on_hover_text(pick("Everything IureDesk can do", "Todo lo que IureDesk puede hacer")).clicked() {
         app.run(&ctx, "app.palette");
+    }
+}
+
+/// ✦: muestra u oculta el panel del asistente (`ai.panel`).
+fn assistant_button(app: &mut DeskApp, ui: &mut Ui) {
+    let ctx = ui.ctx().clone();
+    let keys = iuredesk_engine::command::shortcut("ai.panel", app.session.scheme())
+        .map(|k| format!(" ({})", k.label(cfg!(target_os = "macos"))))
+        .unwrap_or_default();
+    let label = format!("{}{keys}", pick("Assistant panel", "Panel del asistente"));
+    if icons::icon_button(ui, Icon::Sparkle, &label, true).clicked() {
+        app.run(&ctx, "ai.panel");
     }
 }
 

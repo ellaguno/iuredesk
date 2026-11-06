@@ -107,6 +107,8 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
                     } else {
                         header(app, ui, s, now, &mut acts);
                     }
+                    ui.add_space(14.0);
+                    crate::assistant::today_prompt(app, ui);
                     ui.add_space(18.0);
                     columns(app, ui, s, now, w, &mut acts);
                 },

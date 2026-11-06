@@ -104,7 +104,11 @@ fn today_renders_and_items_navigate() {
     assert_eq!(h.state().session.module, Module::Today);
     let day = h.state_mut().session.day_summary().unwrap();
     let m = day.needs_reply.first().unwrap().clone();
-    h.get_by_label(&format!("{} — {}", m.from, m.subject)).click();
+    // UX-14: la caja «Pregúntale a…» empuja el correo hacia abajo; se desplaza como el usuario.
+    let label = format!("{} — {}", m.from, m.subject);
+    h.get_by_label(&label).scroll_to_me();
+    settle(&mut h);
+    h.get_by_label(&label).click();
     settle(&mut h);
     assert_eq!(h.state().session.module, Module::Mail);
     assert_eq!(h.state().session.focused(), Some(m.id), "el mensaje queda abierto");

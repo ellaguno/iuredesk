@@ -301,6 +301,8 @@ impl DeskApp {
         }
         crate::header::show(self, ui, true);
         self.rail(ui);
+        // El panel del asistente encoge el módulo en vez de taparlo.
+        crate::assistant::side_panel(self, ui);
         // F7.1: lo escrito en una nota se guarda al salir de Notas.
         if self.session.module != Module::Notes {
             crate::pim::flush_note(self);
@@ -329,6 +331,7 @@ impl DeskApp {
         crate::iure::dialogs(self, &ctx);
         crate::iure::bell(self, &ctx);
         crate::assistant::frame(self, &ctx);
+        crate::assistant::bubble(self, &ctx);
         crate::suite_ui::frame(self, &ctx);
         crate::import_ui::frame(self, &ctx);
         crate::security_ui::frame(self, &ctx);

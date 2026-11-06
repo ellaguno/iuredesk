@@ -531,6 +531,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ai ia chat preguntar",
     ),
     c(
+        "ai.panel",
+        "Show / hide the assistant panel",
+        "Mostrar / ocultar el panel del asistente",
+        "sparkle",
+        Group::Assistant,
+        "ai ia chat panel lateral preguntar iurefficient",
+    ),
+    c(
         "app.import",
         "Import mail from Outlook, Thunderbird, Apple Mail…",
         "Importar correo de Outlook, Thunderbird, Apple Mail…",
@@ -569,6 +577,8 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
     let common = match id {
         "app.palette" => Some(Chord::cmd("K")),
         "ai.compose" => Some(Chord::cmd("J")),
+        // «A» de asistente; Ctrl+Mayús+I ya es el panel de contexto del correo.
+        "ai.panel" => Some(Chord::cmd_shift("A")),
         "nav.mail" => Some(Chord::cmd("Num1")),
         "nav.calendar" => Some(Chord::cmd("Num2")),
         "nav.contacts" => Some(Chord::cmd("Num3")),
@@ -706,6 +716,16 @@ mod tests {
             assert!(find(id).is_some(), "falta {id}");
         }
         assert_eq!(find("mail.move:12").map(|c| c.id), Some("mail.move"));
+    }
+
+    #[test]
+    fn assistant_panel_has_a_free_shortcut() {
+        for scheme in [ShortcutScheme::Outlook, ShortcutScheme::Gmail, ShortcutScheme::AppleMail] {
+            let k = shortcut("ai.panel", scheme);
+            assert_eq!(k, Some(Chord::cmd_shift("A")));
+            let users: Vec<_> = bindings(scheme).into_iter().filter(|(_, c)| Some(c) == k.as_ref()).collect();
+            assert_eq!(users.len(), 1, "{users:?}");
+        }
     }
 
     #[test]

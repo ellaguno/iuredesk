@@ -41,6 +41,12 @@ pub struct AiUi {
     pub tab: Tab,
     remember: bool,
     chat_input: String,
+    /// Panel lateral del chat (`ai.panel`), disponible en todos los módulos.
+    pub panel_open: bool,
+    /// Poner el foco en la caja del chat en el próximo cuadro.
+    focus_chat: bool,
+    /// Caja «Pregúntale…» de la pantalla Hoy.
+    today_input: String,
     minutes_title: String,
     minutes_text: String,
     doc_purpose: String,
@@ -77,6 +83,9 @@ impl AiUi {
             tab: Tab::Today,
             remember: false,
             chat_input: String::new(),
+            panel_open: false,
+            focus_chat: false,
+            today_input: String::new(),
             minutes_title: String::new(),
             minutes_text: String::new(),
             doc_purpose: String::new(),
@@ -178,6 +187,10 @@ pub fn command(app: &mut DeskApp, ctx: &Context, id: &str) {
         }
         "ai.minutes" => app.ai.tab = Tab::Minutes,
         "ai.chat" => app.ai.tab = Tab::Chat,
+        "ai.panel" => {
+            app.ai.panel_open = !app.ai.panel_open;
+            app.ai.focus_chat = app.ai.panel_open;
+        }
         "ai.document" => {
             let mut msgs: Vec<MessageId> = app.session.selection().to_vec();
             if msgs.is_empty()
@@ -1099,15 +1112,25 @@ fn triage_row(ui: &mut Ui, k: usize, r: &TriageRow) -> bool {
 }
 
 fn chat(app: &mut DeskApp, ui: &mut Ui) {
+    chat_lines(app, ui);
+    ui.add_space(6.0);
+    chat_input(app, ui, false);
+}
+
+/// La conversación: la misma en la página del módulo y en el panel lateral.
+fn chat_lines(app: &mut DeskApp, ui: &mut Ui) {
     let c = theme::colors(ui);
     let lines = app.ai.hub.chat().to_vec();
     if lines.is_empty() {
-        ui.label(
-            RichText::new(pick(
-                "Ask anything about your mail, agenda or a draft.",
-                "Pregunta lo que quieras sobre tu correo, tu agenda o un borrador.",
-            ))
-            .color(c.text_muted),
+        ui.add(
+            egui::Label::new(
+                RichText::new(pick(
+                    "Ask anything about your mail, agenda or a draft.",
+                    "Pregunta lo que quieras sobre tu correo, tu agenda o un borrador.",
+                ))
+                .color(c.text_muted),
+            )
+            .wrap(),
         );
     }
     for l in &lines {
@@ -1123,8 +1146,7 @@ fn chat(app: &mut DeskApp, ui: &mut Ui) {
         });
         ui.add_space(4.0);
     }
-    let running = app.ai.hub.job(AiKey::Chat).is_some_and(|j| j.state == AiState::Running);
-    if running {
+    if chat_running(app) {
         let s = app.ai.hub.streamed(AiKey::Chat);
         egui::Frame::new().fill(c.surface).corner_radius(8).inner_margin(egui::Margin::symmetric(10, 6)).show(
             ui,
@@ -1142,30 +1164,238 @@ fn chat(app: &mut DeskApp, ui: &mut Ui) {
             },
         );
     } else if let Some(AiState::Failed(t)) = app.ai.hub.job(AiKey::Chat).map(|j| j.state.clone()) {
-        ui.label(RichText::new(t.get()).color(c.danger));
+        ui.add(egui::Label::new(RichText::new(t.get()).color(c.danger)).wrap());
     }
-    ui.add_space(6.0);
+}
+
+fn chat_running(app: &DeskApp) -> bool {
+    app.ai.hub.job(AiKey::Chat).is_some_and(|j| j.state == AiState::Running)
+}
+
+/// Caja de texto y botones. `compact`: el panel lateral (caja a todo lo ancho, botones debajo).
+/// Devuelve si la caja tiene (o acaba de soltar) el foco.
+fn chat_input(app: &mut DeskApp, ui: &mut Ui, compact: bool) -> bool {
+    let running = chat_running(app);
     let mut send = false;
-    ui.horizontal(|ui| {
+    let mut typing = false;
+    let mut field = |app: &mut DeskApp, ui: &mut Ui, width: f32| {
         let r = ui.add(
             egui::TextEdit::singleline(&mut app.ai.chat_input)
-                .desired_width(ui.available_width() - 160.0)
+                .desired_width(width.max(80.0))
                 .hint_text(pick("Write to the assistant", "Escribe al asistente")),
         );
         crate::widgets::named(&r, egui::Role::TextInput, pick("Message to the assistant", "Mensaje al asistente"));
-        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            send = true;
+        if std::mem::take(&mut app.ai.focus_chat) {
+            r.request_focus();
         }
+        typing = r.has_focus() || r.lost_focus();
+        r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+    };
+    let buttons = |app: &mut DeskApp, ui: &mut Ui| {
+        let mut go = false;
         if ui.add_enabled(!running, egui::Button::new(pick("Send", "Enviar"))).clicked() {
-            send = true;
+            go = true;
         }
         if ui.button(pick("New chat", "Nueva conversación")).clicked() {
             app.ai.hub.clear_chat();
         }
-    });
-    if send && !running {
+        go
+    };
+    if compact {
+        send |= field(app, ui, ui.available_width());
+        ui.horizontal(|ui| send |= buttons(app, ui));
+    } else {
+        ui.horizontal(|ui| {
+            send |= field(app, ui, ui.available_width() - 160.0);
+            send |= buttons(app, ui);
+        });
+    }
+    if send && !running && !app.ai.chat_input.trim().is_empty() {
         let text = std::mem::take(&mut app.ai.chat_input);
         request(app, AiTask::Chat(text));
+    }
+    typing
+}
+
+/// Envía una pregunta al chat y abre el panel lateral para ver la respuesta.
+fn ask(app: &mut DeskApp, text: String) {
+    if text.trim().is_empty() || chat_running(app) {
+        return;
+    }
+    // En la página del Asistente el chat ya está a la vista.
+    if !(app.session.module == iuredesk_engine::Module::Assistant && app.ai.tab == Tab::Chat) {
+        app.ai.panel_open = true;
+    }
+    request(app, AiTask::Chat(text));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Panel lateral, globo y caja de Hoy
+
+/// El panel ya está a la vista como página (Asistente → Chat): no se duplica.
+fn panel_redundant(app: &DeskApp) -> bool {
+    app.session.module == iuredesk_engine::Module::Assistant && app.ai.tab == Tab::Chat
+}
+
+/// Panel derecho con el chat (`ai.panel`). Va antes del contenido del módulo para encogerlo en
+/// vez de taparlo.
+pub fn side_panel(app: &mut DeskApp, ui: &mut Ui) {
+    if !app.ai.panel_open || panel_redundant(app) {
+        return;
+    }
+    let ctx = ui.ctx().clone();
+    split::right(ui, "ai-panel", PaneKind::Detail, 360.0, 300.0..=560.0, |ui| {
+        let c = theme::colors(ui);
+        let mut full = false;
+        let mut close = false;
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), egui::Sense::hover());
+            icons::paint(ui.painter(), r, Icon::Sparkle, c.accent, c.accent);
+            ui.label(RichText::new(pick("Assistant", "Asistente")).strong().color(c.text));
+            ui.label(
+                RichText::new(app.ai.hub.provider_label())
+                    .color(c.text_muted)
+                    .size(theme::density(ui.ctx()).small_size()),
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let keys = iuredesk_engine::command::shortcut("ai.panel", app.session.scheme())
+                    .map(|k| format!(" ({})", k.label(cfg!(target_os = "macos"))))
+                    .unwrap_or_default();
+                let tip = format!("{}{keys}", pick("Close", "Cerrar"));
+                if icons::icon_button(ui, Icon::Close, &tip, true).clicked() {
+                    close = true;
+                }
+                if icons::icon_button(ui, Icon::Maximize, pick("Open as a page", "Abrir en página completa"), true)
+                    .clicked()
+                {
+                    full = true;
+                }
+            });
+        });
+        hairline(ui);
+        ui.add_space(6.0);
+        let input_h = 64.0;
+        egui::ScrollArea::vertical()
+            .id_salt("ai-panel-chat")
+            .auto_shrink([false, false])
+            .max_height((ui.available_height() - input_h).max(80.0))
+            .stick_to_bottom(true)
+            .show(ui, |ui| chat_lines(app, ui));
+        ui.add_space(6.0);
+        let typing = chat_input(app, ui, true);
+        // Esc en la caja del chat cierra el panel.
+        if typing && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            close = true;
+        }
+        if full {
+            app.session.module = iuredesk_engine::Module::Assistant;
+            app.ai.tab = Tab::Chat;
+            app.ai.panel_open = false;
+            app.ai.focus_chat = true;
+        }
+        if close {
+            app.ai.panel_open = false;
+        }
+    });
+}
+
+/// Globo ✦ flotante abajo a la derecha: abre el panel. Se puede ocultar en Ajustes → Asistente.
+pub fn bubble(app: &mut DeskApp, ctx: &Context) {
+    if app.ai.panel_open || app.ai.hub.prefs().hide_bubble || panel_redundant(app) || app.ai.modal() {
+        return;
+    }
+    let size = 44.0;
+    let resp = egui::Area::new(egui::Id::unique("ai-bubble"))
+        .anchor(egui::Align2::RIGHT_BOTTOM, vec2(-20.0, -20.0))
+        .order(egui::Order::Middle)
+        .show(ctx, |ui| {
+            let c = theme::colors(ui);
+            let (rect, r) = ui.allocate_exact_size(vec2(size, size), egui::Sense::click());
+            let fill = if r.hovered() { c.accent } else { c.accent.gamma_multiply(0.9) };
+            let p = ui.painter();
+            p.circle_filled(rect.center() + vec2(0.0, 1.5), size / 2.0, egui::Color32::from_black_alpha(40));
+            p.circle_filled(rect.center(), size / 2.0, fill);
+            let ir = egui::Rect::from_center_size(rect.center(), vec2(20.0, 20.0));
+            icons::paint(p, ir, Icon::Sparkle, egui::Color32::WHITE, egui::Color32::WHITE);
+            if r.hovered() {
+                ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            let keys = iuredesk_engine::command::shortcut("ai.panel", app.session.scheme())
+                .map(|k| format!(" ({})", k.label(cfg!(target_os = "macos"))))
+                .unwrap_or_default();
+            let tip = format!("{}{keys}", pick("Ask the assistant", "Pregúntale al asistente"));
+            crate::widgets::named(&r, egui::Role::Button, &tip);
+            r.on_hover_text(tip)
+        })
+        .inner;
+    if resp.clicked() {
+        app.ai.panel_open = true;
+        app.ai.focus_chat = true;
+    }
+}
+
+/// Caja «Pregúntale a …» de la pantalla Hoy, como el tablero de Iurefficient: Intro envía y
+/// la respuesta llega en el panel lateral.
+pub fn today_prompt(app: &mut DeskApp, ui: &mut Ui) {
+    let c = theme::colors(ui);
+    let provider = app.ai.hub.provider_label();
+    let hint = format!("{} {provider}…", pick("Ask", "Pregúntale a"));
+    let running = chat_running(app);
+    let mut send: Option<String> = None;
+    egui::Frame::new()
+        .fill(c.surface)
+        .stroke(Stroke::new(1.0, c.separator))
+        .corner_radius(10)
+        .inner_margin(egui::Margin::symmetric(12, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), egui::Sense::hover());
+                icons::paint(ui.painter(), r, Icon::Sparkle, c.accent, c.accent);
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut app.ai.today_input)
+                        .frame(egui::Frame::NONE)
+                        .desired_width((ui.available_width() - 90.0).max(80.0))
+                        .hint_text(hint.as_str()),
+                );
+                crate::widgets::named(&r, egui::Role::TextInput, pick("Ask the assistant", "Pregúntale al asistente"));
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if running {
+                        ui.add(egui::Spinner::new().size(14.0));
+                    } else if (ui
+                        .add_enabled(!app.ai.today_input.trim().is_empty(), egui::Button::new(pick("Ask", "Preguntar")))
+                        .clicked()
+                        || enter)
+                        && !app.ai.today_input.trim().is_empty()
+                    {
+                        send = Some(std::mem::take(&mut app.ai.today_input));
+                    }
+                });
+            });
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
+                for (en, es) in [
+                    ("What do I have today?", "¿Qué tengo hoy?"),
+                    ("Which emails are waiting for my reply?", "¿Qué correos esperan mi respuesta?"),
+                    ("Summarize my pending work", "Resume mis pendientes"),
+                ] {
+                    let q = pick(en, es);
+                    if ui
+                        .add_enabled(
+                            !running,
+                            egui::Button::new(RichText::new(q).size(theme::density(ui.ctx()).small_size())).small(),
+                        )
+                        .clicked()
+                    {
+                        send = Some(q.to_string());
+                    }
+                }
+            });
+        });
+    if let Some(q) = send {
+        ask(app, q);
     }
 }
 
@@ -1484,6 +1714,20 @@ pub fn settings_section(app: &mut DeskApp, ui: &mut Ui) {
         }
     }
     let mut prefs = app.ai.hub.prefs().clone();
+    let mut bubble = !prefs.hide_bubble;
+    if ui
+        .checkbox(
+            &mut bubble,
+            pick(
+                "Show the floating ✦ button (the panel also opens from the header)",
+                "Mostrar el botón flotante ✦ (el panel también se abre desde la cabecera)",
+            ),
+        )
+        .changed()
+    {
+        prefs.hide_bubble = !bubble;
+        app.ai.hub.set_prefs(prefs.clone());
+    }
     if ui
         .checkbox(
             &mut prefs.auto_replies,
@@ -1561,6 +1805,8 @@ fn run_demo(app: &mut DeskApp, ctx: &Context) {
             }
         }
         "triage" => command(app, ctx, "ai.triage"),
+        // UX-14: el panel lateral sobre el módulo de `--module`.
+        "panel" => ask(app, pick("What do I have today?", "¿Qué tengo hoy?").into()),
         "chat" => {
             app.ai.tab = Tab::Chat;
             request(app, AiTask::Chat(pick("What do I have today?", "¿Qué tengo hoy?").into()));
