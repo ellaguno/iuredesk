@@ -5,3 +5,6 @@
 /dist/
 /.claude/worktrees/
 /.claude/settings.local.json
+
+# Videos de /brag (se generan, no se versionan)
+brag-output*/
