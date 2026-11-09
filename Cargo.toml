@@ -13,6 +13,7 @@ members = [
     "crates/dav",
     "crates/pim-sync",
     "crates/graph",
+    "crates/ews",
     "crates/compose",
     "crates/crypto",
     "crates/integrations",
@@ -51,6 +52,7 @@ iuredesk-sync = { path = "crates/sync" }
 iuredesk-dav = { path = "crates/dav" }
 iuredesk-pim-sync = { path = "crates/pim-sync" }
 iuredesk-graph = { path = "crates/graph" }
+iuredesk-ews = { path = "crates/ews" }
 iuredesk-compose = { path = "crates/compose" }
 iuredesk-crypto = { path = "crates/crypto" }
 iuredesk-integrations = { path = "crates/integrations" }

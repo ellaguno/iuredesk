@@ -1,0 +1,24 @@
+[package]
+name = "iuredesk-ews"
+description = "Cliente de Exchange Web Services (Exchange Server local): SOAP acotado, carpetas, sincronización de elementos, MIME y operaciones de correo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+iuredesk-dav = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+quick-xml = { workspace = true }
+reqwest = { workspace = true }
+base64 = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
+proptest = { workspace = true }
+
+[lints]
+workspace = true
