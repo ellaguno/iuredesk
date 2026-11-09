@@ -220,6 +220,12 @@ pub struct Prefs {
     /// UX-13: fondo de «Mi día».
     #[serde(default)]
     pub today_background: crate::today_bg::TodayBackground,
+    /// UX-15: orden, columna y tarjetas quitadas de «Mi día».
+    #[serde(default)]
+    pub today_layout: crate::today_layout::TodayLayout,
+    /// UX-15: el clima de hoy en la cabecera de «Mi día».
+    #[serde(default)]
+    pub weather: crate::weather::WeatherPref,
 }
 
 /// UX-3: dónde se muestra el panel contextual.
@@ -345,6 +351,8 @@ impl Default for Prefs {
             crisp_text: false,
             show_empty_contacts: false,
             today_background: Default::default(),
+            today_layout: Default::default(),
+            weather: Default::default(),
             notes_dir: None,
             reading_width: None,
             reading_zoom_pct: default_reading_zoom(),

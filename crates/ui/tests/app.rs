@@ -467,3 +467,61 @@ impl iuredesk_engine::iuredesk_integrations::Opener for Recorder {
         Ok(())
     }
 }
+
+/// UX-15: sin asistente configurado no hay IA a la vista: ni módulo en el riel, ni ✦ en la
+/// cabecera, ni globo, ni «¿Qué necesito atender hoy?»; con él, todo vuelve.
+#[test]
+fn ai_is_hidden_until_an_assistant_is_configured() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = sample_app(dir.path(), true);
+    a.demo_no_ai();
+    let mut h = harness(a, vec2(1280.0, 800.0));
+    settle(&mut h);
+    assert!(!h.state().session.ai_available());
+    assert!(h.query_all_by_label_contains("Panel del asistente").next().is_none(), "botón ✦");
+    assert!(h.query_all_by_label_contains("Pregúntale al asistente").next().is_none(), "globo");
+    assert!(h.query_all_by_label_contains("¿Qué necesito atender hoy?").next().is_none(), "triage");
+    assert!(!h.state().session.is_enabled("ai.panel"));
+    h.state_mut().session.run("nav.assistant").unwrap();
+    settle(&mut h);
+    assert_ne!(h.state().session.module, iuredesk_engine::Module::Assistant);
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(sample_app(dir.path(), true), vec2(1280.0, 800.0));
+    settle(&mut h);
+    assert!(h.state().session.ai_available());
+    assert!(h.query_all_by_label_contains("Panel del asistente").next().is_some());
+    assert!(h.query_all_by_label_contains("Pregúntale al asistente").next().is_some());
+}
+
+/// UX-15: «Mi día» se personaliza: quitar una tarjeta la esconde y se puede volver a poner.
+#[test]
+fn today_cards_can_be_removed_and_put_back() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(sample_app(dir.path(), true), vec2(1440.0, 900.0));
+    settle(&mut h);
+    h.state_mut().session.run("nav.today").unwrap();
+    settle(&mut h);
+    h.get_by_label("Personalizar esta página").click();
+    settle(&mut h);
+    // Recordatorios va al final de la columna derecha: se desplaza como el usuario.
+    h.get_by_label("Quitar Recordatorios").scroll_to_me();
+    settle(&mut h);
+    h.get_by_label("Quitar Recordatorios").click();
+    settle(&mut h);
+    let l = h.state().session.prefs.today_layout.normalized();
+    assert_eq!(l.hidden, vec![iuredesk_engine::today_layout::TodayCard::Reminders]);
+    h.get_by_label("Recordatorios").scroll_to_me();
+    settle(&mut h);
+    h.get_by_label("Recordatorios").click();
+    settle(&mut h);
+    assert!(h.state().session.prefs.today_layout.normalized().hidden.is_empty());
+    h.get_by_label("Subir Correo").scroll_to_me();
+    settle(&mut h);
+    h.get_by_label("Subir Correo").click();
+    settle(&mut h);
+    let l = h.state().session.prefs.today_layout.normalized();
+    assert_eq!(l.left.first(), Some(&iuredesk_engine::today_layout::TodayCard::Mail));
+}

@@ -44,6 +44,7 @@ mod suite_ui;
 mod task_editor;
 mod today;
 mod today_bg;
+mod today_weather;
 mod widgets;
 
 pub use app::{DeskApp, Incoming, Notifier, Options};

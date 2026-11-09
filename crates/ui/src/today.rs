@@ -14,6 +14,7 @@ use egui::{Align, Color32, CornerRadius, Layout, Margin, Rect, RichText, Sense, 
 use iuredesk_engine::calendar::Occurrence;
 use iuredesk_engine::iure::FeedItem;
 use iuredesk_engine::today::{self, AgendaItem, DaySummary, DayTask, MailItem, NextState, TaskSource};
+use iuredesk_engine::today_layout::{Column, TodayCard, TodayLayout};
 use iuredesk_engine::{FolderSel, Module, Notice};
 use iuredesk_model::{ContactId, FolderId, TaskId, TaskListId};
 use iurefficient_ui::{Icon, PaneKind, icons, pick, split, theme};
@@ -40,6 +41,10 @@ pub struct TodayState {
     seen: Option<Arc<DaySummary>>,
     /// UX-13: fondo propio.
     pub(crate) bg: crate::today_bg::BgState,
+    /// UX-15: personalizando las tarjetas.
+    pub(crate) editing: bool,
+    /// UX-15: el clima de hoy.
+    pub(crate) weather: crate::today_weather::WeatherUi,
 }
 
 /// Qué se pulsó.
@@ -107,9 +112,10 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
                     } else {
                         header(app, ui, s, now, &mut acts);
                     }
-                    ui.add_space(14.0);
-                    crate::assistant::today_prompt(app, ui);
                     ui.add_space(18.0);
+                    if app.today.editing {
+                        edit_bar(app, ui);
+                    }
                     columns(app, ui, s, now, w, &mut acts);
                 },
             );
@@ -133,7 +139,7 @@ fn loading(ui: &mut Ui) {
 // ---------------------------------------------------------------------------------------------
 // Cabecera
 
-fn header(app: &DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, acts: &mut Vec<Act>) {
+fn header(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, acts: &mut Vec<Act>) {
     let c = theme::colors(ui);
     let ctx = ui.ctx().clone();
     let zone = app.session.zone();
@@ -141,10 +147,28 @@ fn header(app: &DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, acts: 
     let hello = today::greeting(hour);
     let title = if s.user.is_empty() { hello.get().to_string() } else { format!("{}, {}", hello.get(), s.user) };
     ui.horizontal(|ui| {
-        let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
-        icons::paint(ui.painter(), r, Icon::Sun, c.warning, c.warning);
-        ui.add_space(4.0);
-        ui.add(egui::Label::new(RichText::new(title).font(theme::semibold_font(&ctx, 26.0)).color(c.text)).truncate());
+        // UX-15: a la derecha, «Personalizar» y el clima de hoy; el saludo ocupa el resto.
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let tip = if app.today.editing {
+                pick("Done customizing", "Terminar de personalizar")
+            } else {
+                pick("Customize this page", "Personalizar esta página")
+            };
+            if icons::icon_button(ui, Icon::Sliders, tip, true).clicked() {
+                app.today.editing = !app.today.editing;
+            }
+            ui.add_space(6.0);
+            crate::today_weather::widget(app, ui);
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
+                icons::paint(ui.painter(), r, Icon::Sun, c.warning, c.warning);
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(RichText::new(title).font(theme::semibold_font(&ctx, 26.0)).color(c.text))
+                        .truncate(),
+                );
+            });
+        });
     });
     ui.add_space(2.0);
     ui.label(RichText::new(capitalize(&today::long_day(s.date))).size(15.0).color(c.text_muted));
@@ -237,34 +261,218 @@ fn chip(ui: &mut Ui, ic: Icon, text: &str, tint: Option<Color32>) -> egui::Respo
 // Columnas
 
 fn columns(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, w: f32, acts: &mut Vec<Act>) {
-    if w < TWO_COLUMNS {
-        agenda_card(app, ui, s, now, acts);
-        tasks_card(app, ui, s, acts);
-        mail_card(app, ui, s, now, acts);
-        iure_card(ui, s, now, acts);
-        reminders_card(ui, s, acts);
+    let layout = app.session.prefs.today_layout.normalized();
+    let mut edits: Vec<Edit> = Vec::new();
+    // UX-15: si una columna queda vacía, la otra ocupa todo el ancho.
+    if w < TWO_COLUMNS || layout.left.is_empty() || layout.right.is_empty() {
+        let two = w >= TWO_COLUMNS;
+        for card in layout.left.iter().chain(&layout.right) {
+            slot(app, ui, s, now, *card, &layout, two, acts, &mut edits);
+        }
+    } else {
+        let left = ((w - GAP) * if w > 1000.0 { 0.56 } else { 0.52 }).floor();
+        let right = (w - GAP - left).floor();
+        let spacing = ui.spacing().item_spacing;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            for (cards, width, gap) in [(&layout.left, left, true), (&layout.right, right, false)] {
+                ui.allocate_ui_with_layout(vec2(width, 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.set_width(width);
+                    ui.spacing_mut().item_spacing = spacing;
+                    for card in cards {
+                        slot(app, ui, s, now, *card, &layout, true, acts, &mut edits);
+                    }
+                });
+                if gap {
+                    ui.add_space(GAP);
+                }
+            }
+        });
+    }
+    if !edits.is_empty() {
+        let mut l = layout;
+        for e in edits {
+            match e {
+                Edit::Up(c) => l.move_card(c, true),
+                Edit::Down(c) => l.move_card(c, false),
+                Edit::Switch(c) => l.switch_column(c),
+                Edit::Hide(c) => l.hide(c),
+            }
+        }
+        app.session.prefs.today_layout = l;
+        app.session.save_prefs();
+    }
+}
+
+/// UX-15: cambios al acomodo de las tarjetas.
+enum Edit {
+    Up(TodayCard),
+    Down(TodayCard),
+    Switch(TodayCard),
+    Hide(TodayCard),
+}
+
+fn card_icon(card: TodayCard) -> Icon {
+    match card {
+        TodayCard::Agenda => Icon::Calendar,
+        TodayCard::Tasks => Icon::Tasks,
+        TodayCard::Mail => Icon::Mail,
+        TodayCard::Iurefficient => Icon::Bell,
+        TodayCard::Reminders | TodayCard::Unknown => Icon::Gift,
+    }
+}
+
+/// Una tarjeta en su sitio; al personalizar, con sus controles (subir, bajar, columna, quitar).
+#[allow(clippy::too_many_arguments)]
+fn slot(
+    app: &mut DeskApp,
+    ui: &mut Ui,
+    s: &DaySummary,
+    now: DateTime<Utc>,
+    which: TodayCard,
+    layout: &TodayLayout,
+    two: bool,
+    acts: &mut Vec<Act>,
+    edits: &mut Vec<Edit>,
+) {
+    let mut rect = ui
+        .scope(|ui| match which {
+            TodayCard::Agenda => agenda_card(app, ui, s, now, acts),
+            TodayCard::Tasks => tasks_card(app, ui, s, acts),
+            TodayCard::Mail => mail_card(app, ui, s, now, acts),
+            TodayCard::Iurefficient => iure_card(ui, s, now, acts),
+            TodayCard::Reminders => reminders_card(ui, s, acts),
+            TodayCard::Unknown => {}
+        })
+        .response
+        .rect;
+    if !app.today.editing {
         return;
     }
-    let left = ((w - GAP) * if w > 1000.0 { 0.56 } else { 0.52 }).floor();
-    let right = (w - GAP - left).floor();
-    let spacing = ui.spacing().item_spacing;
-    ui.horizontal_top(|ui| {
+    // Una tarjeta sin nada que mostrar (Iurefficient sin sesión) se ve igual para poder moverla.
+    if rect.height() < 4.0 {
+        rect = ui
+            .scope(|ui| {
+                card(
+                    ui,
+                    card_icon(which),
+                    which.label(),
+                    pick("nothing to show now", "nada que mostrar ahora"),
+                    None,
+                    |_| {},
+                )
+            })
+            .response
+            .rect;
+    }
+    let c = theme::colors(ui);
+    let n = if two { 4.0 } else { 3.0 };
+    let side = 30.0;
+    let bar = Rect::from_min_size(
+        pos2(rect.right() - 12.0 - side * n - 8.0, rect.top() + 8.0),
+        vec2(side * n + 8.0, side + 4.0),
+    );
+    ui.painter().rect(bar, 8.0, c.surface_alt, Stroke::new(1.0, c.separator), egui::StrokeKind::Inside);
+    // Encima de la tarjeta, sin ocupar sitio en la columna.
+    let mut bar_ui = ui.new_child(
+        egui::UiBuilder::new().max_rect(bar.shrink2(vec2(4.0, 2.0))).layout(Layout::right_to_left(Align::Center)),
+    );
+    {
+        let ui = &mut bar_ui;
         ui.spacing_mut().item_spacing.x = 0.0;
-        ui.allocate_ui_with_layout(vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
-            ui.set_width(left);
-            ui.spacing_mut().item_spacing = spacing;
-            agenda_card(app, ui, s, now, acts);
-            mail_card(app, ui, s, now, acts);
+        let name = which.label();
+        if icons::icon_button(ui, Icon::Close, &format!("{} {name}", pick("Remove", "Quitar")), true).clicked() {
+            edits.push(Edit::Hide(which));
+        }
+        if two {
+            let (ic, tip) = match layout.column(which) {
+                Some(Column::Left) => {
+                    (Icon::ChevronRight, pick("Move to the right column", "Pasar a la columna derecha"))
+                }
+                _ => (Icon::ChevronLeft, pick("Move to the left column", "Pasar a la columna izquierda")),
+            };
+            if icons::icon_button(ui, ic, &format!("{tip}: {name}"), true).clicked() {
+                edits.push(Edit::Switch(which));
+            }
+        }
+        if icons::icon_button(
+            ui,
+            Icon::ChevronDown,
+            &format!("{} {name}", pick("Move down", "Bajar")),
+            layout.can_move(which, false),
+        )
+        .clicked()
+        {
+            edits.push(Edit::Down(which));
+        }
+        if icons::icon_button(
+            ui,
+            Icon::ChevronUp,
+            &format!("{} {name}", pick("Move up", "Subir")),
+            layout.can_move(which, true),
+        )
+        .clicked()
+        {
+            edits.push(Edit::Up(which));
+        }
+    }
+}
+
+/// UX-15: barra de «Personalizar»: tarjetas quitadas para volver a ponerlas y «Listo».
+fn edit_bar(app: &mut DeskApp, ui: &mut Ui) {
+    let c = theme::colors(ui);
+    let hidden = app.session.prefs.today_layout.normalized().hidden;
+    let mut show: Option<TodayCard> = None;
+    let mut weather = false;
+    let mut done = false;
+    egui::Frame::new()
+        .fill(c.surface)
+        .stroke(Stroke::new(1.0, c.accent.gamma_multiply(0.6)))
+        .corner_radius(10)
+        .inner_margin(Margin::symmetric(12, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
+                ui.label(
+                    RichText::new(pick(
+                        "Move or remove cards with their buttons.",
+                        "Mueve o quita las tarjetas con sus botones.",
+                    ))
+                    .color(c.text_muted),
+                );
+                for h in &hidden {
+                    if chip(ui, Icon::Plus, h.label(), None)
+                        .on_hover_text(pick("Put it back", "Volver a ponerla"))
+                        .clicked()
+                    {
+                        show = Some(*h);
+                    }
+                }
+                if !app.session.prefs.weather.enabled && chip(ui, Icon::Plus, pick("Weather", "Clima"), None).clicked()
+                {
+                    weather = true;
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if iurefficient_ui::primary_button(ui, pick("Done", "Listo")).clicked() {
+                        done = true;
+                    }
+                });
+            });
         });
-        ui.add_space(GAP);
-        ui.allocate_ui_with_layout(vec2(right, 0.0), Layout::top_down(Align::Min), |ui| {
-            ui.set_width(right);
-            ui.spacing_mut().item_spacing = spacing;
-            tasks_card(app, ui, s, acts);
-            iure_card(ui, s, now, acts);
-            reminders_card(ui, s, acts);
-        });
-    });
+    ui.add_space(GAP);
+    if let Some(card) = show {
+        let mut l = app.session.prefs.today_layout.normalized();
+        l.show(card);
+        app.session.prefs.today_layout = l;
+        app.session.save_prefs();
+    }
+    if weather {
+        crate::today_weather::open_setup(app);
+    }
+    if done {
+        app.today.editing = false;
+    }
 }
 
 /// Tarjeta con cabecera (icono, título, cifra) y una acción a la derecha. Devuelve si se pulsó la
@@ -810,6 +1018,9 @@ fn mail_card(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>,
             }
         }
         // Priorización con el asistente: solo bajo demanda (consentimiento y DataScope de siempre).
+        if !crate::assistant::enabled(app) {
+            return;
+        }
         ui.add_space(10.0);
         crate::widgets::hairline(ui);
         ui.add_space(8.0);

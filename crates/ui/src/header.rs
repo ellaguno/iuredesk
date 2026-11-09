@@ -397,6 +397,9 @@ fn commands_button(app: &mut DeskApp, ui: &mut Ui) {
 
 /// ✦: muestra u oculta el panel del asistente (`ai.panel`).
 fn assistant_button(app: &mut DeskApp, ui: &mut Ui) {
+    if !crate::assistant::enabled(app) {
+        return;
+    }
     let ctx = ui.ctx().clone();
     let keys = iuredesk_engine::command::shortcut("ai.panel", app.session.scheme())
         .map(|k| format!(" ({})", k.label(cfg!(target_os = "macos"))))
