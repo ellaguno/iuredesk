@@ -4,7 +4,9 @@
 # 2026-10-28, Apache-2.0) como «último» release: iureapps lo busca con /releases/latest, que
 # ignora borradores y preliminares; la alfa se indica en el título y en el catálogo de iureapps.
 # Secretos (todos opcionales): IUREDESK_MINISIGN_KEY (+ IUREDESK_MINISIGN_PASSWORD) para las
-# firmas que verifica iureapps, los de firma de código de macOS/Windows y SUITE_REPOS_TOKEN.
+# firmas que verifica iureapps; macOS: DEVELOPER_ID_P12_BASE64, DEVELOPER_ID_PASSWORD,
+# KEYCHAIN_PASSWORD, APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID y ASC_PRIVATE_KEY (Developer ID +
+# notarización); los de firma de Windows y SUITE_REPOS_TOKEN.
 # Ver docs/publicacion.md.
 name: Publicación
 
@@ -99,16 +101,59 @@ jobs:
           if ($env:WINDOWS_SIGN_COMMAND -like "trusted-signing-cli*") {
             cargo install trusted-signing-cli --locked
           }
+      # macOS: el certificado Developer ID va a un keychain temporal (se borra al final) y la clave de
+      # App Store Connect a un archivo temporal; cargo-packager firma el .app con hardened runtime,
+      # lo notariza con la clave y le engrapa el ticket. Sin los secretos sale sin firmar, como antes.
+      - name: Firma de Apple (keychain temporal)
+        if: matrix.os == 'macos'
+        id: apple
+        shell: bash
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEVELOPER_ID_P12_BASE64" ] || [ -z "$DEVELOPER_ID_PASSWORD" ] || [ -z "$KEYCHAIN_PASSWORD" ]; then
+            echo "::warning::Sin DEVELOPER_ID_P12_BASE64/DEVELOPER_ID_PASSWORD/KEYCHAIN_PASSWORD: el .app y el .dmg salen sin firmar."
+            exit 0
+          fi
+          KC="$RUNNER_TEMP/iuredesk-firma.keychain-db"
+          P12="$RUNNER_TEMP/devid.p12"
+          printf '%s' "$DEVELOPER_ID_P12_BASE64" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KC"
+          security import "$P12" -k "$KC" -P "$DEVELOPER_ID_PASSWORD" -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$P12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KC" > /dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          IDENTITY="$(security find-identity -v -p codesigning "$KC" | sed -n 's/.*"\(Developer ID Application: .*(\('"$APPLE_TEAM_ID"'\))\)".*/\1/p' | head -n1)"
+          if [ -z "$IDENTITY" ]; then
+            security find-identity -v -p codesigning "$KC"
+            echo "::error::El .p12 no trae una identidad «Developer ID Application» del equipo $APPLE_TEAM_ID."
+            exit 1
+          fi
+          echo "Identidad: $IDENTITY"
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "keychain=$KC" >> "$GITHUB_OUTPUT"
+          if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_PRIVATE_KEY" ]; then
+            KEY="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+            printf '%s\n' "$ASC_PRIVATE_KEY" > "$KEY"
+            chmod 600 "$KEY"
+            { echo "APPLE_API_KEY=$ASC_KEY_ID"; echo "APPLE_API_ISSUER=$ASC_ISSUER_ID"; echo "APPLE_API_KEY_PATH=$KEY"; } >> "$GITHUB_ENV"
+            echo "notarize=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Sin ASC_KEY_ID/ASC_ISSUER_ID/ASC_PRIVATE_KEY: se firma pero no se notariza (Gatekeeper lo bloqueará)."
+          fi
       - name: Paquetes
         shell: bash
         env:
           # Se exportan solo los que tienen valor: cargo-packager trata «vacío» como «presente».
-          S_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          S_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          S_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          S_APPLE_ID: ${{ secrets.APPLE_ID }}
-          S_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          S_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           S_WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
           S_WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
           S_WINDOWS_SIGN_COMMAND: ${{ vars.WINDOWS_SIGN_COMMAND }}
@@ -116,9 +161,8 @@ jobs:
           S_AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           S_AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         run: |
-          for v in APPLE_SIGNING_IDENTITY APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID \
-                   APPLE_PASSWORD APPLE_TEAM_ID WINDOWS_CERTIFICATE_THUMBPRINT WINDOWS_TIMESTAMP_URL \
-                   WINDOWS_SIGN_COMMAND AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID; do
+          for v in WINDOWS_CERTIFICATE_THUMBPRINT WINDOWS_TIMESTAMP_URL WINDOWS_SIGN_COMMAND \
+                   AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID; do
             s="S_$v"
             if [ -n "${!s:-}" ]; then export "$v=${!s}"; fi
             unset "$s"
@@ -161,6 +205,34 @@ jobs:
           if (Test-Path 'Registry::HKEY_CLASSES_ROOT\iuredesk\shell\open\command') { throw 'la desinstalación dejó el protocolo' }
           if ((Get-ItemProperty 'HKLM:\Software\Iurefficient\IureDesk' -ErrorAction SilentlyContinue).Version) { throw 'la desinstalación dejó la clave de la suite' }
           Write-Host 'instalador .msi: instalar y desinstalar — ok'
+      # cargo-packager notariza y engrapa el .app, pero el .dmg solo lo firma: se notariza aparte para
+      # que Gatekeeper lo acepte sin conexión. Luego se comprueba todo como lo haría un Mac recién
+      # instalado. Va antes de minisign porque engrapar cambia el .dmg.
+      - name: Notarizar el .dmg y comprobar Gatekeeper
+        if: matrix.os == 'macos' && steps.apple.outputs.notarize == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=dist/IureDesk.app
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=2 "$APP" 2>&1 | grep -E 'Authority=Developer ID Application|flags=.*runtime'
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
+          for DMG in dist/*.dmg; do
+            OUT="$(xcrun notarytool submit "$DMG" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" \
+                    --issuer "$APPLE_API_ISSUER" --wait --timeout 45m --output-format json)"
+            echo "$OUT"
+            STATUS="$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')"
+            if [ "$STATUS" != Accepted ]; then
+              ID="$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
+              [ -n "$ID" ] && xcrun notarytool log "$ID" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" || true
+              echo "::error::Apple rechazó la notarización de $DMG ($STATUS)"
+              exit 1
+            fi
+            xcrun stapler staple -v "$DMG"
+            xcrun stapler validate "$DMG"
+            spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
+          done
       - name: Firmas minisign (las verifica iureapps)
         shell: bash
         env:
@@ -185,6 +257,15 @@ jobs:
             dist/*.msi
             dist/*.dmg
             dist/*.sig
+
+      - name: Borrar el keychain temporal y la clave de App Store Connect
+        if: always() && matrix.os == 'macos'
+        shell: bash
+        run: |
+          if [ -n "${{ steps.apple.outputs.keychain }}" ]; then
+            security delete-keychain "${{ steps.apple.outputs.keychain }}" || true
+          fi
+          rm -f "$RUNNER_TEMP"/AuthKey_*.p8 "$RUNNER_TEMP"/devid.p12
 
   release:
     name: Release

@@ -185,17 +185,27 @@ reescriben `https://github.com/` con `SUITE_REPOS_TOKEN` (git del sistema,
 3. *Settings → Actions → General*: permitir acciones de GitHub y de terceros verificados (se usan
    `actions/*` y `Swatinem/rust-cache`). El job `release` pide `contents: write` por sí mismo.
 
-### Opcional: firma en macOS (Developer ID + notarización)
-Requiere el **Apple Developer Program** (99 USD/año).
-1. Crear un certificado **Developer ID Application** (Xcode o developer.apple.com), exportarlo como
-   `.p12` con contraseña.
-2. Secretos: `APPLE_CERTIFICATE` (`base64 -i cert.p12`, una línea), `APPLE_CERTIFICATE_PASSWORD`,
-   `APPLE_SIGNING_IDENTITY` (p. ej. `Developer ID Application: Eduardo Llaguno Velasco (TEAMID)`).
-3. Notarización: `APPLE_ID` (correo de la cuenta), `APPLE_PASSWORD` (contraseña de app de
-   appleid.apple.com, no la de la cuenta) y `APPLE_TEAM_ID`. (Alternativa: clave de App Store
-   Connect con `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH`.)
-Sin `APPLE_SIGNING_IDENTITY` el `.app`/`.dmg` sale sin firmar (Gatekeeper pedirá *clic derecho →
-Abrir*).
+### Firma en macOS (Developer ID + notarización)
+Configurada desde 2026-11-09 (equipo `PLNS58WDQF`, distribución directa; no hay versión de Mac App
+Store). Con cada etiqueta, el job de macOS de `release.yml`:
+1. importa el certificado **Developer ID Application** en un keychain temporal
+   (`security create-keychain`, contraseña aleatoria del secreto `KEYCHAIN_PASSWORD`) y toma la
+   identidad del equipo con `security find-identity` → `APPLE_SIGNING_IDENTITY`;
+2. escribe la clave de App Store Connect en un `.p8` temporal → `APPLE_API_KEY`,
+   `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH`;
+3. `cargo xtask package macos`: cargo-packager firma el `.app` con *hardened runtime*
+   (`--options runtime --timestamp`), lo notariza con `notarytool` y la clave, le engrapa el ticket
+   y firma el `.dmg` (el `.app.tar.gz` se arma después, ya engrapado);
+4. notariza y engrapa el `.dmg` y comprueba `codesign --verify --deep --strict`,
+   `stapler validate` y `spctl --assess` del `.app` y del `.dmg`;
+5. borra el keychain y la clave aunque algo falle.
+
+Secretos: `DEVELOPER_ID_P12_BASE64` (`base64 -w0 devid.p12 | gh secret set …`),
+`DEVELOPER_ID_PASSWORD`, `KEYCHAIN_PASSWORD`, `APPLE_TEAM_ID`, `ASC_KEY_ID`, `ASC_ISSUER_ID` y
+`ASC_PRIVATE_KEY` (el `.p8` tal cual). No hace falta perfil de aprovisionamiento ni entitlements:
+la app no usa capacidades restringidas. Sin el `.p12` el `.app`/`.dmg` sale sin firmar (Gatekeeper
+pedirá *clic derecho → Abrir*); sin la clave de App Store Connect se firma pero no se notariza.
+El certificado vence el 2027-12-09: renovarlo antes y volver a cargar los dos primeros secretos.
 
 ### Opcional: firma en Windows
 Una de dos:
