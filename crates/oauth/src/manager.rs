@@ -142,19 +142,30 @@ impl TokenManager {
         {
             return Ok(t.access_token.clone());
         }
-        let (secrets, id) = (self.secrets.clone(), account.id.clone());
+        // Un buzón compartido (F8.1) entra con el token de refresco de su cuenta dueña; la caché
+        // de tokens de acceso sigue siendo la suya (así un 401 suyo no toca la del dueño).
+        let owner = account.shared_of.clone().filter(|o| !o.trim().is_empty());
+        let key = owner.clone().unwrap_or_else(|| account.id.clone());
+        let (secrets, id) = (self.secrets.clone(), key.clone());
         let stored =
             blocking(move || secrets.get(&id, SecretPurpose::OAuthRefresh)).await?.ok_or(Error::NoRefreshToken)?;
         match refresh(&self.http, config, &stored, audience).await {
             Ok(fresh) => {
                 // Microsoft rota el token de refresco: se guarda el nuevo.
                 if let Some(new_rt) = fresh.refresh_token.clone().filter(|r| *r != stored) {
-                    let (secrets, id) = (self.secrets.clone(), account.id.clone());
+                    let (secrets, id) = (self.secrets.clone(), key.clone());
                     blocking(move || secrets.set(&id, SecretPurpose::OAuthRefresh, &new_rt)).await?;
                 }
                 let access = fresh.access_token.clone();
                 *cached = Some(fresh);
                 Ok(access)
+            }
+            Err(e @ Error::NeedsReconsent { .. }) if owner.is_some() => {
+                // Al dueño le falta el permiso `.Shared` (o se revocó): su propia cuenta puede
+                // seguir funcionando, así que su token no se borra; volver a iniciar sesión en él
+                // pide el permiso.
+                *cached = None;
+                Err(e)
             }
             Err(e @ Error::NeedsReconsent { .. }) => {
                 // Revocado o caducado: no tiene sentido reintentarlo con el mismo token.

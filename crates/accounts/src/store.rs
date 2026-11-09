@@ -149,6 +149,7 @@ mod tests {
             caldav_url: None,
             carddav_url: None,
             identities: vec![],
+            shared_of: None,
         }
     }
 

@@ -55,6 +55,7 @@ fn demo_accounts() -> Vec<iuredesk_model::account::Account> {
             caldav_url: None,
             carddav_url: None,
             identities: Vec::new(),
+            shared_of: None,
         },
         Account {
             id: "m365-laura".into(),
@@ -66,6 +67,7 @@ fn demo_accounts() -> Vec<iuredesk_model::account::Account> {
             caldav_url: None,
             carddav_url: None,
             identities: Vec::new(),
+            shared_of: None,
         },
         Account {
             id: "imap-despacho".into(),
@@ -77,6 +79,7 @@ fn demo_accounts() -> Vec<iuredesk_model::account::Account> {
             caldav_url: Some("https://dav.despacho.example.org/cal/".into()),
             carddav_url: None,
             identities: Vec::new(),
+            shared_of: None,
         },
     ]
 }
@@ -127,7 +130,19 @@ fn main() -> Result<(), String> {
         args.iter().find_map(|a| a.strip_prefix("--settings")).map(|s| s.trim_start_matches('=').to_string());
     let accounts = if module == "duplicate" || settings.is_some() {
         let st = iuredesk_accounts::AccountStore::at(dir.path().join("accounts.json"));
-        for a in demo_accounts() {
+        let mut list = demo_accounts();
+        // `--shared`: buzón compartido de la cuenta de Microsoft 365 (F8.1), justo debajo de ella.
+        if args.iter().any(|a| a == "--shared")
+            && let Some(i) = list.iter().position(|a| a.id == "m365-laura")
+        {
+            let mut v = list[i].clone();
+            v.id = "m365-laura-shared-1".into();
+            v.email = "recepcion@despacho.example.org".into();
+            v.display_name = v.email.clone();
+            v.shared_of = Some("m365-laura".into());
+            list.insert(i + 1, v);
+        }
+        for a in list {
             st.upsert(a).map_err(|e| e.to_string())?;
         }
         Some(st)
@@ -161,6 +176,13 @@ fn main() -> Result<(), String> {
         session.prefs.text_scale_pct = p;
     }
     session.prefs.crisp_text = args.iter().any(|a| a == "--crisp");
+    // `--ms-org`: Microsoft 365 de una organización con su propio registro (F8.1).
+    if args.iter().any(|a| a == "--ms-org") {
+        session.prefs.microsoft_org = iuredesk_engine::MicrosoftOrg {
+            client_id: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0".into(),
+            tenant: "contoso.com".into(),
+        };
+    }
     if settings.is_some() {
         use iuredesk_engine::AccountSync;
         session.demo_account_status("gmail-laura", AccountSync::Ready { at: now, backfill: false });

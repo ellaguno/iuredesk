@@ -132,6 +132,11 @@ pub struct Account {
     pub carddav_url: Option<String>,
     #[serde(default)]
     pub identities: Vec<Identity>,
+    /// Buzón compartido o delegado de Microsoft 365 (F8.1): entra con el inicio de sesión de la
+    /// cuenta con este id y abre el buzón de `email` (`/users/{email}` en Graph). `None` = el
+    /// buzón propio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_of: Option<String>,
 }
 
 impl Account {
@@ -175,6 +180,7 @@ mod tests {
             caldav_url: None,
             carddav_url: None,
             identities: vec![],
+            shared_of: None,
         }
     }
 

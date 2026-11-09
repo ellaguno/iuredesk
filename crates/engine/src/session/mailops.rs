@@ -388,6 +388,12 @@ impl Session {
     /// calendarios, libretas de contactos y listas de tareas descargados). En el servidor no se
     /// toca nada.
     pub fn remove_account(&mut self, id: &str) -> Result<Outcome> {
+        // Sus buzones compartidos (F8.1) entran con su inicio de sesión: se van con ella.
+        let dependents: Vec<String> =
+            self.accounts.iter().filter(|a| a.shared_of.as_deref() == Some(id)).map(|a| a.id.clone()).collect();
+        for d in dependents {
+            self.remove_account(&d)?;
+        }
         let account = self.accounts.iter().find(|a| a.id == id).cloned();
         let aid = self.account_ids.get(id).copied();
         let email = account.as_ref().map(|a| a.email.clone()).unwrap_or_default();
@@ -448,12 +454,20 @@ impl Session {
     /// Abre el asistente para volver a iniciar sesión en una cuenta (contraseña nueva o permiso
     /// OAuth caducado).
     pub fn reauth_account(&mut self, id: &str) {
+        // Un buzón compartido (F8.1) entra con el inicio de sesión de su dueño.
+        let id = self
+            .accounts
+            .iter()
+            .find(|a| a.id == id)
+            .and_then(|a| a.shared_of.clone())
+            .unwrap_or_else(|| id.to_string());
         let Some(mut account) = self.accounts.iter().find(|a| a.id == id).cloned() else { return };
         self.wizard_close();
         // Gmail y Microsoft dados de alta con contraseña de app: si esta versión trae su inicio de
         // sesión (OAuth), se ofrece ése y la cuenta pasa a usarlo (Google solo comparte calendario
         // y contactos con OAuth).
-        if let Some(auth) = reauth_upgrade(&account, crate::onboarding::oauth_available) {
+        let settings = self.oauth_settings();
+        if let Some(auth) = reauth_upgrade(&account, |p| crate::onboarding::oauth_available(&settings, p)) {
             account.incoming.auth = auth;
             account.outgoing.auth = auth;
         }
@@ -464,7 +478,7 @@ impl Session {
         };
         w.flow = Some(match account.incoming.auth {
             iuredesk_model::account::AuthMethod::OAuth2 { provider } => {
-                w.oauth_ready = crate::onboarding::oauth_available(provider);
+                w.oauth_ready = crate::onboarding::oauth_available(&settings, provider);
                 crate::onboarding::Flow::OAuth(provider)
             }
             iuredesk_model::account::AuthMethod::AppPassword => crate::onboarding::Flow::AppPassword {
@@ -480,7 +494,7 @@ impl Session {
             },
             iuredesk_model::account::AuthMethod::Password => crate::onboarding::Flow::Password,
         });
-        w.reserved = self.account_ids.get(id).copied();
+        w.reserved = self.account_ids.get(&id).copied();
         w.reauth = Some(account);
         w.step = crate::onboarding::WizardStep::Provider;
         self.wizard = Some(w);
@@ -529,6 +543,7 @@ mod reauth_tests {
             caldav_url: None,
             carddav_url: None,
             identities: vec![],
+            shared_of: None,
         }
     }
 

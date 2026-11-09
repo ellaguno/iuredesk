@@ -126,6 +126,7 @@ fn live_account_syncs_reads_archives_and_sends() {
         caldav_url: None,
         carddav_url: None,
         identities: vec![],
+        shared_of: None,
     };
     let accounts = AccountStore::at(dir.path().join("accounts.json"));
     accounts.upsert(account).unwrap();

@@ -263,6 +263,7 @@ mod tests {
             caldav_url: None,
             carddav_url: None,
             identities: Vec::new(),
+            shared_of: None,
         }
     }
 

@@ -187,7 +187,12 @@ impl Graph {
                 }
             };
 
-        let remote_lists = self.list(ctx, "/me/todo/lists").await?;
+        // Microsoft To Do no existe para un buzón compartido (F8.1): sin listas de tareas.
+        let remote_lists = if self.client.account().shared_of.is_some() {
+            Vec::new()
+        } else {
+            self.list(ctx, "/me/todo/lists").await?
+        };
         let local_lists: Vec<TaskList> = store.task_lists()?.into_iter().filter(|l| l.account == Some(acct)).collect();
         let mut lists = Vec::new();
         for l in &remote_lists {

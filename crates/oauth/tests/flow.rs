@@ -283,6 +283,7 @@ fn account() -> Account {
         caldav_url: None,
         carddav_url: None,
         identities: vec![],
+        shared_of: None,
     }
 }
 
@@ -399,4 +400,37 @@ async fn hostile_callbacks_do_not_break_the_listener() {
     let resp = reqwest::get(format!("{redirect}/?code=the-code&state={}", q["state"])).await.unwrap();
     assert_eq!(resp.status(), 200);
     assert!(finish.await.unwrap().is_ok());
+}
+
+/// F8.1: un buzón compartido pide su token con los alcances `.Shared` usando el token de refresco
+/// del dueño (y guarda ahí el rotado); si al dueño le falta ese permiso, su token no se borra.
+#[tokio::test]
+async fn shared_mailbox_uses_the_owners_refresh_token() {
+    let (port, state) = fake_server().await;
+    state.lock().unwrap().rotate = true;
+    let mut cfg = provider(port);
+    cfg.shared_scopes = vec!["https://graph.microsoft.com/Mail.ReadWrite.Shared".into(), "offline_access".into()];
+    let secrets = Arc::new(MemoryStore::default());
+    secrets.set("acc1", SecretPurpose::OAuthRefresh, "rt-0").unwrap();
+    let mgr = TokenManager::new(http_client().unwrap(), secrets.clone()).with_provider(OAuthProvider::Google, cfg);
+    let mut shared = account();
+    shared.id = "acc2".into();
+    shared.email = "ventas@example.com".into();
+    shared.shared_of = Some("acc1".into());
+
+    assert_eq!(mgr.access_token(&shared, TokenAudience::Shared).await.unwrap(), "at-1");
+    {
+        let st = state.lock().unwrap();
+        assert_eq!(st.requests[0]["refresh_token"], "rt-0");
+        assert!(st.requests[0]["scope"].contains("Mail.ReadWrite.Shared"));
+    }
+    assert_eq!(secrets.get("acc1", SecretPurpose::OAuthRefresh).unwrap().as_deref(), Some("rt-1"));
+    assert_eq!(secrets.get("acc2", SecretPurpose::OAuthRefresh).unwrap(), None);
+
+    // Sin permiso `.Shared`: hay que volver a iniciar sesión, pero el dueño conserva su token.
+    state.lock().unwrap().invalid_grant = true;
+    mgr.invalidate("acc2");
+    let err = mgr.access_token(&shared, TokenAudience::Shared).await.unwrap_err();
+    assert!(err.needs_reconsent(), "{err:?}");
+    assert_eq!(secrets.get("acc1", SecretPurpose::OAuthRefresh).unwrap().as_deref(), Some("rt-1"));
 }

@@ -129,11 +129,8 @@ impl Session {
         if self.live.tokens.is_none()
             && let Ok(http) = iuredesk_oauth::http_client()
         {
-            let tm = iuredesk_oauth::TokenManager::from_settings(
-                http,
-                Arc::clone(&self.secrets),
-                &iuredesk_oauth::OAuthSettings::default(),
-            );
+            let tm =
+                iuredesk_oauth::TokenManager::from_settings(http, Arc::clone(&self.secrets), &self.oauth_settings());
             self.live.tokens = Some(Arc::new(tm));
         }
         for a in &accounts {

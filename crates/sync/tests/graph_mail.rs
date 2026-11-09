@@ -56,6 +56,9 @@ struct G {
     requests: Vec<String>,
     patches: Vec<(String, Value)>,
     sent: Vec<String>,
+    /// Raíz del buzón que sirve: vacío = `me`; `users/<dirección>` = buzón compartido (F8.1), y
+    /// entonces `/me` responde 403.
+    mailbox: String,
 }
 
 impl G {
@@ -114,8 +117,17 @@ fn handle(st: &Mutex<G>, req: Req) -> Resp {
     if req.header("Authorization") != Some("Bearer tok-graph") {
         return Resp::new(401, "");
     }
-    let path = path_only(&req.path).trim_start_matches("/v1.0").to_string();
-    let base = g.base.clone();
+    let mut path = path_only(&req.path).trim_start_matches("/v1.0").to_string();
+    let mbx = if g.mailbox.is_empty() { "me".to_string() } else { g.mailbox.clone() };
+    if mbx != "me" {
+        if path.starts_with("/me/") {
+            return Resp::new(403, json!({"error": {"code": "ErrorAccessDenied"}}).to_string());
+        }
+        if let Some(rest) = path.strip_prefix(&format!("/{mbx}/")) {
+            path = format!("/me/{rest}");
+        }
+    }
+    let base = format!("{}/v1.0/{mbx}", g.base);
     let seg: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     match (req.method.as_str(), seg.as_slice()) {
         ("GET", ["me", "always429"]) => Resp::new(429, "").with("Retry-After", "0"),
@@ -140,7 +152,7 @@ fn handle(st: &Mutex<G>, req: Req) -> Resp {
             let q = req.path.split_once('?').map(|(_, q)| q).unwrap_or_default();
             let token: Option<u64> =
                 q.split('&').find_map(|kv| kv.strip_prefix("$deltatoken=")).and_then(|t| t.parse().ok());
-            let link = format!("{base}/v1.0/me/mailFolders/{fid}/messages/delta?$deltatoken={}", g.seq);
+            let link = format!("{base}/mailFolders/{fid}/messages/delta?$deltatoken={}", g.seq);
             match token {
                 None => {
                     let ids: Vec<String> =
@@ -150,7 +162,7 @@ fn handle(st: &Mutex<G>, req: Req) -> Resp {
                     let (items, next) = if page2 || ids.len() < 2 {
                         (if page2 { second } else { &ids[..] }, None)
                     } else {
-                        (first, Some(format!("{base}/v1.0/me/mailFolders/{fid}/messages/delta?$skiptoken=p2")))
+                        (first, Some(format!("{base}/mailFolders/{fid}/messages/delta?$skiptoken=p2")))
                     };
                     let value: Vec<Value> = items.iter().filter_map(|i| g.json(i)).collect();
                     let mut body = json!({ "value": value });
@@ -250,7 +262,18 @@ fn account() -> Account {
         caldav_url: None,
         carddav_url: None,
         identities: vec![],
+        shared_of: None,
     }
+}
+
+/// Buzón compartido `ventas@contoso.com` que Ana abre con su inicio de sesión (F8.1).
+fn shared_account() -> Account {
+    let mut a = account();
+    a.id = "ventas".into();
+    a.display_name = "Ventas".into();
+    a.email = "ventas@contoso.com".into();
+    a.shared_of = Some("m365".into());
+    a
 }
 
 fn by_remote(store: &Store, id: &str) -> Option<MessageId> {
@@ -383,6 +406,81 @@ async fn graph_mail_delta_removed_throttling_ops_and_send() {
         .with_retry(1, Duration::from_millis(10));
     let err = c.get_json(&c.url("/me/always429")).await.unwrap_err();
     assert!(matches!(err, GraphError::Throttled { retry_after: Some(0) }), "{err:?}");
+    sh.shutdown().await;
+}
+
+/// F8.1: un buzón compartido sincroniza, opera y envía por `/users/{dirección}`, nunca por `/me`,
+/// y pide su token con la audiencia de buzones compartidos.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_mailbox_goes_through_users_root() {
+    struct SharedTokens(Mutex<Vec<(String, TokenAudience)>>);
+    impl TokenProvider for SharedTokens {
+        fn access_token<'a>(
+            &'a self,
+            a: &'a Account,
+            aud: TokenAudience,
+        ) -> BoxFuture<'a, Result<String, iuredesk_oauth::Error>> {
+            self.0.lock().unwrap().push((a.id.clone(), aud));
+            Box::pin(async { Ok("tok-graph".to_string()) })
+        }
+        fn invalidate(&self, _account_id: &str) {}
+    }
+    let state = Arc::new(Mutex::new(G { mailbox: "users/ventas@contoso.com".into(), ..Default::default() }));
+    {
+        let mut g = state.lock().unwrap();
+        g.put("F-inbox", "s1", msg("pedido", "c1", 5));
+        g.put("F-inbox", "s2", msg("factura", "c2", 4));
+    }
+    let h = Arc::clone(&state);
+    let base = serve(move |req| handle(&h, req)).await;
+    state.lock().unwrap().base = base.clone();
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
+    let opts = SyncOptions {
+        poll_interval: Duration::from_secs(3600),
+        graph_inbox_poll: Duration::from_secs(3600),
+        graph_base_url: format!("{base}/v1.0"),
+        prefetch_recent: 1,
+        // Aunque el correo por Graph esté apagado: un buzón compartido no tiene IMAP.
+        graph_mail: false,
+        ..Default::default()
+    };
+    let tokens = Arc::new(SharedTokens(Mutex::new(Vec::new())));
+    let dyn_tokens: Arc<dyn TokenProvider> = tokens.clone();
+    let sh = SyncEngine::start_with(
+        Arc::clone(&store),
+        vec![shared_account()],
+        Some(Arc::clone(&dyn_tokens)),
+        Arc::new(MemoryStore::default()),
+        opts,
+    );
+    sh.sync_now_wait("ventas").await.unwrap();
+    let acct = store.account_labels().unwrap()[0].id;
+    let inbox = store.folders(acct).unwrap().into_iter().find(|f| f.role == FolderRole::Inbox).unwrap().id;
+    assert_eq!(store.count(inbox).unwrap().total, 2);
+
+    let s1 = by_remote(&store, "s1").unwrap();
+    sh.set_flags(s1, Flags { seen: true, ..Default::default() }).unwrap();
+    until("PATCH en el buzón compartido", || state.lock().unwrap().patches.iter().any(|(id, _)| id == "s1")).await;
+
+    let client =
+        GraphClient::new(shared_account(), Arc::clone(&dyn_tokens), &format!("{base}/v1.0"), Duration::from_secs(10))
+            .unwrap();
+    let out = OutgoingMessage {
+        envelope_from: "ventas@contoso.com".into(),
+        recipients: vec!["cliente@x.com".into()],
+        raw: b"From: ventas@contoso.com\r\nTo: cliente@x.com\r\nSubject: Cotizacion\r\n\r\nAdjunto\r\n".to_vec(),
+    };
+    GraphSendTransport::new(client).send(&out).await.unwrap();
+
+    {
+        let g = state.lock().unwrap();
+        assert_eq!(g.sent.len(), 1);
+        assert!(g.requests.iter().all(|r| !r.contains("/v1.0/me/")), "nada por /me: {:?}", g.requests);
+        assert!(g.requests.iter().any(|r| r == "POST /v1.0/users/ventas@contoso.com/sendMail"), "{:?}", g.requests);
+    }
+    assert!(tokens.0.lock().unwrap().iter().all(|(id, aud)| id == "ventas" && *aud == TokenAudience::Shared));
     sh.shutdown().await;
 }
 

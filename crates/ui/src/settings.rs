@@ -8,7 +8,9 @@ use iuredesk_engine::session::{ConnectionTest, kind_label, servers_editable};
 use iuredesk_engine::{AccountRow, DensityPref, ShortcutScheme, StartPref, ThemePref};
 use iuredesk_model::account::{Account, Identity, Protocol};
 use iurefficient_ui::fonts::FontChoice;
-use iurefficient_ui::{Icon, avatar, icons, lang, pick, section_label, segmented, sidebar_item, theme};
+use iurefficient_ui::{
+    Banner, Icon, Severity, avatar, icons, lang, pick, section_label, segmented, sidebar_item, theme,
+};
 
 use crate::app::{DeskApp, set_language};
 
@@ -92,6 +94,12 @@ pub struct AccountsUi {
     pub(crate) editor: Option<AccountEditor>,
     /// R1.2: «Abrir al iniciar sesión» leído del sistema (una vez por apertura de Ajustes).
     autostart: Option<iuredesk_desktop::autostart::State>,
+    /// F8.1: Microsoft de la organización en edición (*client id*, inquilino); `None` = leer de
+    /// las preferencias.
+    ms_org: Option<(String, String)>,
+    /// F8.1: cuenta en la que está abierto «Agregar buzón compartido» y la dirección escrita.
+    shared_for: Option<String>,
+    shared_addr: String,
 }
 
 /// Abre el editor de una cuenta.
@@ -225,7 +233,17 @@ fn accounts(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
     let mut reauth: Option<String> = None;
     let mut sync: Option<String> = None;
     let mut save_sig: Option<(String, String)> = None;
+    let mut shared_submit: Option<(String, String)> = None;
+    let mut shared_close = false;
+    let shared_add = app.session.shared_add.clone();
     for r in &rows {
+        let shared_of = r.account.as_ref().and_then(|a| a.shared_of.clone());
+        let owner_email = shared_of
+            .as_ref()
+            .and_then(|o| rows.iter().find(|x| &x.id == o))
+            .map(|x| x.email.clone())
+            .unwrap_or_default();
+        let opens_shared = r.account.as_ref().is_some_and(iuredesk_engine::session::can_open_shared);
         egui::Frame::new()
             .fill(c.surface_alt)
             .stroke(egui::Stroke::new(1.0, c.separator))
@@ -243,7 +261,9 @@ fn accounts(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
                             iurefficient_ui::badge(ui, kind, iurefficient_ui::BadgeKind::Neutral);
                         });
                         let mut detail = r.name.clone();
-                        if !r.server.is_empty() {
+                        if shared_of.is_some() {
+                            detail = format!("{} {owner_email}", pick("Shared mailbox · opened with", "Buzón compartido · se abre con"));
+                        } else if !r.server.is_empty() {
                             if !detail.is_empty() {
                                 detail.push_str(" · ");
                             }
@@ -292,10 +312,57 @@ fn accounts(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
                     if ui.button(pick("Sync now", "Sincronizar ahora")).clicked() {
                         sync = Some(r.id.clone());
                     }
+                    if opens_shared
+                        && app.settings_ui.shared_for.as_deref() != Some(r.id.as_str())
+                        && ui
+                            .button(pick("Shared mailbox…", "Buzón compartido…"))
+                            .on_hover_text(pick(
+                                "Open a shared or delegated mailbox you have access to (sales@, reception@…).",
+                                "Abre un buzón compartido o delegado al que tengas acceso (ventas@, recepción@…).",
+                            ))
+                            .clicked()
+                    {
+                        app.settings_ui.shared_for = Some(r.id.clone());
+                        app.settings_ui.shared_addr.clear();
+                        shared_close = true;
+                    }
                     if ui.button(RichText::new(pick("Remove account…", "Eliminar cuenta…")).color(c.danger)).clicked() {
                         app.settings_ui.confirm_remove = Some(r.id.clone());
                     }
                 });
+                if app.settings_ui.shared_for.as_deref() == Some(r.id.as_str()) {
+                    ui.add_space(6.0);
+                    let running = shared_add.as_ref().is_some_and(|a| a.owner == r.id && a.running());
+                    ui.horizontal_wrapped(|ui| {
+                        let edit = ui.add_enabled(
+                            !running,
+                            egui::TextEdit::singleline(&mut app.settings_ui.shared_addr)
+                                .desired_width(260.0)
+                                .hint_text(pick("sales@contoso.com", "ventas@contoso.com")),
+                        );
+                        let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        if running {
+                            ui.spinner();
+                            ui.label(RichText::new(pick("Checking access…", "Comprobando el acceso…")).color(c.text_muted));
+                        } else {
+                            let ready = !app.settings_ui.shared_addr.trim().is_empty();
+                            if (ui.add_enabled(ready, egui::Button::new(pick("Add", "Agregar"))).clicked() || enter) && ready {
+                                shared_submit = Some((r.id.clone(), app.settings_ui.shared_addr.clone()));
+                            }
+                        }
+                        if ui.button(pick("Cancel", "Cancelar")).clicked() {
+                            app.settings_ui.shared_for = None;
+                            shared_close = true;
+                        }
+                    });
+                    if let Some(f) = shared_add.as_ref().filter(|a| a.owner == r.id).and_then(|a| a.failure.as_ref()) {
+                        ui.add_space(4.0);
+                        Banner::new(Severity::Warning, f.text.get()).show(ui);
+                        if f.reauth_owner && ui.button(pick("Sign in again…", "Volver a iniciar sesión…")).clicked() {
+                            reauth = Some(r.id.clone());
+                        }
+                    }
+                }
                 if app.settings_ui.confirm_remove.as_deref() == Some(r.id.as_str()) {
                     ui.add_space(6.0);
                     egui::Frame::new()
@@ -348,7 +415,22 @@ fn accounts(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
     if ui.button(pick("Add account…", "Agregar cuenta…")).clicked() {
         *run = Some("app.add_account".into());
     }
+    ui.add_space(12.0);
+    microsoft_org(app, ui);
     let ctx = ui.ctx().clone();
+    if shared_close {
+        app.session.close_shared_add();
+    }
+    if let Some((owner, addr)) = shared_submit
+        && let Err(t) = app.session.add_shared_mailbox(&owner, &addr)
+    {
+        app.notice(iuredesk_engine::Notice::error(t));
+    }
+    // Agregado: se cierra el formulario.
+    if shared_add.as_ref().is_some_and(|a| a.done()) {
+        app.settings_ui.shared_for = None;
+        app.session.close_shared_add();
+    }
     if let Some((email, text)) = save_sig {
         app.session.set_signature_text(&email, &text);
     }
@@ -373,6 +455,60 @@ fn accounts(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
         app.settings_open = false;
         app.session.reauth_account(&id);
     }
+}
+
+/// F8.1: *client id* e inquilino de Microsoft de la organización (plegado: casi nadie lo necesita).
+fn microsoft_org(app: &mut DeskApp, ui: &mut Ui) {
+    let saved = app.session.prefs.microsoft_org.clone();
+    egui::CollapsingHeader::new(pick("Microsoft 365 of your organization", "Microsoft 365 de tu organización"))
+        .id_salt("settings_ms_org")
+        .default_open(!saved.is_empty())
+        .show(ui, |ui| {
+            muted(
+                ui,
+                pick(
+                    "Only if your IT department registered IureDesk in its own Microsoft Entra or asks you to sign in to its organization. Applies to new sign-ins; Microsoft accounts already added may ask you to sign in again.",
+                    "Solo si tu área de TI registró IureDesk en su propio Microsoft Entra o te pide entrar con su organización. Vale para los inicios de sesión nuevos; las cuentas de Microsoft ya agregadas pueden pedirte volver a iniciar sesión.",
+                ),
+            );
+            let (id, tenant) = app
+                .settings_ui
+                .ms_org
+                .get_or_insert_with(|| (saved.client_id.clone(), saved.tenant.clone()));
+            egui::Grid::new("ms_org_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                ui.label(pick("Application (client) id", "Id. de aplicación (cliente)"));
+                ui.add(
+                    egui::TextEdit::singleline(id)
+                        .desired_width(320.0)
+                        .hint_text(pick("Empty: IureDesk's", "Vacío: el de IureDesk")),
+                );
+                ui.end_row();
+                ui.label(pick("Organization", "Organización"));
+                ui.add(
+                    egui::TextEdit::singleline(tenant)
+                        .desired_width(320.0)
+                        .hint_text(pick("contoso.com or tenant id", "contoso.com o Id. de inquilino")),
+                );
+                ui.end_row();
+            });
+            let (id, tenant) = (id.clone(), tenant.clone());
+            let changed = id.trim() != saved.client_id || tenant.trim().to_ascii_lowercase() != saved.tenant;
+            ui.horizontal(|ui| {
+                if ui.add_enabled(changed, egui::Button::new(pick("Save", "Guardar"))).clicked() {
+                    match app.session.set_microsoft_org(&id, &tenant) {
+                        Ok(()) => {
+                            app.settings_ui.ms_org = None;
+                            app.notice(iuredesk_engine::Notice::success("Saved.", "Guardado."));
+                        }
+                        Err(t) => app.notice(iuredesk_engine::Notice::error(t)),
+                    }
+                }
+                if !saved.is_empty() && ui.button(pick("Use IureDesk's", "Usar los de IureDesk")).clicked() {
+                    let _ = app.session.set_microsoft_org("", "");
+                    app.settings_ui.ms_org = None;
+                }
+            });
+        });
 }
 
 /// Ventana del editor de una cuenta.

@@ -162,6 +162,7 @@ fn gmail_oauth_account_gets_calendars_even_without_contacts_scope() {
         caldav_url: Some(format!("{base}/caldav/v2/")),
         carddav_url: Some(format!("{base}/carddav/v1/principals/{EMAIL}/lists/default/")),
         identities: vec![],
+        shared_of: None,
     };
     let accounts = AccountStore::at(dir.path().join("accounts.json"));
     accounts.upsert(account).unwrap();

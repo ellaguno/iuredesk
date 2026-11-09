@@ -40,6 +40,7 @@ fn account(user: &str) -> Account {
         caldav_url: None,
         carddav_url: None,
         identities: vec![],
+        shared_of: None,
     }
 }
 

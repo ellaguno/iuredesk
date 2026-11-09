@@ -188,6 +188,18 @@ impl std::fmt::Debug for GraphClient {
     }
 }
 
+/// Raíz del buzón de una cuenta en Graph: `/me`, o `/users/{dirección}` si es un buzón
+/// compartido o delegado (F8.1).
+pub fn mailbox_root(account: &Account) -> String {
+    if account.shared_of.is_none() {
+        return "/me".to_string();
+    }
+    let addr: String = account.email.trim().chars().take(320).collect();
+    // `@` se deja legible; lo demás fuera de lo seguro va codificado (`/`, `?`, `#`…).
+    let enc = enc(&addr).replace("%40", "@");
+    format!("/users/{enc}")
+}
+
 /// `Retry-After` en segundos (solo la forma numérica; la de fecha se trata como ausente).
 fn retry_after(h: &reqwest::header::HeaderMap) -> Option<u64> {
     h.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?.trim().parse::<u64>().ok()
@@ -205,8 +217,9 @@ impl GraphClient {
             http,
             base: base.trim_end_matches('/').to_string(),
             tokens,
+            // Un buzón compartido pide su token con los alcances `.Shared` (F8.1).
+            audience: if account.shared_of.is_some() { TokenAudience::Shared } else { TokenAudience::Api },
             account,
-            audience: TokenAudience::Api,
             prefer: "odata.maxpagesize=100".to_string(),
             max_pages: 200,
             retries: DEFAULT_RETRIES,
@@ -243,8 +256,22 @@ impl GraphClient {
         &self.base
     }
 
-    /// URL absoluta de una ruta (`/me/mailFolders`).
+    /// Raíz del buzón en las rutas: `/me`, o `/users/{dirección}` en un buzón compartido o
+    /// delegado (F8.1). La dirección va codificada como segmento de ruta.
+    pub fn mailbox(&self) -> String {
+        mailbox_root(&self.account)
+    }
+
+    /// URL absoluta de una ruta (`/me/mailFolders`). En un buzón compartido, `/me` se cambia por
+    /// [`GraphClient::mailbox`]: el correo, el calendario, los contactos y el envío escriben sus
+    /// rutas una sola vez.
     pub fn url(&self, path: &str) -> String {
+        if let Some(rest) = path.strip_prefix("/me")
+            && (rest.is_empty() || rest.starts_with('/') || rest.starts_with('?'))
+            && self.account.shared_of.is_some()
+        {
+            return format!("{}{}{rest}", self.base, self.mailbox());
+        }
         format!("{}{}", self.base, path)
     }
 
@@ -404,6 +431,36 @@ mod tests {
         assert!(!GraphError::Http { status: 404, code: String::new() }.is_transient());
         assert!(GraphError::Unauthorized.needs_reauth());
         assert_eq!(GraphError::Throttled { retry_after: None }.status(), Some(429));
+    }
+
+    #[test]
+    fn shared_mailbox_root() {
+        use iuredesk_model::account::{AuthMethod, OAuthProvider, Protocol, Security, ServerConfig};
+        let srv = |protocol| ServerConfig {
+            protocol,
+            host: "outlook.office365.com".into(),
+            port: 993,
+            security: Security::Tls,
+            auth: AuthMethod::OAuth2 { provider: OAuthProvider::Microsoft },
+            username: "ana@contoso.com".into(),
+        };
+        let mut a = Account {
+            id: "a2".into(),
+            display_name: String::new(),
+            email: "ventas@contoso.com".into(),
+            kind: Default::default(),
+            incoming: srv(Protocol::Imap),
+            outgoing: srv(Protocol::Smtp),
+            caldav_url: None,
+            carddav_url: None,
+            identities: vec![],
+            shared_of: None,
+        };
+        assert_eq!(mailbox_root(&a), "/me");
+        a.shared_of = Some("a1".into());
+        assert_eq!(mailbox_root(&a), "/users/ventas@contoso.com");
+        a.email = "x/../y?z@contoso.com".into();
+        assert_eq!(mailbox_root(&a), "/users/x%2F..%2Fy%3Fz@contoso.com");
     }
 
     #[test]

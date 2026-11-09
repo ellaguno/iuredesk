@@ -15,11 +15,27 @@ intermedio: los datos van del inquilino al equipo del usuario y se guardan ahí.
 | `Calendars.ReadWrite` | Su calendario e invitaciones |
 | `Contacts.ReadWrite` | Sus contactos |
 | `Tasks.ReadWrite` | Microsoft To Do |
+| `Mail.ReadWrite.Shared`, `Mail.Send.Shared`, `Calendars.ReadWrite.Shared`, `Contacts.ReadWrite.Shared` | Buzones compartidos o delegados a los que el usuario ya tiene acceso |
 | `User.Read`, `openid`, `email`, `profile` | Saber quién inició sesión |
 | `offline_access` | Seguir sincronizando sin pedir la contraseña cada hora |
 | `IMAP.AccessAsUser.All`, `POP.AccessAsUser.All`, `SMTP.Send` (Outlook) | Reserva por IMAP/SMTP con el mismo inicio de sesión |
 
 Ningún permiso es de aplicación: IureDesk solo ve lo que ve el usuario que inició sesión.
+
+## Buzones compartidos
+
+El usuario agrega un buzón compartido (Ajustes → Cuentas → «Buzón compartido…») escribiendo su
+dirección. IureDesk comprueba primero que tenga acceso. Para que funcione, otorgue al usuario
+**Acceso total** (*Full Access*) sobre el buzón y, si debe enviar desde él, **Enviar como**
+(*Send As*) o **Enviar en nombre de**. Los cambios de permisos en Exchange Online pueden tardar
+hasta una hora.
+
+## Registro propio de la organización
+
+Si prefiere registrar IureDesk en su propio Entra (app de un solo inquilino, cliente público con
+`http://localhost` como URI de redirección y los permisos delegados de arriba), el usuario escribe
+el Id. de aplicación y el dominio de su organización en Ajustes → Cuentas → «Microsoft 365 de tu
+organización».
 
 ## Aprobar IureDesk para la organización
 
@@ -65,7 +81,9 @@ from your tenant to the user's computer and is stored there.
 
 `Mail.ReadWrite`, `Mail.Send` (mail), `Calendars.ReadWrite` (calendar and invitations),
 `Contacts.ReadWrite` (contacts), `Tasks.ReadWrite` (Microsoft To Do), `User.Read`, `openid`,
-`email`, `profile` (who signed in), `offline_access` (keep syncing), and the Outlook
+`email`, `profile` (who signed in), `offline_access` (keep syncing), `Mail.ReadWrite.Shared`,
+`Mail.Send.Shared`, `Calendars.ReadWrite.Shared`, `Contacts.ReadWrite.Shared` (shared or delegated
+mailboxes the user already has access to), and the Outlook
 `IMAP.AccessAsUser.All`, `POP.AccessAsUser.All`, `SMTP.Send` scopes (IMAP/SMTP fallback with the
 same sign-in). No application permissions: IureDesk only sees what the signed-in user sees.
 
@@ -83,6 +101,18 @@ administrator does not allow…" and a **"Copy the approval link for IT"** butto
 Or in the Entra admin center: *Enterprise applications → IureDesk → Permissions → Grant admin
 consent*. To limit it to some users, turn on "Assignment required?" in the app's *Properties* and
 assign users or groups (others get AADSTS50105, explained to them in plain words).
+
+## Shared mailboxes
+
+Users add a shared mailbox (Settings → Accounts → "Shared mailbox…") by its address; IureDesk first
+checks access. Grant the user **Full Access** to the mailbox and, to send from it, **Send As** or
+**Send on Behalf**. Permission changes in Exchange Online can take up to an hour.
+
+## Your own app registration
+
+To register IureDesk in your own Entra (single-tenant public client, redirect URI
+`http://localhost`, the delegated permissions above), users enter the application id and your
+organization's domain in Settings → Accounts → "Microsoft 365 of your organization".
 
 ## Conditional Access
 

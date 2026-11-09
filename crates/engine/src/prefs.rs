@@ -115,6 +115,64 @@ fn yes() -> bool {
     true
 }
 
+/// F8.1: inicio de sesión con Microsoft de la propia organización. Hay empresas que registran
+/// IureDesk en su Entra (app de un solo inquilino) o exigen su inquilino: aquí van su *client id*
+/// y su inquilino. Vacíos = los de esta compilación y `common`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MicrosoftOrg {
+    /// *Client id* (Id. de aplicación) registrado por la organización.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub client_id: String,
+    /// Inquilino: GUID, dominio verificado (`contoso.com`) u `organizations`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tenant: String,
+}
+
+impl MicrosoftOrg {
+    pub fn is_empty(&self) -> bool {
+        self.client_id.trim().is_empty() && self.tenant.trim().is_empty()
+    }
+
+    /// Valida lo escrito; devuelve la versión recortada o por qué no sirve (en lenguaje humano).
+    pub fn validated(client_id: &str, tenant: &str) -> Result<MicrosoftOrg, crate::Text> {
+        let client_id = client_id.trim();
+        let tenant = tenant.trim().to_ascii_lowercase();
+        let id_ok = client_id.is_empty()
+            || (client_id.len() <= 64 && client_id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
+        if !id_ok {
+            return Err(crate::Text::new(
+                "The application (client) id looks like 00000000-0000-0000-0000-000000000000. Copy it from the app's page in Microsoft Entra.",
+                "El Id. de aplicación (cliente) tiene la forma 00000000-0000-0000-0000-000000000000. Cópialo de la página de la app en Microsoft Entra.",
+            ));
+        }
+        let tenant_ok =
+            tenant.len() <= 128 && tenant.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.');
+        if !tenant_ok {
+            return Err(crate::Text::new(
+                "The organization must be its tenant id (00000000-…) or its domain, like contoso.com.",
+                "La organización debe ser su Id. de inquilino (00000000-…) o su dominio, como contoso.com.",
+            ));
+        }
+        Ok(MicrosoftOrg { client_id: client_id.to_string(), tenant })
+    }
+
+    /// Ajustes OAuth que resultan (lo vacío se deja a la compilación o al entorno).
+    pub fn oauth_settings(&self) -> iuredesk_oauth::OAuthSettings {
+        use iuredesk_oauth::{ClientCredentials, MicrosoftTenant};
+        let id = self.client_id.trim();
+        iuredesk_oauth::OAuthSettings {
+            google: None,
+            microsoft: (!id.is_empty()).then(|| ClientCredentials::new(id, None)),
+            microsoft_tenant: match self.tenant.trim() {
+                "" | "common" => MicrosoftTenant::Common,
+                "organizations" => MicrosoftTenant::Organizations,
+                "consumers" => MicrosoftTenant::Consumers,
+                t => MicrosoftTenant::Id(t.to_string()),
+            },
+        }
+    }
+}
+
 /// Preferencias persistidas.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Prefs {
@@ -220,6 +278,9 @@ pub struct Prefs {
     /// UX-13: fondo de «Mi día».
     #[serde(default)]
     pub today_background: crate::today_bg::TodayBackground,
+    /// Inicio de sesión con Microsoft de la propia organización (F8.1).
+    #[serde(default, skip_serializing_if = "MicrosoftOrg::is_empty")]
+    pub microsoft_org: MicrosoftOrg,
 }
 
 /// UX-3: dónde se muestra el panel contextual.
@@ -345,6 +406,7 @@ impl Default for Prefs {
             crisp_text: false,
             show_empty_contacts: false,
             today_background: Default::default(),
+            microsoft_org: MicrosoftOrg::default(),
             notes_dir: None,
             reading_width: None,
             reading_zoom_pct: default_reading_zoom(),
@@ -399,6 +461,27 @@ mod tests {
         let p2 = Prefs::load(&p);
         assert_eq!(p2.theme, ThemePref::Dark);
         assert!(p2.conversations);
+    }
+
+    #[test]
+    fn microsoft_org_validates_and_round_trips() {
+        assert!(MicrosoftOrg::validated("no es un id", "").is_err());
+        assert!(MicrosoftOrg::validated("", "contoso.com/../x").is_err());
+        let org = MicrosoftOrg::validated(" 0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0 ", " Contoso.COM ").unwrap();
+        assert_eq!(org.tenant, "contoso.com");
+        let s = org.oauth_settings();
+        assert_eq!(s.microsoft_credentials().unwrap().client_id, "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
+        assert!(s.microsoft().unwrap().authorize_url.contains("/contoso.com/oauth2/"));
+        // Vacío: nada en `prefs.json` y los valores de la compilación.
+        let empty = MicrosoftOrg::validated(" ", "").unwrap();
+        assert!(empty.is_empty());
+        assert_eq!(empty.oauth_settings(), iuredesk_oauth::OAuthSettings::default());
+        assert!(!serde_json::to_string(&Prefs::default()).unwrap().contains("microsoft_org"));
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("prefs.json");
+        let prefs = Prefs { microsoft_org: org, ..Default::default() };
+        prefs.save(&p).unwrap();
+        assert_eq!(Prefs::load(&p), prefs);
     }
 
     #[test]

@@ -157,9 +157,8 @@ pub fn flow_for(kind: AccountKind) -> Flow {
     }
 }
 
-/// ¿Hay *client id* para este proveedor en esta compilación/entorno?
-pub fn oauth_available(p: OAuthProvider) -> bool {
-    let s = iuredesk_oauth::OAuthSettings::default();
+/// ¿Hay *client id* para este proveedor (ajustes de la organización, entorno o compilación)?
+pub fn oauth_available(s: &iuredesk_oauth::OAuthSettings, p: OAuthProvider) -> bool {
     match p {
         OAuthProvider::Google => s.google_credentials().is_ok(),
         OAuthProvider::Microsoft => s.microsoft_credentials().is_ok(),
@@ -219,6 +218,7 @@ pub fn build_account(id: String, name: &str, email: &str, cand: &Candidate, auth
         caldav_url: cand.caldav_url.clone(),
         carddav_url: cand.carddav_url.clone(),
         identities: vec![Identity { name: display, email: email.to_string(), signature: None, reply_to: None }],
+        shared_of: None,
     }
 }
 
@@ -400,6 +400,7 @@ pub fn account_from_manual(id: String, name: &str, email: &str, m: &ManualSetup)
         caldav_url: url(&m.caldav_url),
         carddav_url: url(&m.carddav_url),
         identities: vec![Identity { name: display, email: email.to_string(), signature: None, reply_to: None }],
+        shared_of: None,
     }
 }
 

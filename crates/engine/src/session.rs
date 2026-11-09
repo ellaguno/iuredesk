@@ -22,6 +22,7 @@ mod opened;
 mod outbox;
 mod pim;
 mod rules_glue;
+mod shared;
 mod tasks;
 mod today;
 mod wizard;
@@ -39,6 +40,7 @@ pub use notes_files::NoteSaved;
 pub use opened::FileOpened;
 pub use outbox::OfflineTransport;
 pub use rules_glue::{IureBadge, IureKind, RulePlace, SieveRow};
+pub use shared::{SharedMailboxAdd, SharedMailboxFailure, can_open_shared};
 pub use tasks::{TaskCaps, TaskSource};
 pub use today::{folder_from_key, folder_key};
 
@@ -259,6 +261,8 @@ pub enum EngineJob {
     AccountTest(std::result::Result<(), Text>),
     /// Resumen de «Mi día» (F6.1).
     Day(Box<crate::today::DaySummary>),
+    /// Comprobación de acceso a un buzón compartido (F8.1).
+    SharedMailbox(std::result::Result<(), shared::SharedMailboxFailure>),
     Failed(Text),
 }
 
@@ -407,6 +411,8 @@ pub struct Session {
     sample: bool,
     bg: Background,
     pub wizard: Option<Wizard>,
+    /// «Agregar buzón compartido» en curso o con su último fallo (F8.1).
+    pub shared_add: Option<shared::SharedMailboxAdd>,
     contacts_cache: Option<Vec<Contact>>,
     /// Contactos seleccionados en la lista.
     contact_selection: Vec<iuredesk_model::ContactId>,
@@ -496,6 +502,7 @@ impl Session {
             sample: cfg.sample,
             bg,
             wizard: None,
+            shared_add: None,
             contacts_cache: None,
             contact_selection: Vec::new(),
             note_focus: None,
@@ -1579,6 +1586,25 @@ impl Session {
 
     // ------------------------------------------------------------------ preferencias
 
+    /// Ajustes OAuth en uso: los de la organización (Ajustes → Cuentas) sobre el entorno y la
+    /// compilación.
+    pub fn oauth_settings(&self) -> iuredesk_oauth::OAuthSettings {
+        self.prefs.microsoft_org.oauth_settings()
+    }
+
+    /// F8.1: guarda el *client id* y el inquilino de Microsoft de la organización. Vale para los
+    /// inicios de sesión nuevos; la sincronización en curso sigue con lo de antes hasta que se
+    /// reinicie (la próxima vez que arranque).
+    pub fn set_microsoft_org(&mut self, client_id: &str, tenant: &str) -> std::result::Result<(), Text> {
+        let org = crate::prefs::MicrosoftOrg::validated(client_id, tenant)?;
+        if org != self.prefs.microsoft_org {
+            self.prefs.microsoft_org = org;
+            self.live.tokens = None;
+            self.save_prefs();
+        }
+        Ok(())
+    }
+
     /// Guarda las preferencias (sin ruta, no hace nada). Un fallo no interrumpe la sesión.
     pub fn save_prefs(&self) {
         if let Some(p) = &self.prefs_path {
@@ -1770,6 +1796,7 @@ impl Session {
                 self.on_day(id, *s);
                 None
             }
+            EngineJob::SharedMailbox(r) => self.on_shared_mailbox(id, r),
             EngineJob::Failed(t) => {
                 self.day_job_failed(id);
                 self.rows_job_done(id);
@@ -2064,10 +2091,11 @@ impl Session {
     /// Usa un descubrimiento ya hecho (p. ej. [`crate::onboarding::known_provider_discovery`]) y
     /// pasa a la tarjeta del proveedor.
     pub fn wizard_apply_discovery(&mut self, d: iuredesk_autoconfig::Discovery) {
+        let settings = self.oauth_settings();
         let w = self.wizard.get_or_insert_with(Wizard::default);
         let flow = crate::onboarding::flow_for(d.kind);
         w.oauth_ready = match &flow {
-            Flow::OAuth(p) => crate::onboarding::oauth_available(*p),
+            Flow::OAuth(p) => crate::onboarding::oauth_available(&settings, *p),
             _ => false,
         };
         if w.email.trim().is_empty() {
@@ -2169,7 +2197,7 @@ impl Session {
     /// «Continuar con Google/Microsoft»: abre el navegador y espera el permiso.
     pub fn wizard_oauth(&mut self) {
         let Some(Flow::OAuth(provider)) = self.wizard.as_ref().and_then(|w| w.flow.clone()) else { return };
-        let settings = iuredesk_oauth::OAuthSettings::default();
+        let settings = self.oauth_settings();
         let cfg = match provider {
             OAuthProvider::Google => settings.google(),
             OAuthProvider::Microsoft => settings.microsoft(),

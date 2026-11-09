@@ -31,6 +31,7 @@ fn account(id: &str, protocol: Protocol, port: u16) -> Account {
         caldav_url: None,
         carddav_url: None,
         identities: vec![],
+        shared_of: None,
     }
 }
 

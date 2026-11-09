@@ -69,6 +69,7 @@ async fn main() -> anyhow_like::Result {
         caldav_url: env("IUREDESK_CALDAV_URL"),
         carddav_url: env("IUREDESK_CARDDAV_URL"),
         identities: vec![],
+        shared_of: None,
     };
     let source = if graph.is_some() {
         PimSource::Graph { base_url: env("IUREDESK_GRAPH_BASE").unwrap_or_else(|| GRAPH_BASE.into()) }

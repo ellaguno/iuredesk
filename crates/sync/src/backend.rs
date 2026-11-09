@@ -47,6 +47,10 @@ pub fn choose_backend(account: &Account, opts: &SyncOptions, has_tokens: bool) -
     if account.incoming.protocol == Protocol::Pop3 {
         return BackendKind::Pop3;
     }
+    // Un buzón compartido o delegado (F8.1) solo existe por Graph.
+    if account.shared_of.is_some() {
+        return BackendKind::Graph;
+    }
     let oauth = matches!(account.incoming.auth, AuthMethod::OAuth2 { .. });
     if account.kind == AccountKind::Microsoft365 && oauth && has_tokens && opts.graph_mail {
         return BackendKind::Graph;
@@ -78,6 +82,7 @@ mod tests {
             caldav_url: None,
             carddav_url: None,
             identities: vec![],
+            shared_of: None,
         }
     }
 
@@ -94,6 +99,10 @@ mod tests {
         );
         let off = SyncOptions { graph_mail: false, ..Default::default() };
         assert_eq!(choose_backend(&acc(AccountKind::Microsoft365, ms, Protocol::Imap), &off, true), BackendKind::Imap);
+        // Buzón compartido: Graph aunque el correo por Graph esté apagado (no hay IMAP para él).
+        let mut shared = acc(AccountKind::Microsoft365, ms, Protocol::Imap);
+        shared.shared_of = Some("owner".into());
+        assert_eq!(choose_backend(&shared, &off, true), BackendKind::Graph);
         let g = AuthMethod::OAuth2 { provider: OAuthProvider::Google };
         assert_eq!(choose_backend(&acc(AccountKind::Gmail, g, Protocol::Imap), &o, true), BackendKind::Imap);
         assert_eq!(

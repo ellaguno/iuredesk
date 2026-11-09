@@ -33,6 +33,7 @@ fn account(id: &str, email: &str) -> Account {
         caldav_url: None,
         carddav_url: None,
         identities: Vec::new(),
+        shared_of: None,
     }
 }
 
@@ -593,4 +594,23 @@ fn microsoft_admin_consent_and_conditional_access() {
     assert_eq!(issue, OAuthIssue::ConditionalAccess);
     assert!(issue.offers_retry() && !issue.offers_app_password());
     assert!(link.is_none());
+}
+
+/// F8.1: el *client id* y el inquilino de la organización mandan sobre la compilación en el
+/// inicio de sesión; lo que no sirve se rechaza sin tocar lo guardado.
+#[test]
+fn microsoft_org_settings_drive_the_sign_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _) = session(dir.path(), &[]);
+    let id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
+    s.set_microsoft_org(id, "Contoso.com").unwrap();
+    let cfg = s.oauth_settings().microsoft().unwrap();
+    assert_eq!(cfg.client.client_id, id);
+    assert!(cfg.authorize_url.contains("/contoso.com/oauth2/v2.0/authorize"));
+    assert!(cfg.admin_consent_url().unwrap().contains("/contoso.com/v2.0/adminconsent"));
+    let err = s.set_microsoft_org("¿?", "contoso.com").unwrap_err();
+    assert!(err.es.contains("Id. de aplicación"), "{}", err.es);
+    assert_eq!(s.prefs.microsoft_org.tenant, "contoso.com");
+    s.set_microsoft_org("", "").unwrap();
+    assert!(s.prefs.microsoft_org.is_empty());
 }

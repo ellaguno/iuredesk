@@ -110,6 +110,7 @@ async fn main() -> Res<()> {
         caldav_url: None,
         carddav_url: None,
         identities: vec![],
+        shared_of: None,
     };
     let secrets = MemoryStore::default();
     secrets.set("bench", SecretPurpose::Incoming, PASSWORD)?;

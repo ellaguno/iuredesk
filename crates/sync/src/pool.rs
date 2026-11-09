@@ -228,6 +228,7 @@ mod tests {
             caldav_url: None,
             carddav_url: None,
             identities: vec![],
+            shared_of: None,
         };
         let opts = SyncOptions { max_connections: 50, ..Default::default() };
         assert_eq!(connection_limit(&a, &opts), 15);

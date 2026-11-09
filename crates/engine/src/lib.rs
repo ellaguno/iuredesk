@@ -51,13 +51,13 @@ pub use iuredesk_pim_sync::SeriesScope;
 pub use iuredesk_rules;
 pub use iuredesk_sync;
 pub use lang::{Text, pick};
-pub use prefs::{ContextLayout, DensityPref, Prefs, ShortcutScheme, StartPref, ThemePref};
+pub use prefs::{ContextLayout, DensityPref, MicrosoftOrg, Prefs, ShortcutScheme, StartPref, ThemePref};
 pub use session::{
     AccountRow, AccountSync, CalState, Event, Fetched, FolderSel, IurePanel, IureSetup, LeadSuggestions, ListRow,
     LoginState, Module, Notice, NoticeKind, OfflineTransport, Outcome, PimBackend, Session, SessionConfig, SyncStatus,
     occurrence_start,
 };
-pub use session::{IureBadge, IureKind, RulePlace, SieveRow};
+pub use session::{IureBadge, IureKind, RulePlace, SharedMailboxAdd, SharedMailboxFailure, SieveRow};
 pub use time::Zone;
 
 /// Error del motor.

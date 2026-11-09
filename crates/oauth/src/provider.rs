@@ -29,6 +29,9 @@ pub enum TokenAudience {
     Mail,
     /// API REST del proveedor: Microsoft Graph, Google Calendar/People/Tasks.
     Api,
+    /// Graph sobre un buzón compartido o delegado (F8.1): los alcances `*.Shared`, con el token
+    /// de refresco de la cuenta dueña.
+    Shared,
 }
 
 /// Nombre de host del `redirect_uri` *loopback*. El receptor escucha siempre en `127.0.0.1`.
@@ -218,6 +221,16 @@ pub const MICROSOFT_GRAPH_SCOPES: &[&str] = &[
     "https://graph.microsoft.com/User.Read",
 ];
 
+/// Buzones compartidos y delegados (F8.1). Van en el consentimiento de los inicios de sesión
+/// nuevos; a quien ya entró se le piden al agregar su primer buzón compartido (volver a iniciar
+/// sesión), sin tocar el token que ya usa.
+pub const MICROSOFT_SHARED_SCOPES: &[&str] = &[
+    "https://graph.microsoft.com/Mail.ReadWrite.Shared",
+    "https://graph.microsoft.com/Mail.Send.Shared",
+    "https://graph.microsoft.com/Calendars.ReadWrite.Shared",
+    "https://graph.microsoft.com/Contacts.ReadWrite.Shared",
+];
+
 /// Reservado: alcances de la API de chat de Microsoft 365 Copilot para el asistente ✦ (PLAN.md §8).
 /// Vacío hasta que Microsoft publique la API de forma estable y el dueño decida pedirlos (cada
 /// alcance nuevo obliga a volver a pedir consentimiento a todos los usuarios).
@@ -243,6 +256,8 @@ pub struct ProviderConfig {
     pub mail_scopes: Vec<String>,
     /// Alcances que se mandan al pedir un token para la API. Vacío: no se manda `scope`.
     pub api_scopes: Vec<String>,
+    /// Alcances del token para un buzón compartido ([`TokenAudience::Shared`]).
+    pub shared_scopes: Vec<String>,
     /// Parámetros adicionales de la URL de autorización.
     pub extra_authorize_params: Vec<(String, String)>,
     pub redirect_host: RedirectHost,
@@ -264,6 +279,7 @@ impl ProviderConfig {
             consent_scopes: owned(GOOGLE_SCOPES),
             mail_scopes: Vec::new(),
             api_scopes: Vec::new(),
+            shared_scopes: Vec::new(),
             extra_authorize_params: vec![("access_type".into(), "offline".into()), ("prompt".into(), "consent".into())],
             redirect_host: RedirectHost::Ipv4Loopback,
         }
@@ -280,7 +296,11 @@ impl ProviderConfig {
         let mut consent = owned(MICROSOFT_OIDC_SCOPES);
         consent.extend(owned(MICROSOFT_MAIL_SCOPES));
         consent.extend(owned(MICROSOFT_GRAPH_SCOPES));
+        consent.extend(owned(MICROSOFT_SHARED_SCOPES));
         consent.extend(owned(MICROSOFT_COPILOT_SCOPES));
+        let mut shared = owned(MICROSOFT_GRAPH_SCOPES);
+        shared.extend(owned(MICROSOFT_SHARED_SCOPES));
+        shared.push("offline_access".into());
         Ok(Self {
             id: "microsoft".into(),
             display_name: "Microsoft".into(),
@@ -290,6 +310,7 @@ impl ProviderConfig {
             consent_scopes: consent,
             mail_scopes: mail,
             api_scopes: api,
+            shared_scopes: shared,
             extra_authorize_params: vec![("prompt".into(), "select_account".into())],
             redirect_host: RedirectHost::Localhost,
         })
@@ -314,6 +335,7 @@ impl ProviderConfig {
             consent_scopes: owned(scopes),
             mail_scopes: Vec::new(),
             api_scopes: Vec::new(),
+            shared_scopes: Vec::new(),
             extra_authorize_params: Vec::new(),
             redirect_host: RedirectHost::Ipv4Loopback,
         }
@@ -324,6 +346,7 @@ impl ProviderConfig {
         match audience {
             TokenAudience::Mail => &self.mail_scopes,
             TokenAudience::Api => &self.api_scopes,
+            TokenAudience::Shared => &self.shared_scopes,
         }
     }
 
@@ -387,6 +410,10 @@ mod tests {
         assert!(p.consent_scopes.iter().any(|s| s == "offline_access"));
         assert!(p.mail_scopes.iter().all(|s| !s.contains("graph.microsoft.com")));
         assert!(p.api_scopes.iter().all(|s| !s.contains("outlook.office.com")));
+        // Los alcances `.Shared` van en el consentimiento y en su propio token, no en el de siempre.
+        assert!(p.consent_scopes.iter().any(|s| s.ends_with("Mail.ReadWrite.Shared")));
+        assert!(p.api_scopes.iter().all(|s| !s.ends_with(".Shared")));
+        assert!(p.token_scopes(TokenAudience::Shared).iter().any(|s| s.ends_with("Calendars.ReadWrite.Shared")));
         assert!(ProviderConfig::microsoft(c.clone(), &MicrosoftTenant::Id("a/b".into())).is_err());
         assert!(ProviderConfig::microsoft(c, &MicrosoftTenant::Id("contoso.com".into())).is_ok());
     }
