@@ -379,9 +379,59 @@ pub(crate) fn map_lettre(e: &lettre::transport::smtp::Error, host: &str) -> Send
     }
 }
 
+/// Destinatarios máximos que se añaden en `Bcc:`.
+const MAX_BCC: usize = 500;
+
+/// Direcciones de una cabecera de lista, en minúsculas.
+fn header_addrs(m: &mail_parser::Message<'_>) -> Vec<String> {
+    let mut out = Vec::new();
+    for a in [m.to(), m.cc()].into_iter().flatten() {
+        for x in a.iter() {
+            if let Some(e) = x.address() {
+                out.push(e.to_ascii_lowercase());
+            }
+        }
+    }
+    out
+}
+
+/// Añade `Bcc:` con los destinatarios del sobre que no están en `To:`/`Cc:`.
+pub fn with_bcc_header(raw: &[u8], recipients: &[String]) -> Vec<u8> {
+    let visible =
+        mail_parser::MessageParser::default().parse_headers(raw).map(|m| header_addrs(&m)).unwrap_or_default();
+    let hidden: Vec<&str> = recipients
+        .iter()
+        .map(String::as_str)
+        .filter(|r| {
+            !r.is_empty()
+                && !r.bytes().any(|b| matches!(b, b'\r' | b'\n' | b',' | b'<' | b'>'))
+                && !visible.contains(&r.to_ascii_lowercase())
+        })
+        .take(MAX_BCC)
+        .collect();
+    if hidden.is_empty() {
+        return raw.to_vec();
+    }
+    let mut out = format!("Bcc: {}\r\n", hidden.join(",\r\n ")).into_bytes();
+    out.extend_from_slice(raw);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adds_only_hidden_recipients() {
+        let raw = b"From: a@x.com\r\nTo: B <b@x.com>\r\nCc: c@x.com\r\nSubject: s\r\n\r\nhola\r\n";
+        let out = with_bcc_header(raw, &["b@x.com".into(), "C@X.com".into(), "d@x.com".into(), "e@x.com".into()]);
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.starts_with("Bcc: d@x.com,\r\n e@x.com\r\n"));
+        assert!(s.ends_with("hola\r\n"));
+        // Sin ocultos, tal cual; con inyección, se descarta.
+        assert_eq!(with_bcc_header(raw, &["b@x.com".into()]), raw.to_vec());
+        assert_eq!(with_bcc_header(raw, &["x@y.com\r\nX-Evil: 1".into()]), raw.to_vec());
+    }
 
     #[test]
     fn transient_classification_and_messages() {

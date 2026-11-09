@@ -40,6 +40,7 @@ mod backend;
 pub mod category_hint;
 mod engine;
 mod error;
+mod ews_sync;
 mod gmail;
 mod graph_sync;
 mod imap_sync;
@@ -57,6 +58,7 @@ use iuredesk_model::{AccountId, FolderId, MessageId};
 pub use backend::{BackendKind, choose_backend};
 pub use engine::{SyncEngine, SyncHandle};
 pub use error::{Result, SyncError};
+pub use ews_sync::EwsSendTransport;
 pub use iuredesk_pop3::Pop3Policy;
 
 /// Ajustes de la sincronización.
@@ -109,7 +111,8 @@ pub struct SyncOptions {
     pub graph_mail: bool,
     /// Raíz de Microsoft Graph (las pruebas apuntan a un servidor falso).
     pub graph_base_url: String,
-    /// Sondeo de la bandeja de entrada por Graph (no hay avisos de servidor en escritorio).
+    /// Sondeo de la bandeja de entrada por Graph y por Exchange Web Services (no hay avisos de
+    /// servidor en escritorio).
     pub graph_inbox_poll: Duration,
     /// Páginas máximas por delta de Graph en una pasada (se sigue en la siguiente).
     pub graph_max_pages: usize,

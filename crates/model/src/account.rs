@@ -25,6 +25,8 @@ pub enum AccountKind {
     ICloud,
     /// Instancia de Iurefficient (no provee buzones; agenda, contactos y vínculos).
     Iurefficient,
+    /// Exchange Server de la organización, por Exchange Web Services (F8.2).
+    Exchange,
 }
 
 /// Protocolo de un servidor.
@@ -34,12 +36,15 @@ pub enum Protocol {
     Imap,
     Pop3,
     Smtp,
+    /// Exchange Web Services: recibe y envía (F8.2). `host` es el servidor (o la URL completa
+    /// del servicio si no es la habitual `/EWS/Exchange.asmx`).
+    Ews,
 }
 
 impl Protocol {
     /// ¿Sirve para recibir correo?
     pub fn is_incoming(self) -> bool {
-        matches!(self, Protocol::Imap | Protocol::Pop3)
+        matches!(self, Protocol::Imap | Protocol::Pop3 | Protocol::Ews)
     }
 
     /// Puerto estándar para una seguridad dada.
@@ -52,6 +57,8 @@ impl Protocol {
             (Protocol::Smtp, Security::Tls) => 465,
             (Protocol::Smtp, Security::StartTls) => 587,
             (Protocol::Smtp, Security::Plain) => 25,
+            (Protocol::Ews, Security::Plain) => 80,
+            (Protocol::Ews, _) => 443,
         }
     }
 }

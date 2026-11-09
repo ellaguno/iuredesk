@@ -182,6 +182,30 @@ pub struct GraphFolderState {
     pub backfill_done: bool,
 }
 
+/// Clave del estado de una carpeta de Exchange Web Services.
+pub fn ews_key(acct: AccountId, folder: FolderId) -> String {
+    format!("ews/{}/{}", acct.get(), folder.get())
+}
+
+/// Estado de una carpeta de Exchange Web Services (F8.2).
+///
+/// La primera vez se baja lo reciente con `FindItem` (`started_ms`) y después se recorren los
+/// ids con `SyncFolderItems` hasta tener un `SyncState` al día (en tandas: puede tomar varias
+/// pasadas); al terminar se recoge lo que llegó mientras tanto. Desde ahí, solo cambios.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EwsFolderState {
+    /// `SyncState` de `SyncFolderItems` (intermedio mientras se recorre por primera vez).
+    pub sync_state: Option<String>,
+    /// Cuándo (ms Unix) empezó la primera vez (se bajó lo reciente).
+    pub started_ms: Option<i64>,
+    /// El recorrido inicial terminó: lo que llegue son cambios.
+    pub initial_done: bool,
+    /// Fecha (ms Unix) del mensaje más antiguo bajado; lo anterior es historial por bajar.
+    pub oldest_ms: Option<i64>,
+    /// Historial antiguo terminado.
+    pub backfill_done: bool,
+}
+
 /// UIDL de POP3 → segundo Unix de descarga.
 pub type Pop3Known = HashMap<String, i64>;
 

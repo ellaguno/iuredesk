@@ -407,11 +407,32 @@ impl EwsClient {
         before: DateTime<Utc>,
         max: u32,
     ) -> Result<Vec<(String, Option<DateTime<Utc>>)>> {
+        self.find_by_date(folder, "IsLessThan", before, max).await
+    }
+
+    /// Ids de hasta `max` mensajes de `folder` recibidos desde `since` (inclusive), del más
+    /// reciente al más antiguo (la primera vez y lo que llegó mientras tanto).
+    pub async fn find_since(
+        &self,
+        folder: &str,
+        since: DateTime<Utc>,
+        max: u32,
+    ) -> Result<Vec<(String, Option<DateTime<Utc>>)>> {
+        self.find_by_date(folder, "IsGreaterThanOrEqualTo", since, max).await
+    }
+
+    async fn find_by_date(
+        &self,
+        folder: &str,
+        op: &str,
+        at: DateTime<Utc>,
+        max: u32,
+    ) -> Result<Vec<(String, Option<DateTime<Utc>>)>> {
         let r = self
             .call(&format!(
-                r#"<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="item:DateTimeReceived"/></t:AdditionalProperties></m:ItemShape><m:IndexedPageItemView MaxEntriesReturned="{}" Offset="0" BasePoint="Beginning"/><m:Restriction><t:IsLessThan><t:FieldURI FieldURI="item:DateTimeReceived"/><t:FieldURIOrConstant><t:Constant Value="{}"/></t:FieldURIOrConstant></t:IsLessThan></m:Restriction><m:SortOrder><t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder></m:SortOrder><m:ParentFolderIds>{}</m:ParentFolderIds></m:FindItem>"#,
+                r#"<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape><t:AdditionalProperties><t:FieldURI FieldURI="item:DateTimeReceived"/></t:AdditionalProperties></m:ItemShape><m:IndexedPageItemView MaxEntriesReturned="{}" Offset="0" BasePoint="Beginning"/><m:Restriction><t:{op}><t:FieldURI FieldURI="item:DateTimeReceived"/><t:FieldURIOrConstant><t:Constant Value="{}"/></t:FieldURIOrConstant></t:{op}></m:Restriction><m:SortOrder><t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder></m:SortOrder><m:ParentFolderIds>{}</m:ParentFolderIds></m:FindItem>"#,
                 max.clamp(1, 1_000),
-                before.format("%Y-%m-%dT%H:%M:%SZ"),
+                at.format("%Y-%m-%dT%H:%M:%SZ"),
                 folder_id(folder)
             ))
             .await?;

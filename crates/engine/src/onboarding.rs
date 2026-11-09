@@ -98,6 +98,7 @@ impl Wizard {
             AccountKind::Microsoft365 => "Microsoft 365".into(),
             AccountKind::ICloud => "iCloud".into(),
             AccountKind::Iurefficient => "Iurefficient".into(),
+            AccountKind::Exchange => format!("Exchange · {}", d.domain),
             AccountKind::Generic => d.domain.clone(),
         }
     }
@@ -138,6 +139,7 @@ fn protocol_name(p: Protocol) -> &'static str {
         Protocol::Imap => "IMAP",
         Protocol::Pop3 => "POP3",
         Protocol::Smtp => "SMTP",
+        Protocol::Ews => "Exchange",
     }
 }
 
@@ -153,7 +155,7 @@ pub fn flow_for(kind: AccountKind) -> Flow {
                 "1. Abre la página de tu cuenta de Apple e inicia sesión.\n2. Ve a Inicio de sesión y seguridad → Contraseñas para apps.\n3. Crea una llamada «IureDesk» y pégala aquí abajo.",
             ),
         },
-        AccountKind::Generic | AccountKind::Iurefficient => Flow::Password,
+        AccountKind::Generic | AccountKind::Iurefficient | AccountKind::Exchange => Flow::Password,
     }
 }
 
@@ -390,13 +392,15 @@ pub fn account_from_manual(id: String, name: &str, email: &str, m: &ManualSetup)
         ..s.clone()
     };
     let url = |u: &str| Some(u.trim().to_string()).filter(|u| !u.is_empty());
+    // Exchange (EWS, F8.2): recibe y envía por el mismo servicio.
+    let ews = m.incoming.protocol == Protocol::Ews;
     Account {
         id,
         display_name: display.clone(),
         email: email.to_string(),
-        kind: AccountKind::Generic,
+        kind: if ews { AccountKind::Exchange } else { AccountKind::Generic },
         incoming: clean(&m.incoming),
-        outgoing: clean(&m.outgoing),
+        outgoing: if ews { clean(&m.incoming) } else { clean(&m.outgoing) },
         caldav_url: url(&m.caldav_url),
         carddav_url: url(&m.carddav_url),
         identities: vec![Identity { name: display, email: email.to_string(), signature: None, reply_to: None }],
@@ -756,6 +760,20 @@ mod tests {
         let f = oauth_failure(&E::MissingClientId { provider: "Google".into() }, OAuthProvider::Google);
         assert!(f.text.es.contains("IUREDESK_GOOGLE_CLIENT_ID"));
         assert!(!f.issue.offers_retry() && f.issue.offers_app_password());
+    }
+
+    #[test]
+    fn manual_exchange_account() {
+        let mut m = manual_setup("ana@contoso.com", None);
+        m.set_protocol(Protocol::Ews);
+        assert_eq!(m.incoming.port, 443, "puerto de Exchange");
+        m.incoming.host = "mail.contoso.com".into();
+        m.incoming.username = "CONTOSO\\ana".into();
+        let a = account_from_manual("x".into(), "Ana", "ana@contoso.com", &m);
+        assert_eq!(a.kind, AccountKind::Exchange);
+        assert_eq!(a.outgoing.protocol, Protocol::Ews, "envía por el mismo servicio");
+        assert_eq!(a.outgoing.host, "mail.contoso.com");
+        assert!(m.problem().is_none());
     }
 
     #[test]

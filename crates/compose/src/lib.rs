@@ -66,6 +66,7 @@ pub use signature::{Signature, SignatureBook, SignaturePlacement};
 pub use template::TemplateStore;
 pub use transport::{
     DEFAULT_SMTP_TIMEOUT, OutgoingMessage, SendError, SendErrorKind, SendReceipt, SmtpTransport, Transport,
+    with_bcc_header,
 };
 
 /// Valor de la cabecera `User-Agent`.

@@ -27,13 +27,15 @@ pub fn kind_label(kind: AccountKind) -> &'static str {
         AccountKind::Microsoft365 => "Microsoft 365",
         AccountKind::ICloud => "iCloud",
         AccountKind::Iurefficient => "Iurefficient",
+        AccountKind::Exchange => "Exchange",
         AccountKind::Generic => "IMAP",
     }
 }
 
 /// ¿Se pueden editar los servidores a mano? (Gmail, Microsoft 365 e iCloud los fija el proveedor.)
 pub fn servers_editable(a: &Account) -> bool {
-    matches!(a.kind, AccountKind::Generic) && !matches!(a.incoming.auth, AuthMethod::OAuth2 { .. })
+    matches!(a.kind, AccountKind::Generic | AccountKind::Exchange)
+        && !matches!(a.incoming.auth, AuthMethod::OAuth2 { .. })
 }
 
 /// Lo que falta o está mal en una cuenta editada (`None` si está bien).
@@ -91,6 +93,10 @@ impl Session {
         a.display_name = a.display_name.trim().to_string();
         a.incoming.host = a.incoming.host.trim().to_string();
         a.outgoing.host = a.outgoing.host.trim().to_string();
+        // Exchange (EWS) envía por el mismo servicio con el que recibe.
+        if a.incoming.protocol == iuredesk_model::account::Protocol::Ews {
+            a.outgoing = a.incoming.clone();
+        }
         for u in [&mut a.caldav_url, &mut a.carddav_url] {
             if u.as_deref().is_some_and(|s| s.trim().is_empty()) {
                 *u = None;

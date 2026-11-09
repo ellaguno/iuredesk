@@ -198,6 +198,7 @@ fn provider_mark(kind: iuredesk_model::account::AccountKind) -> &'static str {
         AccountKind::Microsoft365 => "M",
         AccountKind::ICloud => "C",
         AccountKind::Iurefficient => "U",
+        AccountKind::Exchange => "E",
         AccountKind::Generic => "@",
     }
 }
@@ -594,16 +595,22 @@ fn editor_window(app: &mut DeskApp, ctx: &Context) {
                 }
                 ui.add_space(10.0);
                 if editable {
+                    let ews = ed.account.incoming.protocol == Protocol::Ews;
                     let proto = match ed.account.incoming.protocol {
                         Protocol::Pop3 => "POP3",
+                        Protocol::Ews => "Exchange",
                         _ => "IMAP",
                     };
-                    section_label(ui, &format!("{} ({proto})", pick("Incoming mail", "Correo entrante")));
+                    let label = if ews { pick("Exchange server", "Servidor de Exchange") } else { pick("Incoming mail", "Correo entrante") };
+                    section_label(ui, &format!("{label} ({proto})"));
                     crate::server_form::server_fields(ui, "acc-in", &mut ed.account.incoming);
                     ui.add_space(8.0);
-                    section_label(ui, &format!("{} (SMTP)", pick("Outgoing mail", "Correo saliente")));
-                    crate::server_form::server_fields(ui, "acc-out", &mut ed.account.outgoing);
-                    ui.add_space(8.0);
+                    // Exchange envía por el mismo servicio: no hay servidor saliente aparte.
+                    if !ews {
+                        section_label(ui, &format!("{} (SMTP)", pick("Outgoing mail", "Correo saliente")));
+                        crate::server_form::server_fields(ui, "acc-out", &mut ed.account.outgoing);
+                        ui.add_space(8.0);
+                    }
                     section_label(ui, pick("Calendar and contacts", "Calendario y contactos"));
                     egui::Grid::new("acc-dav").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                         for (label, url) in [

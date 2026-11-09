@@ -148,6 +148,11 @@ impl BasicAuth {
         let raw = format!("{username}:{password}");
         Self { header: format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(raw.as_bytes())) }
     }
+
+    /// Valor de la cabecera `Authorization`.
+    pub fn header(&self) -> &str {
+        &self.header
+    }
 }
 
 impl std::fmt::Debug for BasicAuth {
@@ -229,6 +234,18 @@ pub fn service_url(input: &str) -> Result<String> {
     };
     validate_url(&url)?;
     Ok(url)
+}
+
+/// URL del servicio de una cuenta: `host` es el servidor (con `port` si no es el de siempre) o
+/// la URL completa; `tls` = `https`.
+pub fn server_url(host: &str, port: u16, tls: bool) -> Result<String> {
+    let h = host.trim();
+    if h.contains("://") {
+        return service_url(h);
+    }
+    let (scheme, default) = if tls { ("https", 443) } else { ("http", 80) };
+    let authority = if port == 0 || port == default { h.to_string() } else { format!("{h}:{port}") };
+    service_url(&format!("{scheme}://{authority}"))
 }
 
 /// `BackOffMilliseconds` de un `soap:Fault` de `ErrorServerBusy`.
@@ -359,6 +376,21 @@ mod tests {
         assert!(service_url("http://mail.contoso.com").is_err(), "sin TLS no");
         assert!(service_url("http://127.0.0.1:8080").is_ok(), "pruebas locales");
         assert!(service_url("").is_err());
+    }
+
+    #[test]
+    fn server_urls() {
+        assert_eq!(server_url("mail.contoso.com", 443, true).unwrap(), "https://mail.contoso.com/EWS/Exchange.asmx");
+        assert_eq!(
+            server_url("mail.contoso.com", 8443, true).unwrap(),
+            "https://mail.contoso.com:8443/EWS/Exchange.asmx"
+        );
+        assert_eq!(
+            server_url("https://owa.contoso.com/ews/exchange.asmx", 443, true).unwrap(),
+            "https://owa.contoso.com/ews/exchange.asmx"
+        );
+        assert!(server_url("mail.contoso.com", 80, false).is_err(), "sin TLS solo en este equipo");
+        assert_eq!(server_url("127.0.0.1", 8080, false).unwrap(), "http://127.0.0.1:8080/EWS/Exchange.asmx");
     }
 
     #[test]

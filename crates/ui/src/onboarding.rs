@@ -489,17 +489,40 @@ fn manual(app: &mut DeskApp, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 ui.label(pick("Account type", "Tipo de cuenta"));
                 let mut p = m.incoming.protocol;
-                iurefficient_ui::segmented(ui, &mut p, &[(Protocol::Imap, "IMAP"), (Protocol::Pop3, "POP3")]);
+                iurefficient_ui::segmented(
+                    ui,
+                    &mut p,
+                    &[(Protocol::Imap, "IMAP"), (Protocol::Pop3, "POP3"), (Protocol::Ews, "Exchange")],
+                );
                 m.set_protocol(p);
             });
             ui.add_space(6.0);
-            let proto = if m.incoming.protocol == Protocol::Pop3 { "POP3" } else { "IMAP" };
-            iurefficient_ui::section_label(ui, &format!("{} ({proto})", pick("Incoming mail", "Correo entrante")));
+            let ews = m.incoming.protocol == Protocol::Ews;
+            let (label, proto) = match m.incoming.protocol {
+                Protocol::Pop3 => (pick("Incoming mail", "Correo entrante"), "POP3"),
+                Protocol::Ews => (pick("Exchange server of your organization", "Servidor de Exchange de tu organización"), "EWS"),
+                _ => (pick("Incoming mail", "Correo entrante"), "IMAP"),
+            };
+            iurefficient_ui::section_label(ui, &format!("{label} ({proto})"));
+            if ews {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(pick(
+                            "The server (mail.company.com) or the full Exchange Web Services address. The user is usually DOMAIN\\user or your email.",
+                            "El servidor (correo.empresa.com) o la dirección completa de Exchange Web Services. El usuario suele ser DOMINIO\\usuario o tu correo.",
+                        ))
+                        .color(c.text_muted)
+                        .size(small),
+                    )
+                    .wrap(),
+                );
+            }
             if crate::server_form::server_fields(ui, "wiz-in", &mut m.incoming) {
                 m.incoming_test = None;
             }
             crate::server_form::probe_line(ui, m.incoming_test.as_ref());
             ui.add_space(6.0);
+            if !ews {
             iurefficient_ui::section_label(ui, &format!("{} (SMTP)", pick("Outgoing mail", "Correo saliente")));
             if crate::server_form::server_fields(ui, "wiz-out", &mut m.outgoing) {
                 m.outgoing_test = None;
@@ -516,6 +539,7 @@ fn manual(app: &mut DeskApp, ui: &mut Ui) {
             }
             crate::server_form::probe_line(ui, m.outgoing_test.as_ref());
             ui.add_space(6.0);
+            }
             egui::CollapsingHeader::new(pick("Calendar and contacts (optional)", "Calendario y contactos (opcional)"))
                 .id_salt("wiz-dav")
                 .default_open(!m.caldav_url.is_empty() || !m.carddav_url.is_empty())

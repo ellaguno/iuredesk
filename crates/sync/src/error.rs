@@ -43,6 +43,9 @@ pub enum SyncError {
     /// Microsoft Graph.
     #[error("Graph: {0}")]
     Graph(#[from] iuredesk_graph::GraphError),
+    /// Exchange Web Services (Exchange Server local).
+    #[error("EWS: {0}")]
+    Ews(#[from] iuredesk_ews::EwsError),
     /// La carpeta no es una etiqueta (Gmail) o la cuenta no usa etiquetas.
     #[error("no es una etiqueta: {0}")]
     NotALabel(String),
@@ -90,6 +93,7 @@ impl SyncError {
             SyncError::OAuth(e) => matches!(e, iuredesk_oauth::Error::Http(_) | iuredesk_oauth::Error::Timeout),
             SyncError::Store(_) | SyncError::Secrets(_) => true,
             SyncError::Graph(e) => e.is_transient(),
+            SyncError::Ews(e) => e.is_transient(),
             _ => false,
         }
     }
@@ -102,6 +106,7 @@ impl SyncError {
             SyncError::OAuth(e) => e.needs_reconsent(),
             SyncError::NoPassword | SyncError::NoTokenProvider => true,
             SyncError::Graph(e) => e.needs_reauth(),
+            SyncError::Ews(e) => e.needs_reauth(),
             _ => false,
         }
     }
@@ -188,6 +193,32 @@ impl SyncError {
                     format!("Microsoft 365 refused the operation ({e}).")
                 }
             }
+            SyncError::Ews(iuredesk_ews::EwsError::ServerBusy { .. }) => pick(
+                "The Exchange server is busy. Mail will sync again in a moment.",
+                "El servidor de Exchange está ocupado. El correo se sincronizará de nuevo en un momento.",
+            ),
+            SyncError::Ews(iuredesk_ews::EwsError::Network(_)) => pick(
+                "Couldn't reach your organization's Exchange server. Check your connection (or VPN); it will retry automatically.",
+                "No se pudo conectar con el servidor de Exchange de tu organización. Revisa tu conexión (o la VPN); se reintentará solo.",
+            ),
+            SyncError::Ews(iuredesk_ews::EwsError::Unauthorized) => pick(
+                "Exchange rejected the password. Enter it again (it may have changed or expired).",
+                "Exchange rechazó la contraseña. Escríbela de nuevo (puede que haya cambiado o caducado).",
+            ),
+            SyncError::Ews(iuredesk_ews::EwsError::Http { status: 403 }) => pick(
+                "Exchange Web Services is turned off for this account. Ask your IT department to enable it.",
+                "Exchange Web Services está desactivado para esta cuenta. Pide a tu área de TI que lo active.",
+            ),
+            SyncError::Ews(e) if e.is_not_found() => {
+                pick("That message is no longer on the server.", "Ese mensaje ya no está en el servidor.")
+            }
+            SyncError::Ews(e) => {
+                if spanish {
+                    format!("Exchange rechazó la operación ({}).", clip(&e.to_string()))
+                } else {
+                    format!("Exchange refused the operation ({}).", clip(&e.to_string()))
+                }
+            }
             SyncError::InvalidFolderName(_) => pick(
                 "That folder name can't be used. Avoid empty names, '/', '*' and '%'.",
                 "Ese nombre de carpeta no se puede usar. Evita nombres vacíos, «/», «*» y «%».",
@@ -236,5 +267,9 @@ mod tests {
         assert_ne!(e.message(true), e.message(false));
         let e = SyncError::Imap(ImapError::Bye("[UNAVAILABLE] Too many simultaneous connections".into()));
         assert!(e.message(false).contains("too many"));
+        let e = SyncError::Ews(iuredesk_ews::EwsError::Unauthorized);
+        assert!(e.needs_reauth() && e.message(true).contains("contraseña"));
+        let e = SyncError::Ews(iuredesk_ews::EwsError::ServerBusy { retry_after_ms: Some(100) });
+        assert!(e.is_transient() && e.message(true).contains("ocupado"));
     }
 }

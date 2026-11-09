@@ -195,6 +195,14 @@ impl Session {
                         Arc::new(iuredesk_graph::GraphSendTransport::new(c).with_fallback(Arc::clone(&smtp)))
                             as Arc<dyn Transport>
                     }),
+                    // Exchange local (F8.2): `SendAndSaveCopy` por EWS; no hay SMTP aparte.
+                    (_, iuredesk_sync::BackendKind::Ews) => iuredesk_sync::EwsSendTransport::for_account(
+                        a,
+                        Arc::clone(&self.secrets),
+                        iuredesk_compose::DEFAULT_SMTP_TIMEOUT,
+                    )
+                    .ok()
+                    .map(|t| Arc::new(t) as Arc<dyn Transport>),
                     _ => None,
                 };
                 let inner = graph.unwrap_or(smtp);

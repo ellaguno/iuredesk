@@ -480,6 +480,14 @@ fn main() -> Result<(), String> {
         app.demo_provider_step("laura.mendez@gmail.com");
     } else if module == "manual" {
         app.demo_manual_step("ellaguno@confiabilidad.com.mx");
+        // `--exchange`: el formulario con «Exchange» elegido (F8.2).
+        if args.iter().any(|a| a == "--exchange")
+            && let Some(m) = app.session.wizard.as_mut().and_then(|w| w.manual.as_mut())
+        {
+            m.set_protocol(iuredesk_model::account::Protocol::Ews);
+            m.incoming.host = "correo.confiabilidad.com.mx".into();
+            m.incoming.username = "CONFIABILIDAD\\ellaguno".into();
+        }
     } else if module == "duplicate" {
         app.demo_duplicate_step("Laura.Mendez@gmail.com");
     } else if module == "onboarding" {

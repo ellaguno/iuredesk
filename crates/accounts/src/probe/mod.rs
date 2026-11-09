@@ -6,8 +6,10 @@
 //!   LOGIN, `LIST "" "*"` acotado, LOGOUT).
 //! - POP3: propia (STLS, USER/PASS o APOP, AUTH XOAUTH2, STAT, QUIT).
 //! - SMTP: `lettre` (rustls + tokio), `test_connection` con autenticación.
+//! - Exchange Web Services: el árbol de carpetas con usuario y contraseña (crate `ews`).
 
 mod conn;
+mod ews;
 mod imap;
 mod pop3;
 mod smtp;
@@ -225,6 +227,7 @@ pub async fn test_incoming_with(
         match cfg.protocol {
             Protocol::Imap => imap::probe(cfg, secret, oauth, opts).await,
             Protocol::Pop3 => pop3::probe(cfg, secret, oauth, opts).await,
+            Protocol::Ews => ews::probe(cfg, secret, oauth, opts).await,
             Protocol::Smtp => Err(ProbeError::WrongProtocol),
         }
     };
@@ -242,6 +245,10 @@ pub async fn test_outgoing_with(
     secret: &str,
     opts: ProbeOptions,
 ) -> Result<ProbeReport, ProbeError> {
+    // Exchange Web Services envía por el mismo servicio con el que recibe.
+    if cfg.protocol == Protocol::Ews {
+        return test_incoming_with(cfg, secret, opts).await;
+    }
     if cfg.protocol != Protocol::Smtp {
         return Err(ProbeError::WrongProtocol);
     }

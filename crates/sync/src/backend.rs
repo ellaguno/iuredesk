@@ -39,13 +39,17 @@ pub enum BackendKind {
     Pop3,
     /// Microsoft Graph (Microsoft 365 / Outlook.com con OAuth).
     Graph,
+    /// Exchange Web Services (Exchange Server local, F8.2).
+    Ews,
 }
 
 /// Elige el protocolo: Microsoft 365 con OAuth va por Graph (si está activado y hay proveedor de
 /// tokens); Gmail y el resto, por IMAP; POP3 si la cuenta lo pide.
 pub fn choose_backend(account: &Account, opts: &SyncOptions, has_tokens: bool) -> BackendKind {
-    if account.incoming.protocol == Protocol::Pop3 {
-        return BackendKind::Pop3;
+    match account.incoming.protocol {
+        Protocol::Pop3 => return BackendKind::Pop3,
+        Protocol::Ews => return BackendKind::Ews,
+        _ => {}
     }
     // Un buzón compartido o delegado (F8.1) solo existe por Graph.
     if account.shared_of.is_some() {
@@ -108,6 +112,10 @@ mod tests {
         assert_eq!(
             choose_backend(&acc(AccountKind::Generic, AuthMethod::Password, Protocol::Pop3), &o, true),
             BackendKind::Pop3
+        );
+        assert_eq!(
+            choose_backend(&acc(AccountKind::Exchange, AuthMethod::Password, Protocol::Ews), &o, false),
+            BackendKind::Ews
         );
     }
 }

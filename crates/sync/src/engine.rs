@@ -15,6 +15,7 @@ use tokio::time::Instant;
 
 use crate::backend::{BackendKind, MailBackend, choose_backend};
 use crate::error::{Result, SyncError};
+use crate::ews_sync::EwsAccount;
 use crate::graph_sync::GraphAccount;
 use crate::imap_sync::{IdleExit, ImapAccount};
 use crate::pool::{Auth, ImapPool};
@@ -200,6 +201,17 @@ impl SyncEngine {
                         }
                     }
                 }
+                BackendKind::Ews => match EwsAccount::new(Arc::clone(&ctx), Arc::clone(&auth.secrets)) {
+                    Ok(e) => {
+                        let (t, s) = (tx.clone(), inner.shutdown.subscribe());
+                        tasks.push(rt.spawn(run_poll_inbox(opts.graph_inbox_poll, t, s)));
+                        Arc::new(e)
+                    }
+                    Err(e) => {
+                        ctx.emit_error(&e);
+                        continue;
+                    }
+                },
                 BackendKind::Imap => {
                     let pool = Arc::new(ImapPool::new(account.clone(), Arc::clone(&auth), &opts));
                     inner.pools.push(Arc::clone(&pool));
@@ -485,7 +497,8 @@ impl SyncHandle {
             BackendKind::Imap => {
                 Some(crate::ops::FolderStyle::Imap { delimiter: crate::ops::imap_delimiter(&self.inner.store, acct) })
             }
-            BackendKind::Graph => Some(crate::ops::FolderStyle::Graph),
+            // EWS nombra carpetas como Graph: cualquier nombre, ids opacos, sin separador.
+            BackendKind::Graph | BackendKind::Ews => Some(crate::ops::FolderStyle::Graph),
             BackendKind::Pop3 => None,
         }
     }
