@@ -194,10 +194,12 @@ Store). Con cada etiqueta, el job de macOS de `release.yml`:
 2. escribe la clave de App Store Connect en un `.p8` temporal → `APPLE_API_KEY`,
    `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH`;
 3. `cargo xtask package macos`: cargo-packager firma el `.app` con *hardened runtime*
-   (`--options runtime --timestamp`), lo notariza con `notarytool` y la clave, le engrapa el ticket
-   y firma el `.dmg` (el `.app.tar.gz` se arma después, ya engrapado);
-4. notariza y engrapa el `.dmg` y comprueba `codesign --verify --deep --strict`,
-   `stapler validate` y `spctl --assess` del `.app` y del `.dmg`;
+   (`--options runtime --timestamp`) y firma el `.dmg` (la clave va con nombres `NOTARY_*` para
+   que no notarice el `.app` por su cuenta: serían dos esperas en serie);
+4. una sola notarización, la del `.dmg` (`notarytool submit --wait`, hasta 150 min: las primeras
+   de una cuenta nueva tardaron ~45 min), cuyo ticket cubre también el `.app` de dentro; engrapa
+   el `.dmg` y el `.app`, rehace el `.app.tar.gz` con el `.app` engrapado y comprueba
+   `codesign --verify --deep --strict`, `stapler validate` y `spctl --assess` de todo;
 5. borra el keychain y la clave aunque algo falle.
 
 Secretos: `DEVELOPER_ID_P12_BASE64` (`base64 -w0 devid.p12 | gh secret set …`),

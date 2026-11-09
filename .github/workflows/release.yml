@@ -42,7 +42,8 @@ jobs:
           - { runner: macos-latest, os: macos, target: aarch64-apple-darwin }
           - { runner: macos-latest, os: macos, target: x86_64-apple-darwin }
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    # macOS espera a la notarización de Apple (hasta 150 min en el peor caso).
+    timeout-minutes: ${{ matrix.os == 'macos' && 240 || 120 }}
     steps:
       - uses: actions/checkout@v4
       - name: Acceso a repos privados de la suite (opcional)
@@ -102,8 +103,8 @@ jobs:
             cargo install trusted-signing-cli --locked
           }
       # macOS: el certificado Developer ID va a un keychain temporal (se borra al final) y la clave de
-      # App Store Connect a un archivo temporal; cargo-packager firma el .app con hardened runtime,
-      # lo notariza con la clave y le engrapa el ticket. Sin los secretos sale sin firmar, como antes.
+      # App Store Connect a un archivo temporal. cargo-packager firma el .app (hardened runtime) y el
+      # .dmg; la notarización va en un paso aparte. Sin los secretos sale sin firmar, como antes.
       - name: Firma de Apple (keychain temporal)
         if: matrix.os == 'macos'
         id: apple
@@ -145,7 +146,9 @@ jobs:
             KEY="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
             printf '%s\n' "$ASC_PRIVATE_KEY" > "$KEY"
             chmod 600 "$KEY"
-            { echo "APPLE_API_KEY=$ASC_KEY_ID"; echo "APPLE_API_ISSUER=$ASC_ISSUER_ID"; echo "APPLE_API_KEY_PATH=$KEY"; } >> "$GITHUB_ENV"
+            # Con otros nombres que APPLE_API_*: así cargo-packager no notariza el .app por su cuenta
+            # (serían dos esperas en serie; con el .dmg basta, su ticket cubre el .app de dentro).
+            { echo "NOTARY_KEY_ID=$ASC_KEY_ID"; echo "NOTARY_ISSUER=$ASC_ISSUER_ID"; echo "NOTARY_KEY_PATH=$KEY"; } >> "$GITHUB_ENV"
             echo "notarize=true" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::Sin ASC_KEY_ID/ASC_ISSUER_ID/ASC_PRIVATE_KEY: se firma pero no se notariza (Gatekeeper lo bloqueará)."
@@ -205,10 +208,12 @@ jobs:
           if (Test-Path 'Registry::HKEY_CLASSES_ROOT\iuredesk\shell\open\command') { throw 'la desinstalación dejó el protocolo' }
           if ((Get-ItemProperty 'HKLM:\Software\Iurefficient\IureDesk' -ErrorAction SilentlyContinue).Version) { throw 'la desinstalación dejó la clave de la suite' }
           Write-Host 'instalador .msi: instalar y desinstalar — ok'
-      # cargo-packager notariza y engrapa el .app, pero el .dmg solo lo firma: se notariza aparte para
-      # que Gatekeeper lo acepte sin conexión. Luego se comprueba todo como lo haría un Mac recién
-      # instalado. Va antes de minisign porque engrapar cambia el .dmg.
-      - name: Notarizar el .dmg y comprobar Gatekeeper
+      # Una sola notarización, la del .dmg: el ticket cubre también el .app que lleva dentro, así que
+      # se engrapa en los dos y se rehace el .app.tar.gz (lo que instala iureapps) con el .app ya
+      # engrapado. Luego se comprueba todo como lo haría un Mac recién instalado. Va antes de
+      # minisign porque engrapar cambia los archivos. Las primeras notarizaciones de una cuenta
+      # nueva pueden tardar casi una hora.
+      - name: Notarizar y comprobar Gatekeeper
         if: matrix.os == 'macos' && steps.apple.outputs.notarize == 'true'
         shell: bash
         run: |
@@ -216,23 +221,36 @@ jobs:
           APP=dist/IureDesk.app
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -dv --verbose=2 "$APP" 2>&1 | grep -E 'Authority=Developer ID Application|flags=.*runtime'
+          DMGS=(dist/*.dmg)
+          [ "${#DMGS[@]}" -eq 1 ] || { echo "::error::esperaba un solo .dmg en dist"; exit 1; }
+          DMG="${DMGS[0]}"
+          NOTARY=(--key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+          OUT="$(xcrun notarytool submit "$DMG" "${NOTARY[@]}" --wait --timeout 150m --output-format json || true)"
+          echo "$OUT"
+          field() { printf '%s' "$OUT" | python3 -c 'import json,sys
+          try: print(json.load(sys.stdin).get(sys.argv[1], ""))
+          except Exception: print("")' "$1"; }
+          STATUS="$(field status)"; ID="$(field id)"
+          if [ "$STATUS" != Accepted ]; then
+            if [ -n "$ID" ]; then xcrun notarytool log "$ID" "${NOTARY[@]}" || true; fi
+            echo "::error::La notarización de $DMG no quedó aceptada (estado «${STATUS:-sin respuesta}», id ${ID:-ninguno})."
+            exit 1
+          fi
+          xcrun stapler staple -v "$DMG"
+          xcrun stapler staple -v "$APP"
+          xcrun stapler validate "$DMG"
           xcrun stapler validate "$APP"
           spctl --assess --type execute --verbose=4 "$APP"
-          for DMG in dist/*.dmg; do
-            OUT="$(xcrun notarytool submit "$DMG" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" \
-                    --issuer "$APPLE_API_ISSUER" --wait --timeout 45m --output-format json)"
-            echo "$OUT"
-            STATUS="$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')"
-            if [ "$STATUS" != Accepted ]; then
-              ID="$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
-              [ -n "$ID" ] && xcrun notarytool log "$ID" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" || true
-              echo "::error::Apple rechazó la notarización de $DMG ($STATUS)"
-              exit 1
-            fi
-            xcrun stapler staple -v "$DMG"
-            xcrun stapler validate "$DMG"
-            spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
-          done
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
+          TGZ=(dist/*.app.tar.gz)
+          [ "${#TGZ[@]}" -eq 1 ] || { echo "::error::esperaba un solo .app.tar.gz en dist"; exit 1; }
+          rm -f "${TGZ[0]}"
+          COPYFILE_DISABLE=1 tar --no-xattrs -czf "${TGZ[0]}" -C dist IureDesk.app
+          # El .app del tar debe seguir firmado y engrapado.
+          CHECK="$RUNNER_TEMP/tgz-check"; rm -rf "$CHECK"; mkdir -p "$CHECK"
+          tar -xzf "${TGZ[0]}" -C "$CHECK"
+          codesign --verify --deep --strict "$CHECK/IureDesk.app"
+          xcrun stapler validate "$CHECK/IureDesk.app"
       - name: Firmas minisign (las verifica iureapps)
         shell: bash
         env:
