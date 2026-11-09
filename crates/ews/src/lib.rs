@@ -21,6 +21,7 @@
     clippy::unreachable
 )]
 
+pub mod ntlm;
 pub mod ops;
 pub mod soap;
 
@@ -135,18 +136,27 @@ pub trait EwsAuth: Send + Sync {
     fn authorization(&self) -> BoxFuture<'_, Result<String>>;
     /// El servidor rechazó la última credencial (401): olvidar lo que haya en caché.
     fn invalidate(&self) {}
+    /// Usuario y contraseña para NTLM, si esta autenticación los tiene (un token no). Se usan
+    /// cuando el servidor no ofrece Basic y sí NTLM/Negotiate.
+    fn ntlm(&self) -> Option<BoxFuture<'_, Result<ntlm::Credentials>>> {
+        None
+    }
 }
 
 /// Usuario y contraseña (Basic) sobre TLS. Exchange local acepta `DOMINIO\usuario` o el UPN.
 pub struct BasicAuth {
     header: String,
+    creds: ntlm::Credentials,
 }
 
 impl BasicAuth {
     pub fn new(username: &str, password: &str) -> Self {
         use base64::Engine as _;
         let raw = format!("{username}:{password}");
-        Self { header: format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(raw.as_bytes())) }
+        Self {
+            header: format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(raw.as_bytes())),
+            creds: ntlm::Credentials::from_login(username, password),
+        }
     }
 
     /// Valor de la cabecera `Authorization`.
@@ -164,6 +174,10 @@ impl std::fmt::Debug for BasicAuth {
 impl EwsAuth for BasicAuth {
     fn authorization(&self) -> BoxFuture<'_, Result<String>> {
         Box::pin(async move { Ok(self.header.clone()) })
+    }
+
+    fn ntlm(&self) -> Option<BoxFuture<'_, Result<ntlm::Credentials>>> {
+        Some(Box::pin(async move { Ok(self.creds.clone()) }))
     }
 }
 
@@ -202,6 +216,10 @@ pub struct EwsClient {
     auth: Arc<dyn EwsAuth>,
     retries: u32,
     max_wait: Duration,
+    /// Esquema NTLM elegido (`NTLM` o `Negotiate`) cuando el servidor no ofrece Basic.
+    ntlm_scheme: Arc<std::sync::Mutex<Option<&'static str>>>,
+    /// NTLM autentica la conexión: los intercambios van de uno en uno por la misma.
+    ntlm_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl std::fmt::Debug for EwsClient {
@@ -264,12 +282,26 @@ impl EwsClient {
     /// (`https://mail.contoso.com/EWS/Exchange.asmx`).
     pub fn new(url: &str, auth: Arc<dyn EwsAuth>, timeout: Duration) -> Result<Self> {
         validate_url(url)?;
+        // HTTP/1.1 y una sola conexión en reposo: NTLM autentica la conexión, así que la
+        // negociación y la petición deben ir por la misma. `tls_info` da el certificado para el
+        // channel binding.
         let http = reqwest::Client::builder()
             .timeout(timeout)
             .connect_timeout(Duration::from_secs(20))
             .user_agent(concat!("IureDesk/", env!("CARGO_PKG_VERSION")))
+            .http1_only()
+            .pool_max_idle_per_host(1)
+            .tls_info(true)
             .build()?;
-        Ok(Self { http, url: url.to_string(), auth, retries: DEFAULT_RETRIES, max_wait: DEFAULT_MAX_WAIT })
+        Ok(Self {
+            http,
+            url: url.to_string(),
+            auth,
+            retries: DEFAULT_RETRIES,
+            max_wait: DEFAULT_MAX_WAIT,
+            ntlm_scheme: Arc::new(std::sync::Mutex::new(None)),
+            ntlm_lock: Arc::new(tokio::sync::Mutex::new(())),
+        })
     }
 
     /// Reintentos por limitación y espera máxima por reintento.
@@ -292,18 +324,25 @@ impl EwsClient {
         let mut retried_auth = false;
         let mut attempt = 0u32;
         loop {
-            let auth = self.auth.authorization().await?;
-            let resp = self
-                .http
-                .post(&self.url)
-                .header("Content-Type", "text/xml; charset=utf-8")
-                .header("Accept", "text/xml")
-                .header("Authorization", auth)
-                .body(envelope.clone())
-                .send()
-                .await?;
+            let scheme = *self.ntlm_scheme.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let resp = match scheme {
+                Some(scheme) => self.ntlm_send(&envelope, scheme).await?,
+                None => {
+                    let auth = self.auth.authorization().await?;
+                    self.post(&envelope).header("Authorization", auth).send().await?
+                }
+            };
             let status = resp.status().as_u16();
             if status == 401 {
+                // Sin Basic pero con NTLM/Negotiate (lo habitual en Exchange local): se cambia a
+                // NTLM una vez y se recuerda para las siguientes.
+                if scheme.is_none()
+                    && let Some(next) = ntlm_offer(resp.headers())
+                    && self.auth.ntlm().is_some()
+                {
+                    *self.ntlm_scheme.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(next);
+                    continue;
+                }
                 self.auth.invalidate();
                 if retried_auth {
                     return Err(EwsError::Unauthorized);
@@ -346,6 +385,77 @@ impl EwsClient {
             }
             return soap::body_response(root);
         }
+    }
+}
+
+impl EwsClient {
+    fn post(&self, body: &str) -> reqwest::RequestBuilder {
+        self.http
+            .post(&self.url)
+            .header("Content-Type", "text/xml; charset=utf-8")
+            .header("Accept", "text/xml")
+            .body(body.to_string())
+    }
+
+    /// Un intercambio NTLM completo por la misma conexión: `NEGOTIATE` con un POST vacío,
+    /// `CHALLENGE` del servidor y la petición con `AUTHENTICATE`.
+    async fn ntlm_send(&self, envelope: &str, scheme: &'static str) -> Result<reqwest::Response> {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let creds = match self.auth.ntlm() {
+            Some(f) => f.await?,
+            None => return Err(EwsError::Auth("esta cuenta no tiene usuario y contraseña para NTLM".into())),
+        };
+        let _one_at_a_time = self.ntlm_lock.lock().await;
+        let negotiate = ntlm::negotiate();
+        let first = self
+            .http
+            .post(&self.url)
+            .header("Content-Type", "text/xml; charset=utf-8")
+            .header("Content-Length", "0")
+            .header("Authorization", format!("{scheme} {}", b64.encode(&negotiate)))
+            .send()
+            .await?;
+        let cert =
+            first.extensions().get::<reqwest::tls::TlsInfo>().and_then(|i| i.peer_certificate()).map(<[u8]>::to_vec);
+        let challenge = first
+            .headers()
+            .get_all(reqwest::header::WWW_AUTHENTICATE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find_map(|v| v.strip_prefix(scheme).and_then(|r| r.strip_prefix(' ')))
+            .map(str::trim)
+            .and_then(|t| b64.decode(t).ok());
+        // Se vacía la respuesta para que la conexión quede libre para el siguiente paso.
+        let _ = read_capped(first).await;
+        let Some(challenge) = challenge else { return Err(EwsError::Unauthorized) };
+        let challenge = ntlm::parse_challenge(&challenge).map_err(|e| EwsError::Auth(e.to_string()))?;
+        let host =
+            reqwest::Url::parse(&self.url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+        let nonce = ntlm::ClientNonce::random().map_err(|e| EwsError::Auth(e.to_string()))?;
+        let auth = ntlm::authenticate(&creds, &negotiate, &challenge, cert.as_deref(), &format!("HTTP/{host}"), nonce);
+        Ok(self.post(envelope).header("Authorization", format!("{scheme} {}", b64.encode(&auth))).send().await?)
+    }
+}
+
+/// ¿El servidor ofrece NTLM (o Negotiate) y no Basic? Devuelve el esquema que se usará.
+fn ntlm_offer(headers: &reqwest::header::HeaderMap) -> Option<&'static str> {
+    let offered: Vec<String> = headers
+        .get_all(reqwest::header::WWW_AUTHENTICATE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(|v| v.split_whitespace().next().unwrap_or_default().to_ascii_lowercase())
+        .collect();
+    if offered.iter().any(|s| s == "basic") {
+        return None;
+    }
+    if offered.iter().any(|s| s == "ntlm") {
+        Some("NTLM")
+    } else if offered.iter().any(|s| s == "negotiate") {
+        // IIS acepta un token NTLM dentro de Negotiate.
+        Some("Negotiate")
+    } else {
+        None
     }
 }
 

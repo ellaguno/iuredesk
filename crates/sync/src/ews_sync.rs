@@ -99,6 +99,18 @@ impl EwsAuth for SecretAuth {
     fn invalidate(&self) {
         *self.cache.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
+
+    fn ntlm(&self) -> Option<EwsFuture<'_, iuredesk_ews::Result<iuredesk_ews::ntlm::Credentials>>> {
+        Some(Box::pin(async move {
+            let (secrets, id) = (Arc::clone(&self.secrets), self.account.clone());
+            let pass = tokio::task::spawn_blocking(move || secrets.get(&id, SecretPurpose::Incoming))
+                .await
+                .map_err(|e| EwsError::Auth(e.to_string()))?
+                .map_err(|e| EwsError::Auth(e.to_string()))?
+                .ok_or(EwsError::Unauthorized)?;
+            Ok(iuredesk_ews::ntlm::Credentials::from_login(&self.username, &pass))
+        }))
+    }
 }
 
 /// Cliente de EWS de una cuenta con su contraseña del llavero.

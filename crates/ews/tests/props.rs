@@ -1,5 +1,5 @@
 //! Propiedades: ninguna respuesta (bytes cualquiera o XML con forma de EWS rota) hace caer a
-//! quien la lee, y el texto escapado vuelve igual.
+//! quien la lee (tampoco un desafío NTLM), y el texto escapado vuelve igual.
 
 use iuredesk_dav::dav::xml::parse;
 use iuredesk_ews::ops::item;
@@ -37,6 +37,20 @@ proptest! {
         if let Some(i) = item(&root) {
             prop_assert_eq!(i.id, id);
             prop_assert!(i.subject.chars().count() <= 1_000);
+        }
+    }
+
+    #[test]
+    fn ntlm_challenge_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..512), tail in proptest::collection::vec(any::<u8>(), 0..256)) {
+        // Bytes cualquiera y desafíos con cabecera válida y el resto al azar.
+        let _ = iuredesk_ews::ntlm::parse_challenge(&bytes);
+        let mut c = b"NTLMSSP\0\x02\0\0\0".to_vec();
+        c.extend_from_slice(&tail);
+        if let Ok(ch) = iuredesk_ews::ntlm::parse_challenge(&c) {
+            let creds = iuredesk_ews::ntlm::Credentials::from_login("D\\u", "p");
+            let nonce = iuredesk_ews::ntlm::ClientNonce { client_challenge: [1; 8], now_filetime: 0 };
+            let m = iuredesk_ews::ntlm::authenticate(&creds, &iuredesk_ews::ntlm::negotiate(), &ch, None, "HTTP/x", nonce);
+            prop_assert!(m.len() >= 88);
         }
     }
 

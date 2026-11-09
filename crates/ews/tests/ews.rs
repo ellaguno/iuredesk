@@ -391,3 +391,99 @@ async fn busy_forever_gives_up_with_server_busy() {
     assert!(matches!(err, EwsError::ServerBusy { .. }) && err.is_transient(), "{err:?}");
     assert_eq!(*st.lock().unwrap(), 3, "un intento y dos reintentos");
 }
+
+/// Servidor sin Basic, solo NTLM (lo habitual en Exchange local): el cliente cambia solo a NTLM,
+/// manda NEGOTIATE, recibe el desafío y responde NTLMv2; el servidor recalcula la prueba con la
+/// contraseña verdadera. Con otra contraseña: «credencial rechazada».
+#[tokio::test]
+async fn ntlm_when_basic_is_off() {
+    use iuredesk_ews::ntlm;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let server_challenge = [9u8, 8, 7, 6, 5, 4, 3, 2];
+    let log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let l = Arc::clone(&log);
+    let base = serve(move |req| {
+        let auth = req.header("Authorization").unwrap_or_default().to_string();
+        let mut l = l.lock().unwrap();
+        let Some(token) = auth.strip_prefix("NTLM ") else {
+            l.push(format!("sin NTLM: {}", auth.split(' ').next().unwrap_or("")));
+            return Resp::new(401, "").with("WWW-Authenticate", "Negotiate").with("WWW-Authenticate", "NTLM");
+        };
+        let msg = b64.decode(token).unwrap();
+        match msg.get(8) {
+            Some(1) => {
+                l.push("negotiate".into());
+                assert!(req.body.is_empty(), "el NEGOTIATE va sin cuerpo");
+                // Desafío con TargetInfo (dominio y marca de tiempo).
+                let mut info = Vec::new();
+                for (id, v) in [(2u16, "CONTOSO".encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>()), (7, vec![1, 2, 3, 4, 5, 6, 7, 8])] {
+                    info.extend_from_slice(&id.to_le_bytes());
+                    info.extend_from_slice(&(v.len() as u16).to_le_bytes());
+                    info.extend_from_slice(&v);
+                }
+                info.extend_from_slice(&[0, 0, 0, 0]);
+                let mut c = b"NTLMSSP\0".to_vec();
+                c.extend_from_slice(&2u32.to_le_bytes());
+                c.extend_from_slice(&[0, 0, 0, 0, 48, 0, 0, 0]);
+                c.extend_from_slice(&0xA289_8205u32.to_le_bytes());
+                c.extend_from_slice(&server_challenge);
+                c.extend_from_slice(&[0u8; 8]);
+                c.extend_from_slice(&(info.len() as u16).to_le_bytes());
+                c.extend_from_slice(&(info.len() as u16).to_le_bytes());
+                c.extend_from_slice(&56u32.to_le_bytes());
+                c.extend_from_slice(&[6, 1, 0xB1, 0x1D, 0, 0, 0, 15]);
+                c.extend_from_slice(&info);
+                Resp::new(401, "").with("WWW-Authenticate", &format!("NTLM {}", b64.encode(c)))
+            }
+            Some(3) => {
+                l.push("authenticate".into());
+                let field = |at: usize| {
+                    let len = u16::from_le_bytes([msg[at], msg[at + 1]]) as usize;
+                    let off = u32::from_le_bytes([msg[at + 4], msg[at + 5], msg[at + 6], msg[at + 7]]) as usize;
+                    msg[off..off + len].to_vec()
+                };
+                let nt = field(20);
+                let user = String::from_utf16_lossy(&field(36).chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>());
+                let domain = String::from_utf16_lossy(&field(28).chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>());
+                let key = ntlm::ntowf_v2(&ntlm::Credentials { domain, user, password: "secreto".into() });
+                use hmac::{Hmac, Mac};
+                let mut m = <Hmac<md5::Md5> as Mac>::new_from_slice(&key).unwrap();
+                m.update(&server_challenge);
+                m.update(&nt[16..]);
+                let ok = m.finalize().into_bytes().as_slice() == &nt[..16];
+                assert!(req.body.contains("<m:SyncFolderHierarchy>"), "la petición real va con el AUTHENTICATE");
+                if !ok {
+                    return Resp::new(401, "").with("WWW-Authenticate", "NTLM");
+                }
+                Resp::xml(
+                    200,
+                    envelope(&format!(
+                        r#"<m:SyncFolderHierarchyResponse xmlns:m="{M}" xmlns:t="{T}"><m:ResponseMessages>{}</m:ResponseMessages></m:SyncFolderHierarchyResponse>"#,
+                        ok_msg()
+                    )),
+                )
+            }
+            _ => Resp::new(400, ""),
+        }
+    })
+    .await;
+    let url = format!("{base}/EWS/Exchange.asmx");
+
+    let c = client(&url, "secreto");
+    let h = c.sync_folder_hierarchy(None).await.unwrap();
+    assert_eq!(h.state, "N1");
+    // Ya sabe que es NTLM: la segunda va directa, sin probar Basic.
+    c.sync_folder_hierarchy(None).await.unwrap();
+    {
+        let l = log.lock().unwrap();
+        assert_eq!(l.iter().filter(|x| x.starts_with("sin NTLM: Basic")).count(), 1, "{l:?}");
+        assert_eq!(l.iter().filter(|x| *x == "authenticate").count(), 2, "{l:?}");
+    }
+
+    let err = client(&url, "otra").sync_folder_hierarchy(None).await.unwrap_err();
+    assert_eq!(err, EwsError::Unauthorized);
+}
+
+fn ok_msg() -> String {
+    r#"<m:SyncFolderHierarchyResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode><m:SyncState>N1</m:SyncState><m:IncludesLastFolderInRange>true</m:IncludesLastFolderInRange><m:Changes/></m:SyncFolderHierarchyResponseMessage>"#.to_string()
+}

@@ -117,6 +117,9 @@ webpki-roots = "1"
 base64 = "0.22"
 md-5 = "0.10"
 # oauth: azar para PKCE, abrir el navegador del sistema, URL, cancelación (Rust puro)
+# ews: NTLMv2 propio (MS-NLMP) para Exchange local
+md4 = "0.10"
+hmac = "0.12"
 getrandom = "0.2"
 open = "5"
 url = "2"
