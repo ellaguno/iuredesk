@@ -327,6 +327,38 @@ impl ProviderConfig {
         }
     }
 
+    /// Enlace para que el administrador de una organización de Microsoft apruebe IureDesk para
+    /// todos sus usuarios (punto `v2.0/adminconsent` con los alcances que pedimos). Solo para
+    /// Microsoft Entra; `None` en cualquier otro proveedor. `common`/`consumers` no sirven para
+    /// esto y se cambian por `organizations` (el administrador entra con su cuenta y Microsoft
+    /// resuelve su inquilino). Al terminar, Microsoft redirige a `http://localhost`, que no carga:
+    /// la aprobación ya quedó hecha (lo dice `docs/microsoft-365-ti.md`).
+    pub fn admin_consent_url(&self) -> Option<String> {
+        let auth = url::Url::parse(&self.authorize_url).ok()?;
+        if auth.host_str() != Some("login.microsoftonline.com") || self.client.client_id.trim().is_empty() {
+            return None;
+        }
+        let mut segs = auth.path_segments()?;
+        let tenant = segs.next().filter(|t| !t.is_empty())?;
+        let tenant = match tenant {
+            "common" | "consumers" => "organizations",
+            t => t,
+        };
+        let scope: Vec<&str> = self
+            .consent_scopes
+            .iter()
+            .map(String::as_str)
+            .filter(|s| !matches!(*s, "openid" | "email" | "profile" | "offline_access"))
+            .collect();
+        let mut u = url::Url::parse("https://login.microsoftonline.com/").ok()?;
+        u.path_segments_mut().ok()?.push(tenant).push("v2.0").push("adminconsent");
+        u.query_pairs_mut()
+            .append_pair("client_id", self.client.client_id.trim())
+            .append_pair("scope", &scope.join(" "))
+            .append_pair("redirect_uri", &format!("http://{}", self.redirect_host.as_str()));
+        Some(u.to_string())
+    }
+
     /// Comprueba lo mínimo antes de usar la configuración.
     pub fn validate(&self) -> Result<(), Error> {
         if self.client.client_id.trim().is_empty() {
@@ -357,6 +389,28 @@ mod tests {
         assert!(p.api_scopes.iter().all(|s| !s.contains("outlook.office.com")));
         assert!(ProviderConfig::microsoft(c.clone(), &MicrosoftTenant::Id("a/b".into())).is_err());
         assert!(ProviderConfig::microsoft(c, &MicrosoftTenant::Id("contoso.com".into())).is_ok());
+    }
+
+    #[test]
+    fn microsoft_admin_consent_link() {
+        let c = ClientCredentials::new(" app-id ", None);
+        let p = ProviderConfig::microsoft(c.clone(), &MicrosoftTenant::Common).unwrap();
+        let link = p.admin_consent_url().unwrap();
+        let u = url::Url::parse(&link).unwrap();
+        assert_eq!(u.host_str(), Some("login.microsoftonline.com"));
+        assert_eq!(u.path(), "/organizations/v2.0/adminconsent");
+        let q: std::collections::HashMap<_, _> = u.query_pairs().into_owned().collect();
+        assert_eq!(q.get("client_id").map(String::as_str), Some("app-id"));
+        assert_eq!(q.get("redirect_uri").map(String::as_str), Some("http://localhost"));
+        let scope = q.get("scope").unwrap();
+        assert!(scope.contains("https://graph.microsoft.com/Mail.ReadWrite"));
+        assert!(scope.contains("https://outlook.office.com/IMAP.AccessAsUser.All"));
+        assert!(!scope.split(' ').any(|s| s == "offline_access" || s == "openid"));
+        // Un inquilino concreto se respeta.
+        let t = ProviderConfig::microsoft(c, &MicrosoftTenant::Id("contoso.com".into())).unwrap();
+        assert!(t.admin_consent_url().unwrap().contains("/contoso.com/v2.0/adminconsent"));
+        // Google no tiene nada parecido.
+        assert!(ProviderConfig::google(ClientCredentials::new("id", None)).admin_consent_url().is_none());
     }
 
     #[test]

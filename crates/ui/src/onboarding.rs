@@ -298,6 +298,7 @@ fn provider(app: &mut DeskApp, ui: &mut Ui) {
     let flow = w.flow.clone();
     let oauth_ready = w.oauth_ready;
     let issue = w.oauth_issue;
+    let admin_link = w.oauth_admin_link.clone();
     let reauth = w.reauth.is_some();
     let notes: Vec<String> = w
         .discovery
@@ -344,6 +345,17 @@ fn provider(app: &mut DeskApp, ui: &mut Ui) {
                         && ui.button(pick("Use an app password", "Usar una contraseña de app")).clicked()
                     {
                         app.session.wizard_use_app_password();
+                    }
+                    if let Some(link) = &admin_link
+                        && ui
+                            .button(pick("Copy the approval link for IT", "Copiar el enlace de aprobación para TI"))
+                            .on_hover_text(pick(
+                                "Your administrator opens it to approve IureDesk for the whole organization.",
+                                "Tu administrador lo abre para aprobar IureDesk en toda la organización.",
+                            ))
+                            .clicked()
+                    {
+                        ui.ctx().copy_text(link.clone());
                     }
                 });
             } else if oauth_ready {

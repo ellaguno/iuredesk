@@ -2215,6 +2215,7 @@ impl Session {
         if let Ok(mut g) = link.lock() {
             *g = None;
         }
+        let admin_link = cfg.as_ref().ok().and_then(iuredesk_oauth::ProviderConfig::admin_consent_url);
         let job = self.bg.spawn(async move {
             let r = async {
                 let cfg = cfg?;
@@ -2232,7 +2233,13 @@ impl Session {
                 Ok(())
             }
             .await
-            .map_err(|e: iuredesk_oauth::Error| crate::onboarding::oauth_failure(&e, provider));
+            .map_err(|e: iuredesk_oauth::Error| {
+                let mut f = crate::onboarding::oauth_failure(&e, provider);
+                if f.issue == crate::onboarding::OAuthIssue::AdminBlocked {
+                    f.admin_link = admin_link;
+                }
+                f
+            });
             JobOutput::Engine(EngineJob::OAuth(r))
         });
         if let Some(w) = self.wizard.as_mut() {
@@ -2242,6 +2249,7 @@ impl Session {
             w.step = WizardStep::Working;
             w.message = None;
             w.oauth_issue = None;
+            w.oauth_admin_link = None;
             w.job = Some(job);
         }
     }

@@ -559,3 +559,38 @@ fn oauth_reauth_invalidates_the_cached_token() {
     assert_eq!(step(&s), Some(WizardStep::Done), "{:?}", s.wizard.as_ref().and_then(|w| w.message.clone()));
     assert!(tokens.0.lock().unwrap().iter().any(|id| id == "acct1-x"), "{:?}", tokens.0.lock().unwrap());
 }
+
+/// F8.1: Microsoft pide consentimiento del administrador → el asistente ofrece el enlace para TI;
+/// el acceso condicional no ofrece contraseña de app (la política alcanza también a IMAP).
+#[test]
+fn microsoft_admin_consent_and_conditional_access() {
+    let ms = || ProviderConfig::microsoft(ClientCredentials::new("cid", None), &Default::default()).unwrap();
+    let run = |query: &'static str| {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut s, _) = session(dir.path(), &[]);
+        s.wizard_begin();
+        s.wizard.as_mut().unwrap().email = "ana@outlook.com".into();
+        s.wizard_apply_discovery(known_provider_discovery("ana@outlook.com").unwrap());
+        s.wizard.as_mut().unwrap().oauth_ready = true;
+        s.wizard_oauth_with(Ok(ms()), Some(browser_returning(query)), Duration::from_secs(20));
+        wait(&mut s, "fallo del OAuth", |s| step(s) != Some(WizardStep::Working));
+        let w = s.wizard.as_ref().unwrap();
+        (w.oauth_issue.unwrap(), w.oauth_admin_link.clone())
+    };
+    let (issue, link) = run(
+        "error=consent_required&error_description=AADSTS65001%3A%20The%20user%20or%20administrator%20has%20not%20consented",
+    );
+    assert_eq!(issue, OAuthIssue::AdminBlocked);
+    let link = link.expect("enlace para TI");
+    assert!(
+        link.starts_with("https://login.microsoftonline.com/organizations/v2.0/adminconsent?client_id=cid"),
+        "{link}"
+    );
+
+    let (issue, link) = run(
+        "error=access_denied&error_description=AADSTS53003%3A%20Access%20has%20been%20blocked%20by%20Conditional%20Access",
+    );
+    assert_eq!(issue, OAuthIssue::ConditionalAccess);
+    assert!(issue.offers_retry() && !issue.offers_app_password());
+    assert!(link.is_none());
+}

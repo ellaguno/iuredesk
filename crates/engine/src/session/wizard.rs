@@ -45,6 +45,7 @@ impl Session {
         w.step = WizardStep::Manual;
         w.message = None;
         w.oauth_issue = None;
+        w.oauth_admin_link = None;
         w.job = None;
     }
 
@@ -253,6 +254,7 @@ impl Session {
                     Notice::error(f.text)
                 });
                 w.oauth_issue = Some(f.issue);
+                w.oauth_admin_link = f.admin_link;
                 None
             }
         }

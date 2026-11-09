@@ -80,6 +80,8 @@ pub struct Wizard {
     pub existing: Option<String>,
     /// Por qué falló el último inicio de sesión con el navegador (decide los botones).
     pub oauth_issue: Option<OAuthIssue>,
+    /// Enlace para que TI apruebe IureDesk (Microsoft, consentimiento de administrador).
+    pub oauth_admin_link: Option<String>,
     /// Enlace de autorización en curso (para copiarlo si el navegador no se abrió).
     pub(crate) oauth_link: Arc<Mutex<Option<String>>>,
 }
@@ -421,8 +423,12 @@ pub enum OAuthIssue {
     /// App en pruebas y la cuenta no está en la lista de usuarios de prueba (Google, 403).
     TestUser,
     /// El administrador de la organización bloquea apps externas (`admin_policy_enforced`,
-    /// consentimiento de administrador en Microsoft, acceso condicional).
+    /// consentimiento de administrador o usuario no asignado en Microsoft).
     AdminBlocked,
+    /// Acceso condicional de Microsoft: la organización solo deja entrar desde equipos
+    /// administrados o apps aprobadas (AADSTS53000–53003). Aplica también a IMAP, así que la
+    /// contraseña de app no es salida.
+    ConditionalAccess,
     /// La configuración OAuth solo admite cuentas de otra organización (`org_internal`).
     OrgInternal,
     /// No llegó la respuesta del navegador a tiempo.
@@ -437,7 +443,7 @@ pub enum OAuthIssue {
 impl OAuthIssue {
     /// ¿Tiene sentido ofrecer la contraseña de app?
     pub fn offers_app_password(self) -> bool {
-        !matches!(self, OAuthIssue::Cancelled | OAuthIssue::Network)
+        !matches!(self, OAuthIssue::Cancelled | OAuthIssue::Network | OAuthIssue::ConditionalAccess)
     }
 
     /// ¿Tiene sentido «Intentar de nuevo»?
@@ -451,6 +457,9 @@ impl OAuthIssue {
 pub struct OAuthFailure {
     pub issue: OAuthIssue,
     pub text: Text,
+    /// Enlace para que TI apruebe IureDesk en la organización (solo Microsoft y
+    /// [`OAuthIssue::AdminBlocked`]); lo pone quien conoce la configuración del proveedor.
+    pub admin_link: Option<String>,
 }
 
 /// Clasifica un error de OAuth.
@@ -458,11 +467,14 @@ pub fn oauth_issue(e: &iuredesk_oauth::Error) -> OAuthIssue {
     use iuredesk_oauth::Error as E;
     let by_text = |parts: &[&str]| {
         let t = parts.join(" ").to_ascii_lowercase();
-        if t.contains("admin_policy_enforced")
+        // Antes que lo demás: su descripción también habla del «administrador».
+        if ["aadsts53000", "aadsts53001", "aadsts53002", "aadsts53003"].iter().any(|c| t.contains(c)) {
+            Some(OAuthIssue::ConditionalAccess)
+        } else if t.contains("admin_policy_enforced")
             || t.contains("aadsts65001")
             || t.contains("aadsts90094")
             || t.contains("aadsts90095")
-            || t.contains("aadsts53003")
+            || t.contains("aadsts50105")
             || t.contains("admin approval")
             || t.contains("administrator")
         {
@@ -533,6 +545,10 @@ pub fn oauth_failure(e: &iuredesk_oauth::Error, provider: OAuthProvider) -> OAut
             "Your organization's administrator does not allow outside apps such as IureDesk to access your account. Ask them to approve IureDesk, or use an app password if your organization allows it.",
             "El administrador de tu organización no permite que apps externas como IureDesk entren a tu cuenta. Pídele que apruebe IureDesk, o usa una contraseña de app si tu organización lo permite.",
         ),
+        OAuthIssue::ConditionalAccess => Text::new(
+            "Your organization only lets its own managed computers or approved apps into your Microsoft account, and IureDesk is not on that list. This cannot be worked around from here: ask your IT department to allow IureDesk (they can read why in IureDesk's guide for IT).",
+            "Tu organización solo deja entrar a tu cuenta de Microsoft desde sus equipos administrados o apps aprobadas, e IureDesk no está en esa lista. Desde aquí no se puede evitar: pide a tu área de TI que permita IureDesk (en la guía de IureDesk para TI está el motivo).",
+        ),
         OAuthIssue::OrgInternal => Text::new(
             format!(
                 "The {who} sign-in of this build only accepts accounts of another organization, so it cannot be used with yours. Use an app password."
@@ -555,7 +571,7 @@ pub fn oauth_failure(e: &iuredesk_oauth::Error, provider: OAuthProvider) -> OAut
         ),
         OAuthIssue::Network | OAuthIssue::Other => oauth_text(e),
     };
-    OAuthFailure { issue, text }
+    OAuthFailure { issue, text, admin_link: None }
 }
 
 /// Por qué no se ofrece «Continuar con Google/Microsoft» (no hay *client id* en esta compilación).
@@ -714,6 +730,23 @@ mod tests {
         assert_eq!(oauth_issue(&auth("org_internal", None)), OAuthIssue::OrgInternal);
         assert_eq!(
             oauth_issue(&auth("consent_required", Some("AADSTS65001: needs admin approval"))),
+            OAuthIssue::AdminBlocked
+        );
+        // Acceso condicional: aunque el texto hable del administrador, no es consentimiento.
+        for code in ["AADSTS53000", "AADSTS53001", "AADSTS53002", "AADSTS53003"] {
+            let e = auth(
+                "access_denied",
+                Some(&format!(
+                    "{code}: Access has been blocked by Conditional Access policies. Contact your administrator."
+                )),
+            );
+            assert_eq!(oauth_issue(&e), OAuthIssue::ConditionalAccess, "{code}");
+        }
+        let ca = oauth_failure(&auth("access_denied", Some("AADSTS53003: blocked")), OAuthProvider::Microsoft);
+        assert!(ca.issue.offers_retry() && !ca.issue.offers_app_password());
+        assert!(ca.text.es.contains("equipos administrados"), "{}", ca.text.es);
+        assert_eq!(
+            oauth_issue(&auth("invalid_grant", Some("AADSTS50105: The signed in user is not assigned to a role"))),
             OAuthIssue::AdminBlocked
         );
         assert_eq!(oauth_issue(&auth("invalid_request", None)), OAuthIssue::Other);

@@ -60,7 +60,8 @@ Tres promesas que guían cada decisión:
 | SMTP | `lettre` (rustls, tokio) | XOAUTH2 / OAUTHBEARER |
 | MIME | `mail-parser`, `mail-builder` (Stalwart) | Robustos ante correos mal formados |
 | OAuth 2 | `oauth2` + servidor *loopback* local + PKCE | Google, Microsoft |
-| Microsoft 365 | cliente Graph propio sobre `reqwest` | Correo, calendario, contactos, To Do. **EWS se retira en Exchange Online**: no se implementa. |
+| Microsoft 365 | cliente Graph propio sobre `reqwest` | Correo, calendario, contactos, To Do. En Exchange Online solo Graph: **EWS se retira ahí**. |
+| Exchange Server local | crate `ews` propio (SOAP con `quick-xml`), `sspi` para NTLM/Kerberos si pasa purity | 2016/2019/SE no hablan Graph; EWS es su protocolo nativo (F8). ActiveSync no. |
 | Google | Gmail API (opcional, etiquetas nativas), Calendar API, People API — o IMAP/CalDAV/CardDAV | Ver riesgo de verificación de Google (§12) |
 | CalDAV/CardDAV | `libdav` (Pimalaya) o cliente propio sobre `quick-xml` | iCloud, Fastmail, Nextcloud, Iurefficient, etc. |
 | iCalendar/vCard | `calcard` (Stalwart) o `icalendar` + `rrule` | Recurrencias, excepciones, iTIP/iMIP |
@@ -128,6 +129,7 @@ cola local y la UI se actualiza al instante; `sync` la replica cuando hay red, c
 | **Iurefficient** | — (no provee buzones; vincula correos de otras cuentas) | Agenda/eventos de la instancia | Contactos/CRM | Documentos (WebDAV) | Tareas de casos | `iurefficient-connect` (cookies + TOTP) |
 | **Gmail / Workspace** | IMAP+XOAUTH2 o Gmail API | Calendar API / CalDAV | People API / CardDAV | Local | Tasks API | OAuth 2 (PKCE) |
 | **Microsoft 365 / Outlook.com** | Graph (o IMAP+OAuth) | Graph | Graph | OneNote: fuera de alcance v1 | To Do vía Graph | OAuth 2 (MSAL-like, cliente público multiinquilino) |
+| **Exchange Server (local)** | EWS | EWS | EWS (+ libreta global) | — | EWS | Contraseña (Basic/NTLM/Kerberos), OAuth si es híbrido; Autodiscover |
 | **Apple iCloud** | IMAP + SMTP | CalDAV | CardDAV | IMAP "Notes" (sólo lectura) | CalDAV VTODO (Recordatorios antiguos) | Contraseña específica de app |
 
 Asistente de alta: el usuario escribe su correo → detectamos proveedor (dominio, MX, autoconfig,
@@ -284,6 +286,7 @@ Estado al 2026-10-29. El detalle de cada tarea (qué incluye, qué falta) vive e
 | **F5 · Paridad y pulido** | Importadores (Outlook, Thunderbird, Apple Mail, Takeout), instaladores y CI de 3 SO, reglas/Sieve/posponer/categorías/etiquetas, OpenPGP/S/MIME e impresión | Alpha pública | ◐ |
 | **F6 · Productividad diaria** | Pantalla «Mi día» y abrir donde lo dejé | El usuario sabe qué atender al abrir | ☑ |
 | **F7 · Huecos del uso diario** | Google Tasks, reabrir borradores, notas editables, carpetas, Auto-Submitted, distintivos de Iurefficient en segundo plano | Sin «no se puede» en tareas cotidianas | ☑ (F7.1) |
+| **F8 · Exchange corporativo** | M365 de empresa (consentimiento, acceso condicional, buzones compartidos, guía para TI) y Exchange Server local por EWS + Autodiscover | Un usuario corporativo (nube o servidor propio) ve correo, calendario y contactos | ☐ |
 | **UI · Interfaz transversal** | Barra de título integrada, tipografía (Inter y opciones), contactos, cuentas, alta manual, mensajes de error | Lo que reporta el dueño al usar la app | ☑ (UI-HEADER, UX-1, UX-2) |
 
 ### Hacia la beta (siguiente)
@@ -304,7 +307,9 @@ Estado al 2026-10-29. El detalle de cada tarea (qué incluye, qué falta) vive e
 | **Render HTML sin webview** (Blitz aún madura; correos con tablas y CSS antiguo) | Alto | Prototipo en F0 con un corpus de 500 correos reales; *fallback* a vista simplificada; contribuir *upstream*. |
 | **Redactor de texto enriquecido** en egui (no existe uno maduro) | Alto | v1: editor propio con formato básico (negrita, listas, enlaces, citas, imágenes en línea) que genera HTML; documentos complejos → IureEditor. |
 | **Verificación de Google** para el alcance `https://mail.google.com/` (alcance restringido → auditoría de seguridad CASA anual) | Alto (costo/tiempo) | Empezar con contraseña de app + OAuth en modo "pruebas" (≤ 100 usuarios); presupuestar la auditoría antes de la beta pública. |
-| Registro de app en Microsoft Entra (multiinquilino) y consentimiento de administradores | Medio | Cliente público con PKCE; documentación para TI de clientes. |
+| Registro de app en Microsoft Entra (multiinquilino) y consentimiento de administradores | Medio | Cliente público con PKCE; documentación para TI de clientes; enlace de aprobación en el propio error (F8.1). |
+| Acceso condicional de Microsoft (solo equipos administrados o apps aprobadas) | Medio | No se puede saltar: se detecta y se explica (F8.1). |
+| Exchange Server local: NTLM/Kerberos en Rust puro y sin servidor de pruebas | Medio | `sspi` (Rust) tras revisar pureza; EWS falso con respuestas grabadas; prueba final con un Exchange real (F8.5). |
 | Pureza vs. integraciones de SO (notificaciones macOS, bandeja Windows) | Medio | Excepciones acotadas y documentadas en `docs/excepciones.md`. |
 | Alcance enorme | Alto | Fases con criterio de salida; cada fase es usable por sí sola. |
 
