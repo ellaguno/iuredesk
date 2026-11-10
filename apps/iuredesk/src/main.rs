@@ -17,6 +17,9 @@
 //!   corre dentro de ella por el puente IPC; si no, abre el almacén solo durante la llamada.
 //! - `IUREDESK_DATA_DIR=/ruta` usa esa carpeta para todo (almacén, cuentas y preferencias): sirve
 //!   para probar con una cuenta real sin tocar la instalación normal.
+//! - **Dibujo**: wgpu (Metal, Vulkan, DX12); si no hay adaptador (máquinas virtuales sin
+//!   aceleración, Macs Intel viejas, Linux sin Vulkan) se usa glow (OpenGL del sistema).
+//!   `IUREDESK_RENDERER=glow|wgpu` lo fuerza.
 //! - `IUREDESK_NATIVE_DECORATIONS=1` usa la barra de título del sistema (`0`, la integrada); sin
 //!   la variable decide la preferencia «Barra de título del sistema».
 //! - **Windows**: en las compilaciones de entrega es una app de ventanas (sin consola detrás; la
@@ -59,6 +62,7 @@ Si IureDesk ya está abierto, le pasa lo pedido y lo trae al frente.
 Variables:
   IUREDESK_DATA_DIR=/ruta   carpeta de datos propia (almacén, cuentas y preferencias)
   IUREDESK_NATIVE_DECORATIONS=1   barra de título del sistema (0 = la integrada)
+  IUREDESK_RENDERER=glow|wgpu     fuerza el motor de dibujo (sin ella: wgpu y, si no hay, glow)
 ";
 
 /// Carpeta de datos elegida con `IUREDESK_DATA_DIR`, si hay.
@@ -233,6 +237,38 @@ fn wgpu_options() -> eframe::WgpuConfiguration {
     }
 }
 
+/// Motor de dibujo pedido con `IUREDESK_RENDERER`, si se reconoce.
+fn renderer_override(value: Option<&str>) -> Option<eframe::Renderer> {
+    match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("glow" | "gl" | "opengl") => Some(eframe::Renderer::Glow),
+        Some("wgpu") => Some(eframe::Renderer::Wgpu),
+        _ => None,
+    }
+}
+
+/// wgpu si encuentra un adaptador con los backends compilados; si no, glow. Sin esto, una Mac sin
+/// adaptador Metal (VM, Intel vieja) terminaba con «No suitable graphics adapter found» sin
+/// mostrar nada. Consultar adaptadores no crea dispositivos y vuelve en milisegundos; se espera
+/// como mucho 3 s (un controlador colgado no detiene el arranque: se usa glow).
+fn pick_renderer() -> eframe::Renderer {
+    if let Some(r) = renderer_override(std::env::var("IUREDESK_RENDERER").ok().as_deref()) {
+        return r;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new().name("iuredesk-gpu-probe".into()).spawn(move || {
+        let instance = eframe::wgpu::Instance::new(eframe::wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapters = pollster::block_on(instance.enumerate_adapters(eframe::wgpu::Backends::all()));
+        let _ = tx.send(!adapters.is_empty());
+    });
+    let has_adapter = spawned.is_ok() && rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap_or(false);
+    if has_adapter {
+        eframe::Renderer::Wgpu
+    } else {
+        eprintln!("IureDesk: wgpu no encontró un adaptador gráfico; se usa OpenGL (glow).");
+        eframe::Renderer::Glow
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Antes de cualquier salida: en modo MCP, stdout es solo del protocolo.
@@ -309,7 +345,12 @@ fn main() -> ExitCode {
         },
     );
 
-    let options = eframe::NativeOptions { viewport, wgpu_options: wgpu_options(), ..Default::default() };
+    let options = eframe::NativeOptions {
+        viewport,
+        renderer: pick_renderer(),
+        wgpu_options: wgpu_options(),
+        ..Default::default()
+    };
     let minimize = cli.minimized;
     let ctx_slot = Arc::clone(&wake.ctx);
     // R1.4: antes del bucle de eventos, para no perder el enlace o archivo con que se lanzó.
@@ -439,7 +480,7 @@ impl eframe::App for App {
         self.app.ui(ui);
     }
 
-    fn on_exit(&mut self) {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.app.shutdown();
     }
 }
@@ -452,6 +493,21 @@ mod tests {
         let src = include_str!("main.rs");
         let attr = concat!("#![cfg_attr(all(windows, not(debug_assertions)), ", "windows_subsystem = \"windows\")]");
         assert!(src.lines().any(|l| l.trim() == attr), "falta el subsistema de ventanas");
+    }
+
+    /// Regresión (dueño 2026-11-10): en una Mac Intel sin adaptador Metal la app terminaba con
+    /// «No suitable graphics adapter found» y no se veía nada. Debe haber respaldo glow y el
+    /// arranque debe elegir el motor en vez de usar siempre wgpu.
+    #[test]
+    fn falls_back_to_glow_without_gpu_adapter() {
+        use super::renderer_override as r;
+        assert_eq!(r(Some("glow")), Some(eframe::Renderer::Glow));
+        assert_eq!(r(Some(" OpenGL ")), Some(eframe::Renderer::Glow));
+        assert_eq!(r(Some("wgpu")), Some(eframe::Renderer::Wgpu));
+        assert_eq!(r(Some("vulkan")), None);
+        assert_eq!(r(None), None);
+        let src = include_str!("main.rs");
+        assert!(src.contains(concat!("renderer: ", "pick_renderer(),")), "el arranque no elige el motor");
     }
 
     #[test]

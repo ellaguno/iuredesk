@@ -23,7 +23,9 @@ iuredesk-mcp = { workspace = true }
 # UX-7: Noto Emoji (monocromo, OFL) de respaldo para los emoji del texto de egui; a color con la
 # fuente del sistema por `iurefficient-ui` (`color-emoji`).
 egui = { workspace = true, features = ["monochrome_emoji_fonts"] }
-eframe = { workspace = true, features = ["wgpu", "wayland", "x11", "accesskit", "default_fonts", "clipboard"] }
+# wgpu (Metal/Vulkan/DX12) y, de respaldo, glow (OpenGL del sistema) cuando no hay adaptador:
+# máquinas virtuales sin aceleración, Macs Intel viejas, Linux sin controlador Vulkan.
+eframe = { workspace = true, features = ["wgpu", "glow", "wayland", "x11", "accesskit", "default_fonts", "clipboard"] }
 # Marco de ventana estilo Adwaita en GNOME/Wayland (sctk-adwaita, Rust puro) cuando se elige la
 # barra de título del sistema; por omisión la barra es la integrada (UI-HEADER, sin decoraciones).
 # Sin esto winit dibuja un marco genérico. En KDE y otros con xdg-decoration lo pone el sistema.
@@ -34,6 +36,7 @@ iuredesk-desktop = { workspace = true }
 # R1.4: Apple Events de abrir enlace/archivo en macOS (no-op en los demás sistemas).
 iuredesk-macos-events = { workspace = true }
 png = { workspace = true }
+pollster = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Orden de los botones de la ventana (`button-layout`) por el portal de configuración XDG.
