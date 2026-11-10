@@ -8,3 +8,11 @@
 
 # Videos de /brag (se generan, no se versionan)
 brag-output*/
+
+# Material de firma (nunca se versiona)
+*.p12
+*.p8
+*.key
+*.mobileprovision
+*.provisionprofile
+*.cer
