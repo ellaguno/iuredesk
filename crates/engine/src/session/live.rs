@@ -226,17 +226,20 @@ impl Session {
         let mail = self.live.handle.take();
         let pim = self.pim.handle.take();
         if mail.is_some() || pim.is_some() {
-            let rt = self.bg.handle();
-            let _ = std::thread::Builder::new().name("iuredesk-shutdown".into()).spawn(move || {
-                rt.block_on(async move {
-                    if let Some(h) = mail {
-                        let _ = tokio::time::timeout(Duration::from_secs(4), h.shutdown()).await;
-                    }
-                    if let Some(p) = pim {
-                        let _ = tokio::time::timeout(Duration::from_secs(4), p.shutdown()).await;
-                    }
-                });
+            // El apagado corre como tarea del runtime de fondo y aquí se espera con un canal: si
+            // se acaba el tiempo, el runtime suelta la tarea al destruirse. (Antes un hilo suelto
+            // hacía `block_on` y reventaba si el runtime se destruía mientras tanto.)
+            let (done, wait) = std::sync::mpsc::channel::<()>();
+            self.bg.handle().spawn(async move {
+                if let Some(h) = mail {
+                    let _ = tokio::time::timeout(Duration::from_secs(4), h.shutdown()).await;
+                }
+                if let Some(p) = pim {
+                    let _ = tokio::time::timeout(Duration::from_secs(4), p.shutdown()).await;
+                }
+                let _ = done.send(());
             });
+            let _ = wait.recv_timeout(Duration::from_secs(9));
         }
     }
 
