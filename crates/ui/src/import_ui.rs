@@ -73,18 +73,27 @@ fn label_for(path: &std::path::Path) -> String {
 /// Oferta en la bienvenida.
 pub fn onboarding_offer(app: &mut DeskApp, ui: &mut Ui) {
     let c = theme::colors(ui);
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(pick(
-                "Coming from Outlook, Thunderbird or Apple Mail?",
-                "¿Vienes de Outlook, Thunderbird o Apple Mail?",
-            ))
-            .color(c.text_muted),
-        );
-        if ui.link(pick("Import your mail", "Importa tu correo")).clicked() {
+    let lead = pick("Coming from Outlook, Thunderbird or Apple Mail?", "¿Vienes de Outlook, Thunderbird o Apple Mail?");
+    let link = pick("Import your mail", "Importa tu correo");
+    // `horizontal` alinea a la izquierda aunque esté dentro de `vertical_centered`: se mide la fila
+    // y se centra con un margen; si no cabe, se parte en dos líneas.
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let width = |s: &str| ui.painter().layout_no_wrap(s.to_owned(), font.clone(), c.text_muted).size().x;
+    let row = width(lead) + ui.spacing().item_spacing.x + width(link);
+    let mut row_ui = |ui: &mut Ui| {
+        ui.label(RichText::new(lead).color(c.text_muted));
+        if ui.link(link).clicked() {
             app.import.open();
         }
-    });
+    };
+    if row <= ui.available_width() {
+        ui.horizontal(|ui| {
+            ui.add_space(((ui.available_width() - row) / 2.0).max(0.0));
+            row_ui(ui);
+        });
+    } else {
+        row_ui(ui);
+    }
 }
 
 /// Ajustes → «Importar».

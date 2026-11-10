@@ -258,6 +258,15 @@ fn welcome_screen_when_there_are_no_accounts() {
     let mut h = harness(app, vec2(1100.0, 760.0));
     settle(&mut h);
     assert!(h.query_by_label("Agrega tu cuenta de correo").is_some());
+    // «¿Vienes de Outlook…? Importa tu correo» va centrado como el resto, no pegado a la izquierda.
+    let lead = h.get_by_label("¿Vienes de Outlook, Thunderbird o Apple Mail?").rect();
+    let link = h.get_by_label("Importa tu correo").rect();
+    let tagline = h.get_by_label("Correo, calendario, contactos, notas y tareas — todo en un lugar.").rect();
+    let row_mid = (lead.left() + link.right()) / 2.0;
+    assert!(
+        (row_mid - tagline.center().x).abs() < 4.0,
+        "fila de importar no centrada: {lead:?} … {link:?} (lema {tagline:?})"
+    );
     if let Some(w) = h.state_mut().session.wizard.as_mut() {
         w.email = "laura@gmail.com".into();
     }
