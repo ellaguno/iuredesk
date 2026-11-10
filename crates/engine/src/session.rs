@@ -420,6 +420,9 @@ pub struct Session {
     note_focus: Option<iuredesk_model::NoteId>,
     /// UX-12: las notas se escriben en IureEditor; sin él, Notas no aparece (lo fija la UI).
     notes_available: bool,
+    /// UX-15: hay un asistente configurado (Iurefficient con sesión u otro proveedor); sin él,
+    /// `nav.assistant` y `ai.*` quedan apagados y la IA no se muestra (lo fija la UI).
+    ai_available: bool,
     /// UX-6: carpeta de notas en Markdown.
     notes_fs: notes_files::NotesFs,
     /// Última «Probar conexión» del editor de cuentas (id de la cuenta y estado).
@@ -507,6 +510,7 @@ impl Session {
             contact_selection: Vec::new(),
             note_focus: None,
             notes_available: true,
+            ai_available: true,
             notes_fs: notes_files::NotesFs::default(),
             connection_test: None,
             calendars: Vec::new(),
@@ -1169,6 +1173,7 @@ impl Session {
             }
             "mail.edit_draft" => self.focused.is_some_and(|m| self.is_draft(m)),
             b if (b == "nav.notes" || b.starts_with("notes.")) && !self.notes_available => false,
+            b if (b == "nav.assistant" || b.starts_with("ai.")) && !self.ai_available => false,
             "notes.delete" | "notes.open_editor" => self.note_focus.is_some(),
             "tasks.edit" => self.module == Module::Tasks || self.module == Module::Today,
             "contacts.edit" => self.contact_selection.len() == 1,
@@ -1202,6 +1207,10 @@ impl Session {
                 b if (b == "nav.notes" || b.starts_with("notes.")) && !self.notes_available => Notice::info(
                     "Notes are written in IureEditor: install it to use them here.",
                     "Las notas se escriben en IureEditor: instálalo para usarlas aquí.",
+                ),
+                b if (b == "nav.assistant" || b.starts_with("ai.")) && !self.ai_available => Notice::info(
+                    "Connect Iurefficient or choose an AI provider in Settings → Assistant.",
+                    "Conecta Iurefficient o elige un proveedor de IA en Ajustes → Asistente.",
                 ),
                 "contacts.delete" | "contacts.edit" => {
                     Notice::info("Select a contact first.", "Primero selecciona un contacto.")
@@ -1642,6 +1651,35 @@ impl Session {
             })),
             _ => None,
         }
+    }
+
+    /// UX-15: pide el clima de hoy del lugar elegido. Responde con [`Event::Custom`] y un
+    /// [`crate::weather::WeatherResult`]. `None` si el clima está apagado o no hay lugar.
+    pub fn request_weather(&mut self) -> Option<JobId> {
+        let w = &self.prefs.weather;
+        let place = w.place.clone().filter(|_| w.enabled)?;
+        let tz = crate::time::user_tz(self.zone);
+        let now = self.now();
+        Some(self.bg.spawn(async move {
+            let result = crate::weather::fetch_today(crate::weather::MET_API, &place, tz, now).await;
+            JobOutput::Custom(Box::new(crate::weather::WeatherResult { for_place: place, result }))
+        }))
+    }
+
+    /// UX-15: busca ciudades para el clima. Responde con [`Event::Custom`] y un
+    /// [`crate::weather::PlaceResults`].
+    pub fn search_places(&mut self, query: &str) -> JobId {
+        let query = query.trim().chars().take(80).collect::<String>();
+        let lang = if crate::lang::spanish() { "es" } else { "en" };
+        self.bg.spawn(async move {
+            let result = crate::weather::search_places(crate::weather::GEO_API, &query, lang).await;
+            JobOutput::Custom(Box::new(crate::weather::PlaceResults { query, result }))
+        })
+    }
+
+    /// UX-15: ciudad que sugiere la zona horaria del sistema (para el clima).
+    pub fn guess_city(&self) -> Option<String> {
+        crate::weather::guess_city(crate::time::user_tz(self.zone).name())
     }
 
     /// Encola trabajo de la UI (p. ej. el render de HTML) en el runtime de fondo.

@@ -8,6 +8,9 @@
 //! casillas `- [ ]` se marcan aquí (reescriben el Markdown, con deshacer). Las imágenes remotas
 //! siguen Ajustes → Privacidad (UX-5): con «Siempre» o de dominios permitidos se cargan solas; si
 //! no, un aviso con «Mostrar».
+//!
+//! UX-15: las respuestas del asistente se pintan igual (Markdown → HTML → Blitz) con su propia
+//! caché ([`Owner::Chat`]): sin imágenes locales ni remotas y, mientras se pinta, el texto tal cual.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -29,6 +32,17 @@ use crate::html::{HtmlImage, MapFetcher};
 pub const NOTE_TAG: u64 = 1 << 62;
 /// Renders guardados.
 const MAX_ENTRIES: usize = 8;
+/// Renders guardados del chat (una conversación cabe entera).
+pub const CHAT_ENTRIES: usize = 48;
+/// Bit de los ids de las respuestas del chat (nunca llega a un id de nota real).
+pub const CHAT_BIT: u64 = 1 << 61;
+
+/// De quién es el render.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Owner {
+    Note,
+    Chat,
+}
 /// Memoria máxima de las texturas guardadas.
 const MAX_TEXTURE_BYTES: usize = 64 * 1024 * 1024;
 /// Bytes de imágenes locales por nota (además del tope de cada una en `notes_fs`).
@@ -51,6 +65,13 @@ pub struct NoteKey {
 pub struct NoteDone {
     key: NoteKey,
     result: Result<(HtmlImage, Vec<String>), String>,
+}
+
+impl NoteDone {
+    /// ¿Es de una respuesta del chat?
+    pub fn is_chat(&self) -> bool {
+        self.key.id.get() & CHAT_BIT != 0
+    }
 }
 
 enum State {
@@ -80,6 +101,8 @@ pub struct NotePreviewCache {
     fetching: HashMap<NoteId, u64>,
     /// Notas cuyas imágenes remotas permitió el usuario en esta sesión.
     allowed: HashSet<NoteId>,
+    /// Renders guardados como mucho (0: [`MAX_ENTRIES`]).
+    cap: usize,
 }
 
 fn tex_bytes(size: [usize; 2]) -> usize {
@@ -91,6 +114,15 @@ fn rgb(c: Color32) -> [u8; 3] {
 }
 
 impl NotePreviewCache {
+    /// Caché que guarda hasta `n` renders.
+    pub fn with_capacity(n: usize) -> Self {
+        NotePreviewCache { cap: n, ..Default::default() }
+    }
+
+    fn cap(&self) -> usize {
+        if self.cap == 0 { MAX_ENTRIES } else { self.cap }
+    }
+
     /// ¿Hay renders pendientes? (las capturas y las pruebas esperan).
     pub fn pending(&self) -> bool {
         self.entries.values().any(|s| matches!(s, State::Pending))
@@ -140,7 +172,7 @@ impl NotePreviewCache {
         self.entries.insert(done.key, state);
         // Por memoria: los más viejos, nunca el recién llegado.
         let mut i = 0;
-        while (self.bytes > MAX_TEXTURE_BYTES || self.order.len() > MAX_ENTRIES) && i < self.order.len() {
+        while (self.bytes > MAX_TEXTURE_BYTES || self.order.len() > self.cap()) && i < self.order.len() {
             match self.order.get(i).copied() {
                 Some(k) if k != done.key => self.remove(k),
                 _ => i += 1,
@@ -213,7 +245,6 @@ pub enum PreviewAct {
 
 /// Pinta la vista previa de la nota `id` con el texto `body`. Devuelve lo que se pulsó.
 pub fn show(app: &mut DeskApp, ui: &mut Ui, id: NoteId, body: &str) -> Option<PreviewAct> {
-    let ctx = ui.ctx().clone();
     let c = theme::colors(ui);
     if body.trim().is_empty() {
         ui.label(
@@ -225,6 +256,21 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui, id: NoteId, body: &str) -> Option<Pr
         );
         return None;
     }
+    render(app, ui, Owner::Note, id, body)
+}
+
+/// UX-15: una respuesta del asistente (la línea `n` del chat) con su Markdown pintado.
+pub fn chat(app: &mut DeskApp, ui: &mut Ui, n: usize, body: &str) {
+    let id = NoteId(CHAT_BIT | (n as u64 & (CHAT_BIT - 1)));
+    if let Some(PreviewAct::Open(url)) = render(app, ui, Owner::Chat, id, body) {
+        open_link(app, &url);
+    }
+}
+
+fn render(app: &mut DeskApp, ui: &mut Ui, owner: Owner, id: NoteId, body: &str) -> Option<PreviewAct> {
+    let ctx = ui.ctx().clone();
+    let c = theme::colors(ui);
+    let quiet = owner == Owner::Chat;
     let opts = options(ui);
     let bg = rgb(c.surface);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -232,7 +278,10 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui, id: NoteId, body: &str) -> Option<Pr
     format!("{:?}{bg:?}", opts).hash(&mut hasher);
     let hash = hasher.finish();
     let width = crate::html::HtmlCache::width_for(ui.available_width());
-    let cache = &mut app.note_preview;
+    let cache = match owner {
+        Owner::Note => &mut app.note_preview,
+        Owner::Chat => &mut app.chat_preview,
+    };
     let remote = cache.remote.get(&id).filter(|(h, _)| *h == hash).map(|(_, m)| Arc::clone(m));
     let key = NoteKey {
         id,
@@ -242,14 +291,14 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui, id: NoteId, body: &str) -> Option<Pr
         remote: remote.is_some(),
     };
     if !cache.entries.contains_key(&key) {
-        while cache.order.len() >= MAX_ENTRIES {
+        while cache.order.len() >= cache.cap() {
             // El más viejo que no sea el último listo de esta nota (se ve mientras tanto).
             let keep = cache.last_ready.get(&id).copied();
             let Some(old) = cache.order.iter().copied().find(|k| Some(*k) != keep) else { break };
             cache.remove(old);
         }
         let md = body.to_string();
-        let root: Option<PathBuf> = app.session.notes_dir();
+        let root: Option<PathBuf> = if quiet { None } else { app.session.notes_dir() };
         let max_side = ctx.input(|i| i.max_texture_side).max(64);
         app.session.spawn_blocking(move || {
             let doc = markdown::to_html(&md, &opts);
@@ -300,7 +349,9 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui, id: NoteId, body: &str) -> Option<Pr
     let Some(State::Ready { tiles, size_px, links, blocked, deep_links, scale }) =
         shown.and_then(|k| cache.entries.get(&k))
     else {
-        if failed {
+        if quiet {
+            // El chat: el texto tal cual hasta que llegue el render.
+        } else if failed {
             ui.label(
                 RichText::new(pick(
                     "The preview could not be drawn; this is the plain text.",
@@ -317,15 +368,21 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui, id: NoteId, body: &str) -> Option<Pr
                 );
             });
         }
-        ui.add_space(6.0);
-        ui.add(egui::Label::new(RichText::new(body.chars().take(20_000).collect::<String>()).color(c.text)).wrap());
+        if !quiet {
+            ui.add_space(6.0);
+        }
+        ui.add(
+            egui::Label::new(RichText::new(body.chars().take(20_000).collect::<String>()).color(c.text))
+                .selectable(true)
+                .wrap(),
+        );
         return None;
     };
     let (tiles, size_px, links, blocked, deep_links, scale) =
         (tiles.clone(), *size_px, links.clone(), blocked.clone(), deep_links.clone(), *scale);
     // Imágenes remotas (UX-5).
     // Solo con el render de este texto (no el anterior que se ve mientras tanto).
-    if !blocked.is_empty() && !key.remote && shown == Some(key) && !cache.fetching.contains_key(&id) {
+    if !quiet && !blocked.is_empty() && !key.remote && shown == Some(key) && !cache.fetching.contains_key(&id) {
         let auto = cache.allowed.contains(&id) || app.session.note_images_auto(&blocked);
         if auto {
             cache.fetching.insert(id, hash);
@@ -421,7 +478,7 @@ pub(crate) fn toggle_task(app: &mut DeskApp, id: NoteId, n: usize) {
 }
 
 /// Abre un enlace de la nota: navegador, redactor o IureEditor.
-fn open_link(app: &mut DeskApp, url: &str) {
+pub(crate) fn open_link(app: &mut DeskApp, url: &str) {
     let lower = url.trim().to_ascii_lowercase();
     if lower.starts_with("mailto:") {
         if let Some(d) = app.session.compose_mailto(url) {

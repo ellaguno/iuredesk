@@ -3,7 +3,7 @@
 //! `cargo run -p iuredesk-ui --example ui_shot -- /tmp/shot.png [--dark] [--density dense|compact|comfortable]
 //!  [--module today|mail|calendar|contacts|notes|tasks|assistant|onboarding|provider|manual|duplicate] [--at HH:MM] [--palette[=texto]]
 //!  [--html] [--month] [--view day|agenda|week|work_week|month] [--editor] [--invite] [--compose] [--lang en|es] [--size 1440x900] [--ppp 1]
-//!  [--ai reading|datascope|compose|triage|chat|minutes|panel] [--import]
+//!  [--ai reading|datascope|compose|triage|chat|minutes|panel] [--weather] [--today-edit] [--no-ai] [--import]
 //!  [--native-decorations | --chrome adwaita|windows|macos] [--hc] [--crop-height N]
 //!  [--reader] [--focus] [--context-collapsed] [--strip] [--attachments [--attachments-menu]] [--emoji]
 //!  [--note] [--contact-editor[=new]] [--meeting[=email]] [--google-description] [--today-bg color|gradient|image|commons-demo|commons]`
@@ -511,6 +511,16 @@ fn main() -> Result<(), String> {
     }
     if !args.iter().any(|a| a == "--reminders") {
         app.dismiss_reminders();
+    }
+    // UX-15: clima con datos fijos y «Mi día» personalizándose.
+    if args.iter().any(|a| a == "--weather") {
+        app.demo_weather();
+    }
+    if args.iter().any(|a| a == "--no-ai") {
+        app.demo_no_ai();
+    }
+    if args.iter().any(|a| a == "--today-edit") {
+        app.demo_today_edit();
     }
     if let Some(what) = flag("--ai") {
         app.demo_assistant(&what);

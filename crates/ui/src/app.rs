@@ -84,6 +84,8 @@ pub struct DeskApp {
     pub(crate) html: HtmlCache,
     /// UX-8: vistas previas de notas.
     pub(crate) note_preview: crate::note_preview::NotePreviewCache,
+    /// UX-15: respuestas del asistente con su Markdown pintado.
+    pub(crate) chat_preview: crate::note_preview::NotePreviewCache,
     pub palette: CommandPalette,
     palette_mode: PaletteMode,
     palette_items: Vec<PaletteItem>,
@@ -141,6 +143,7 @@ impl DeskApp {
             pim: PimState::default(),
             html: HtmlCache::default(),
             note_preview: Default::default(),
+            chat_preview: crate::note_preview::NotePreviewCache::with_capacity(crate::note_preview::CHAT_ENTRIES),
             palette: CommandPalette::default(),
             palette_mode: PaletteMode::Commands,
             palette_items: Vec::new(),
@@ -281,7 +284,8 @@ impl DeskApp {
             || self.suite.modal()
             || self.import.modal()
             || self.rules.modal()
-            || self.attach.modal();
+            || self.attach.modal()
+            || self.today.weather.setup_open;
         // Escribiendo en el redactor, los atajos de la aplicación no se disparan.
         let composing = !self.composers.is_empty() && ctx.egui_wants_keyboard_input();
         if !modal && !composing {
@@ -332,6 +336,7 @@ impl DeskApp {
         crate::iure::bell(self, &ctx);
         crate::assistant::frame(self, &ctx);
         crate::assistant::bubble(self, &ctx);
+        crate::today_weather::setup_dialog(self, &ctx);
         crate::suite_ui::frame(self, &ctx);
         crate::import_ui::frame(self, &ctx);
         crate::security_ui::frame(self, &ctx);
@@ -472,6 +477,7 @@ impl DeskApp {
             && self.session.is_idle()
             && !self.html.pending()
             && !self.note_preview.pending()
+            && !self.chat_preview.pending()
             && self.ai.hub.is_idle()
             && self.import.hub.is_idle()
             && !self.suite.hub.busy()
@@ -777,7 +783,11 @@ impl DeskApp {
                         }
                     } else if value.is::<crate::note_preview::NoteDone>() {
                         if let Ok(done) = value.downcast::<crate::note_preview::NoteDone>() {
-                            self.note_preview.on_done(ctx, *done);
+                            if done.is_chat() {
+                                self.chat_preview.on_done(ctx, *done);
+                            } else {
+                                self.note_preview.on_done(ctx, *done);
+                            }
                         }
                     } else if value.is::<crate::compose::PickedFiles>() {
                         if let Ok(p) = value.downcast::<crate::compose::PickedFiles>() {
@@ -786,6 +796,14 @@ impl DeskApp {
                     } else if value.is::<iuredesk_engine::session::FileOpened>() {
                         if let Ok(f) = value.downcast::<iuredesk_engine::session::FileOpened>() {
                             crate::opened::on_loaded(self, id, *f);
+                        }
+                    } else if value.is::<iuredesk_engine::weather::WeatherResult>() {
+                        if let Ok(r) = value.downcast::<iuredesk_engine::weather::WeatherResult>() {
+                            crate::today_weather::on_weather(self, *r);
+                        }
+                    } else if value.is::<iuredesk_engine::weather::PlaceResults>() {
+                        if let Ok(r) = value.downcast::<iuredesk_engine::weather::PlaceResults>() {
+                            crate::today_weather::on_places(self, *r);
                         }
                     } else if value.is::<iuredesk_engine::today_bg::TodayImage>() {
                         if let Ok(i) = value.downcast::<iuredesk_engine::today_bg::TodayImage>() {
@@ -960,6 +978,10 @@ impl DeskApp {
         // UX-12: sin IureEditor no hay Notas.
         if !self.session.notes_available() {
             items.retain(|it| it.id != "notes");
+        }
+        // UX-15: sin asistente configurado no hay módulo de IA.
+        if !self.session.ai_available() {
+            items.retain(|it| it.id != "assistant");
         }
         // La campana de Iurefficient está en la barra de título (UI-HEADER).
         let w = rail_width(ui.ctx());

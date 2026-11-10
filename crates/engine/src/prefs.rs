@@ -281,6 +281,12 @@ pub struct Prefs {
     /// Inicio de sesión con Microsoft de la propia organización (F8.1).
     #[serde(default, skip_serializing_if = "MicrosoftOrg::is_empty")]
     pub microsoft_org: MicrosoftOrg,
+    /// UX-15: orden, columna y tarjetas quitadas de «Mi día».
+    #[serde(default)]
+    pub today_layout: crate::today_layout::TodayLayout,
+    /// UX-15: el clima de hoy en la cabecera de «Mi día».
+    #[serde(default)]
+    pub weather: crate::weather::WeatherPref,
 }
 
 /// UX-3: dónde se muestra el panel contextual.
@@ -407,6 +413,8 @@ impl Default for Prefs {
             show_empty_contacts: false,
             today_background: Default::default(),
             microsoft_org: MicrosoftOrg::default(),
+            today_layout: Default::default(),
+            weather: Default::default(),
             notes_dir: None,
             reading_width: None,
             reading_zoom_pct: default_reading_zoom(),

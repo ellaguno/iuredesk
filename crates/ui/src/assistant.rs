@@ -45,8 +45,6 @@ pub struct AiUi {
     pub panel_open: bool,
     /// Poner el foco en la caja del chat en el próximo cuadro.
     focus_chat: bool,
-    /// Caja «Pregúntale…» de la pantalla Hoy.
-    today_input: String,
     minutes_title: String,
     minutes_text: String,
     doc_purpose: String,
@@ -60,6 +58,8 @@ pub struct AiUi {
     settings_error: Option<String>,
     /// Demostración pendiente (capturas): se lanza cuando hay mensaje enfocado.
     demo: Option<String>,
+    /// Capturas y pruebas: como si no hubiera ningún asistente configurado.
+    force_off: bool,
 }
 
 impl AiUi {
@@ -85,7 +85,6 @@ impl AiUi {
             chat_input: String::new(),
             panel_open: false,
             focus_chat: false,
-            today_input: String::new(),
             minutes_title: String::new(),
             minutes_text: String::new(),
             doc_purpose: String::new(),
@@ -96,6 +95,7 @@ impl AiUi {
             key_input: String::new(),
             settings_error: None,
             demo: None,
+            force_off: false,
         }
     }
 
@@ -116,6 +116,8 @@ impl AiUi {
 #[derive(Default)]
 pub struct ComposeAi {
     pub open: bool,
+    /// UX-15: hay un asistente configurado (copiado cada cuadro por [`compose_sync`]).
+    enabled: bool,
     tone: Tone,
     length: Length,
     lang: Option<Lang>,
@@ -223,11 +225,40 @@ pub fn command(app: &mut DeskApp, ctx: &Context, id: &str) {
     }
 }
 
+/// UX-15: ¿hay con qué responder? Iurefficient con una sesión (aunque ahora esté sin conexión o
+/// caducada) u otro proveedor elegido en Ajustes; el buzón de ejemplo y las pruebas siempre.
+pub fn configured(app: &DeskApp) -> bool {
+    use iuredesk_engine::iure::IureStatus;
+    if app.ai.force_off {
+        return false;
+    }
+    if app.ai.hub.has_factory() {
+        return true;
+    }
+    match app.ai.hub.default_provider().map(|p| &p.kind) {
+        Some(ProviderKind::Iurefficient) => {
+            !matches!(app.session.iure_status(), IureStatus::Disabled | IureStatus::NotConfigured)
+        }
+        Some(_) => true,
+        None => false,
+    }
+}
+
+/// ¿Se muestra la IA (botones ✦, panel, globo, módulo)?
+pub fn enabled(app: &DeskApp) -> bool {
+    app.session.ai_available()
+}
+
 /// Cada cuadro: resultados, consentimiento y respuestas automáticas.
 pub fn frame(app: &mut DeskApp, ctx: &Context) {
     app.ai.hub.poll();
+    let on = configured(app);
+    if on != app.session.ai_available() {
+        app.session.set_ai_available(on);
+    }
     run_demo(app, ctx);
-    if app.ai.hub.prefs().auto_replies
+    if on
+        && app.ai.hub.prefs().auto_replies
         && let Some(m) = app.session.focused()
         && app.session.module == iuredesk_engine::Module::Mail
         && app.ai.auto_done.insert(m)
@@ -337,6 +368,9 @@ fn consent_dialog(app: &mut DeskApp, ctx: &Context) {
 
 /// Barra ✦ bajo las acciones del mensaje.
 pub fn reading_bar(app: &mut DeskApp, ui: &mut Ui, id: MessageId) {
+    if !enabled(app) {
+        return;
+    }
     let long = app.session.thread_chars(id) >= LONG_THREAD_CHARS;
     let mut fire: Option<&str> = None;
     ui.horizontal_wrapped(|ui| {
@@ -486,6 +520,9 @@ fn bullets(ui: &mut Ui, title: &str, items: &[String]) {
 
 /// Tarjetas ✦ del mensaje: resumen, respuestas y análisis.
 pub fn reading_cards(app: &mut DeskApp, ui: &mut Ui, id: MessageId) {
+    if !enabled(app) {
+        return;
+    }
     if app.ai.hub.job(AiKey::Summary(id)).is_some() {
         card(ui, |ui| {
             if card_head(app, ui, AiKey::Summary(id), pick("Summary", "Resumen")) {
@@ -516,6 +553,9 @@ pub fn reading_cards(app: &mut DeskApp, ui: &mut Ui, id: MessageId) {
 
 /// Respuestas rápidas bajo el mensaje.
 pub fn reply_chips(app: &mut DeskApp, ui: &mut Ui, id: MessageId) {
+    if !enabled(app) {
+        return;
+    }
     if app.ai.hub.job(AiKey::Replies(id)).is_none() {
         return;
     }
@@ -735,7 +775,9 @@ fn create_task(app: &mut DeskApp, id: MessageId, t: &ProposedTask) {
 
 /// Botones ✦ y «Dictar» en la barra de formato del redactor.
 pub fn compose_buttons(ui: &mut Ui, ai: &mut ComposeAi, window: u64) {
-    if icons::icon_button(ui, Icon::Sparkle, pick("Assistant (Ctrl+J)", "Asistente (Ctrl+J)"), true).clicked() {
+    if ai.enabled
+        && icons::icon_button(ui, Icon::Sparkle, pick("Assistant (Ctrl+J)", "Asistente (Ctrl+J)"), true).clicked()
+    {
         ai.open = !ai.open;
     }
     if ui.button(pick("Dictate", "Dictar")).on_hover_text(pick("Dictate with IureVoz", "Dictar con IureVoz")).clicked()
@@ -747,14 +789,14 @@ pub fn compose_buttons(ui: &mut Ui, ai: &mut ComposeAi, window: u64) {
         m.has_focus(egui::Id::unique(("compose-body", window)))
             || m.has_focus(egui::Id::unique(("compose-subject", window)))
     });
-    if mine && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::J)) {
+    if ai.enabled && mine && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::J)) {
         ai.open = !ai.open;
     }
 }
 
 /// Panel ✦ del redactor (tono, longitud, idioma; reescribir; redactar respuesta).
 pub fn compose_panel(ui: &mut Ui, ai: &mut ComposeAi, editor: &crate::rich_edit::EditorState) {
-    if !ai.open {
+    if !ai.open || !ai.enabled {
         return;
     }
     let state = ai.view.clone();
@@ -891,7 +933,9 @@ fn own_text_end(text: &str) -> usize {
 /// Copia a cada redactor el estado de su trabajo ✦ (el formulario no ve la aplicación).
 pub fn compose_sync(app: &mut DeskApp) {
     let hub = &app.ai.hub;
+    let on = app.session.ai_available();
     for w in &mut app.composers {
+        w.ai.enabled = on;
         let key = AiKey::Compose(w.id);
         w.ai.view = hub.job(key).map(|j| (j.state.clone(), hub.streamed(key)));
     }
@@ -1133,7 +1177,8 @@ fn chat_lines(app: &mut DeskApp, ui: &mut Ui) {
             .wrap(),
         );
     }
-    for l in &lines {
+    let small = theme::density(ui.ctx()).small_size();
+    for (n, l) in lines.iter().enumerate() {
         let (fill, who) = if l.mine {
             (c.accent.gamma_multiply(0.15), pick("You", "Tú"))
         } else {
@@ -1141,8 +1186,27 @@ fn chat_lines(app: &mut DeskApp, ui: &mut Ui) {
         };
         egui::Frame::new().fill(fill).corner_radius(8).inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new(who).strong().color(c.text_muted).size(theme::density(ui.ctx()).small_size()));
-            ui.add(egui::Label::new(RichText::new(&l.text).color(c.text)).selectable(true).wrap());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(who).strong().color(c.text_muted).size(small));
+                if !l.mine {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let r = ui.add(
+                            egui::Button::new(RichText::new(pick("Copy", "Copiar")).size(small).color(c.text_muted))
+                                .frame_when_inactive(false)
+                                .small(),
+                        );
+                        if r.on_hover_text(pick("Copy the answer", "Copiar la respuesta")).clicked() {
+                            ui.ctx().copy_text(l.text.clone());
+                        }
+                    });
+                }
+            });
+            if l.mine {
+                ui.add(egui::Label::new(RichText::new(&l.text).color(c.text)).selectable(true).wrap());
+            } else {
+                // UX-15: Markdown (títulos, listas, tablas, código, enlaces) como en las notas.
+                crate::note_preview::chat(app, ui, n, &l.text);
+            }
         });
         ui.add_space(4.0);
     }
@@ -1240,7 +1304,7 @@ fn panel_redundant(app: &DeskApp) -> bool {
 /// Panel derecho con el chat (`ai.panel`). Va antes del contenido del módulo para encogerlo en
 /// vez de taparlo.
 pub fn side_panel(app: &mut DeskApp, ui: &mut Ui) {
-    if !app.ai.panel_open || panel_redundant(app) {
+    if !app.ai.panel_open || panel_redundant(app) || !enabled(app) {
         return;
     }
     let ctx = ui.ctx().clone();
@@ -1301,7 +1365,7 @@ pub fn side_panel(app: &mut DeskApp, ui: &mut Ui) {
 
 /// Globo ✦ flotante abajo a la derecha: abre el panel. Se puede ocultar en Ajustes → Asistente.
 pub fn bubble(app: &mut DeskApp, ctx: &Context) {
-    if app.ai.panel_open || app.ai.hub.prefs().hide_bubble || panel_redundant(app) || app.ai.modal() {
+    if app.ai.panel_open || app.ai.hub.prefs().hide_bubble || panel_redundant(app) || app.ai.modal() || !enabled(app) {
         return;
     }
     let size = 44.0;
@@ -1331,71 +1395,6 @@ pub fn bubble(app: &mut DeskApp, ctx: &Context) {
     if resp.clicked() {
         app.ai.panel_open = true;
         app.ai.focus_chat = true;
-    }
-}
-
-/// Caja «Pregúntale a …» de la pantalla Hoy, como el tablero de Iurefficient: Intro envía y
-/// la respuesta llega en el panel lateral.
-pub fn today_prompt(app: &mut DeskApp, ui: &mut Ui) {
-    let c = theme::colors(ui);
-    let provider = app.ai.hub.provider_label();
-    let hint = format!("{} {provider}…", pick("Ask", "Pregúntale a"));
-    let running = chat_running(app);
-    let mut send: Option<String> = None;
-    egui::Frame::new()
-        .fill(c.surface)
-        .stroke(Stroke::new(1.0, c.separator))
-        .corner_radius(10)
-        .inner_margin(egui::Margin::symmetric(12, 8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), egui::Sense::hover());
-                icons::paint(ui.painter(), r, Icon::Sparkle, c.accent, c.accent);
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut app.ai.today_input)
-                        .frame(egui::Frame::NONE)
-                        .desired_width((ui.available_width() - 90.0).max(80.0))
-                        .hint_text(hint.as_str()),
-                );
-                crate::widgets::named(&r, egui::Role::TextInput, pick("Ask the assistant", "Pregúntale al asistente"));
-                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if running {
-                        ui.add(egui::Spinner::new().size(14.0));
-                    } else if (ui
-                        .add_enabled(!app.ai.today_input.trim().is_empty(), egui::Button::new(pick("Ask", "Preguntar")))
-                        .clicked()
-                        || enter)
-                        && !app.ai.today_input.trim().is_empty()
-                    {
-                        send = Some(std::mem::take(&mut app.ai.today_input));
-                    }
-                });
-            });
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
-                for (en, es) in [
-                    ("What do I have today?", "¿Qué tengo hoy?"),
-                    ("Which emails are waiting for my reply?", "¿Qué correos esperan mi respuesta?"),
-                    ("Summarize my pending work", "Resume mis pendientes"),
-                ] {
-                    let q = pick(en, es);
-                    if ui
-                        .add_enabled(
-                            !running,
-                            egui::Button::new(RichText::new(q).size(theme::density(ui.ctx()).small_size())).small(),
-                        )
-                        .clicked()
-                    {
-                        send = Some(q.to_string());
-                    }
-                }
-            });
-        });
-    if let Some(q) = send {
-        ask(app, q);
     }
 }
 
@@ -1839,6 +1838,11 @@ impl DeskApp {
             self.session.module = iuredesk_engine::Module::Assistant;
         }
         self.ai.demo = Some(what.to_string());
+    }
+
+    /// Capturas y pruebas: como si no hubiera ningún asistente configurado (UX-15).
+    pub fn demo_no_ai(&mut self) {
+        self.ai.force_off = true;
     }
 
     /// Usa este proveedor para todo (pruebas).

@@ -220,7 +220,7 @@ fn prune(dir: &Path, today: NaiveDate) {
 }
 
 /// Lee un cuerpo por trozos, con tope.
-async fn body_limited(resp: reqwest::Response, max: usize) -> Option<Vec<u8>> {
+pub(crate) async fn body_limited(resp: reqwest::Response, max: usize) -> Option<Vec<u8>> {
     if resp.content_length().is_some_and(|l| l > max as u64) {
         return None;
     }

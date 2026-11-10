@@ -79,6 +79,19 @@ impl Session {
         }
     }
 
+    /// UX-15: ¿hay un asistente configurado? Lo fija la UI; sin él la IA no se muestra.
+    pub fn set_ai_available(&mut self, yes: bool) {
+        self.ai_available = yes;
+        if !yes && self.module == super::Module::Assistant {
+            self.module = super::Module::Today;
+        }
+    }
+
+    /// ¿Se muestra la IA?
+    pub fn ai_available(&self) -> bool {
+        self.ai_available
+    }
+
     /// ¿Se muestran las notas?
     pub fn notes_available(&self) -> bool {
         self.notes_available

@@ -363,6 +363,11 @@ impl Assist {
         self.config.default_provider()
     }
 
+    /// ¿Hay un proveedor fijo (buzón de ejemplo, pruebas)?
+    pub fn has_factory(&self) -> bool {
+        self.factory.is_some()
+    }
+
     /// Nombre del proveedor que se usará.
     pub fn provider_label(&self) -> String {
         if let Some(f) = &self.factory {
@@ -970,9 +975,10 @@ pub fn sample_answer(kind: Option<PromptId>, req: &ChatRequest) -> String {
             if req.system.contains("single word OK") {
                 "OK".into()
             } else {
+                // UX-15: con Markdown, como responde la instancia (se ve pintado en el chat).
                 l(
-                    "In the sample mailbox I answer with examples. Connect Iurefficient or choose a provider in Settings → Assistant.",
-                    "En el buzón de ejemplo respondo con ejemplos. Conecta Iurefficient o elige un proveedor en Ajustes → Asistente.",
+                    "In the sample mailbox I answer with **examples**:\n\n- 3 events today; the next one is *Call with Northwind* at 12:00.\n- 2 tasks due, 1 overdue.\n\n| Priority | Item |\n|---|---|\n| High | Reply to Carmen Brown |\n| Medium | Review fees |\n\nConnect Iurefficient or choose a provider in Settings → Assistant.",
+                    "En el buzón de ejemplo respondo con **ejemplos**:\n\n- 3 citas hoy; la siguiente es *Llamada con Northwind* a las 12:00.\n- 2 tareas para hoy, 1 vencida.\n\n| Prioridad | Pendiente |\n|---|---|\n| Alta | Responder a Carmen Brown |\n| Media | Revisar honorarios |\n\nConecta Iurefficient o elige un proveedor en Ajustes → Asistente.",
                 )
             }
         }
