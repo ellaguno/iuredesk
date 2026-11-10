@@ -185,6 +185,98 @@ fn chat_and_errors_are_human() {
     assert!(a.chat()[0].mine && !a.chat()[1].mine);
 }
 
+/// Sesión con datos pero que no es el buzón de ejemplo (el ejemplo no guarda el chat).
+fn own_session(dir: &std::path::Path) -> Session {
+    let store = Store::open(dir).unwrap();
+    sample::populate(&store, sample::DEFAULT_SEED, now()).unwrap();
+    Session::new(SessionConfig {
+        store: Arc::new(store),
+        accounts: None,
+        secrets: Arc::new(MemoryStore::default()),
+        prefs_path: None,
+        now: Some(now()),
+        zone: Zone::utc(),
+        sample: false,
+        sync: None,
+        transport: Some(Arc::new(OfflineTransport)),
+    })
+    .unwrap()
+}
+
+fn local() -> ProviderFactory {
+    Arc::new(|kind| {
+        Arc::new(CannedProvider::new("Local", false, move |req| sample_answer(kind, req))) as Arc<dyn AiProvider>
+    })
+}
+
+/// Pedido del dueño (2026-11-09): al volver a abrir IureDesk el chat muestra la conversación
+/// anterior (guardada solo en el equipo); «Nueva conversación» la borra.
+#[test]
+fn chat_is_remembered_between_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("config").join("assistant.json");
+    let mut s = own_session(&dir.path().join("store"));
+    let mut a = Assist::new(&s, Some(cfg.clone())).with_factory(local());
+    a.request(&mut s, AiTask::Chat("¿Qué tengo hoy?".into())).unwrap();
+    finish(&mut a, AiKey::Chat);
+    let before = a.chat().to_vec();
+    assert_eq!(before.len(), 2);
+    drop(a);
+    assert!(cfg.with_file_name("assistant-chat.json").is_file());
+
+    // Al reabrir sigue ahí, y la conversación continúa desde lo anterior.
+    let mut a = Assist::new(&s, Some(cfg.clone())).with_factory(local());
+    assert_eq!(a.chat(), before.as_slice());
+    a.request(&mut s, AiTask::Chat("¿Y mañana?".into())).unwrap();
+    finish(&mut a, AiKey::Chat);
+    assert_eq!(a.chat().len(), 4);
+    drop(a);
+    assert_eq!(Assist::new(&s, Some(cfg.clone())).chat().len(), 4);
+
+    // «Nueva conversación»: se borra también del disco.
+    let mut a = Assist::new(&s, Some(cfg.clone()));
+    a.clear_chat();
+    assert!(!cfg.with_file_name("assistant-chat.json").exists());
+    assert!(Assist::new(&s, Some(cfg)).chat().is_empty());
+}
+
+#[test]
+fn saved_chat_is_bounded_and_a_broken_file_is_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("assistant.json");
+    let saved = cfg.with_file_name("assistant-chat.json");
+    let s = own_session(&dir.path().join("store"));
+    for junk in [&b"no es json"[..], b"{\"mine\": true}", b"[{\"mine\": 3, \"text\": []}]", &[0xff; 64]] {
+        std::fs::write(&saved, junk).unwrap();
+        assert!(Assist::new(&s, Some(cfg.clone())).chat().is_empty());
+    }
+    // Más de 40 líneas, líneas vacías y una enorme: quedan las últimas 40, sin las vacías y recortadas.
+    let mut lines: Vec<serde_json::Value> =
+        (0..60).map(|i| serde_json::json!({"mine": i % 2 == 0, "text": format!("línea {i}")})).collect();
+    lines.push(serde_json::json!({"mine": false, "text": "   "}));
+    lines.push(serde_json::json!({"mine": false, "text": "x".repeat(100_000)}));
+    std::fs::write(&saved, serde_json::to_vec(&lines).unwrap()).unwrap();
+    let chat = Assist::new(&s, Some(cfg.clone())).chat().to_vec();
+    assert_eq!(chat.len(), 39, "40 últimas menos la vacía");
+    assert_eq!(chat.first().map(|l| l.text.as_str()), Some("línea 22"));
+    assert_eq!(chat.last().map(|l| l.text.chars().count()), Some(64_000));
+    // Un archivo descomunal ni se lee.
+    std::fs::write(&saved, vec![b' '; 5 * 1024 * 1024]).unwrap();
+    assert!(Assist::new(&s, Some(cfg)).chat().is_empty());
+}
+
+#[test]
+fn sample_mailbox_does_not_save_the_chat() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("config").join("assistant.json");
+    let mut s = session(&dir.path().join("store"));
+    let mut a = Assist::new(&s, Some(cfg.clone()));
+    a.request(&mut s, AiTask::Chat("hola".into())).unwrap();
+    finish(&mut a, AiKey::Chat);
+    assert_eq!(a.chat().len(), 2);
+    assert!(!cfg.with_file_name("assistant-chat.json").exists());
+}
+
 #[test]
 fn commands_route_to_the_ui_and_proposals_create_local_items() {
     let dir = tempfile::tempdir().unwrap();

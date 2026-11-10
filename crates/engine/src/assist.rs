@@ -38,6 +38,10 @@ pub const LONG_THREAD_CHARS: usize = 1_500;
 const MAX_CHAT: usize = 40;
 /// Caracteres máximos de un mensaje del chat.
 const MAX_CHAT_CHARS: usize = 8_000;
+/// Tope de cada línea del historial guardado (las respuestas pueden ser más largas que la pregunta).
+const MAX_SAVED_LINE_CHARS: usize = 64_000;
+/// Tope del archivo del historial al leerlo.
+const MAX_SAVED_CHAT_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Qué se le pide al asistente.
 #[derive(Clone, Debug, PartialEq)]
@@ -178,7 +182,7 @@ pub struct AiJob {
 }
 
 /// Mensaje del chat.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatLine {
     pub mine: bool,
     pub text: String,
@@ -253,6 +257,8 @@ pub struct Assist {
     jobs: HashMap<AiKey, AiJob>,
     consent: Option<Consent>,
     chat: Vec<ChatLine>,
+    /// Historial del chat entre sesiones (`assistant-chat.json`, solo local).
+    chat_path: Option<PathBuf>,
     generation: u64,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -287,6 +293,44 @@ fn erase<T: TaskOutput>(p: Prepared<T>, map: impl FnOnce(T) -> AiValue + Send + 
     (scope, runner)
 }
 
+/// Guarda las últimas [`MAX_CHAT`] líneas del chat: al reabrir se ve la conversación anterior. Se
+/// escribe a un temporal y se renombra, para que un cierre a medias no deje el archivo roto.
+fn save_chat(path: Option<&std::path::Path>, chat: &[ChatLine]) {
+    let Some(p) = path else { return };
+    let from = chat.len().saturating_sub(MAX_CHAT);
+    let lines: Vec<ChatLine> = chat
+        .get(from..)
+        .unwrap_or_default()
+        .iter()
+        .map(|l| ChatLine { mine: l.mine, text: l.text.chars().take(MAX_SAVED_LINE_CHARS).collect() })
+        .collect();
+    let Ok(bytes) = serde_json::to_vec(&lines) else { return };
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let tmp = p.with_extension("json.tmp");
+    if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, p).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// Lee el historial del chat. Archivo ausente, enorme o dañado: conversación vacía.
+fn load_chat(path: &std::path::Path) -> Vec<ChatLine> {
+    let Ok(meta) = std::fs::metadata(path) else { return Vec::new() };
+    if meta.len() > MAX_SAVED_CHAT_BYTES {
+        return Vec::new();
+    }
+    let Ok(bytes) = std::fs::read(path) else { return Vec::new() };
+    let Ok(lines) = serde_json::from_slice::<Vec<ChatLine>>(&bytes) else { return Vec::new() };
+    let from = lines.len().saturating_sub(MAX_CHAT);
+    lines
+        .into_iter()
+        .skip(from)
+        .map(|l| ChatLine { mine: l.mine, text: l.text.chars().take(MAX_SAVED_LINE_CHARS).collect() })
+        .filter(|l| !l.text.trim().is_empty())
+        .collect()
+}
+
 impl Assist {
     /// Asistente con la configuración de `<config>/iuredesk/assistant.json` (o la de memoria si
     /// `config_path` es `None`).
@@ -299,6 +343,10 @@ impl Assist {
             .filter(|b| b.len() < 256 * 1024)
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
+        // El buzón de ejemplo no guarda conversaciones.
+        let chat_path =
+            config_path.as_ref().filter(|_| !session.is_sample()).map(|p| p.with_file_name("assistant-chat.json"));
+        let chat = chat_path.as_deref().map(load_chat).unwrap_or_default();
         let (tx, rx) = channel();
         let factory = if session.is_sample() { Some(sample_factory()) } else { None };
         Assist {
@@ -309,7 +357,8 @@ impl Assist {
             factory,
             jobs: HashMap::new(),
             consent: None,
-            chat: Vec::new(),
+            chat,
+            chat_path,
             generation: 0,
             tx,
             rx,
@@ -623,6 +672,7 @@ impl Assist {
                 if self.chat.len() > MAX_CHAT {
                     self.chat.remove(0);
                 }
+                save_chat(self.chat_path.as_deref(), &self.chat);
                 let messages: Vec<ChatMessage> = self
                     .chat
                     .iter()
@@ -779,6 +829,9 @@ impl Assist {
     pub fn clear_chat(&mut self) {
         self.dismiss(AiKey::Chat);
         self.chat.clear();
+        if let Some(p) = &self.chat_path {
+            let _ = std::fs::remove_file(p);
+        }
     }
 
     /// No queda nada en curso.
@@ -802,6 +855,10 @@ impl Assist {
                                 && let AiValue::Chat(t) = &v
                             {
                                 self.chat.push(ChatLine { mine: false, text: t.clone() });
+                                if self.chat.len() > MAX_CHAT {
+                                    self.chat.remove(0);
+                                }
+                                save_chat(self.chat_path.as_deref(), &self.chat);
                             }
                             AiState::Done(v)
                         }
