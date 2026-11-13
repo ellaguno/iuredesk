@@ -8,10 +8,11 @@
 //!    `windowsZones.xml` de CLDR (territorio `001`).
 //! 4. Nombres de pantalla de Outlook (`(UTC-06:00) Guadalajara, Mexico City, Monterrey`): por
 //!    ciudad y, si no, por desfase fijo (`Etc/GMT+6`).
-//! 5. El `VTIMEZONE` del propio archivo: `X-LIC-LOCATION` y, si no hay, el desfase de su regla
-//!    `STANDARD` como zona fija `Etc/GMT±N` (sin horario de verano: limitación documentada).
+//! 5. El `VTIMEZONE` del propio archivo: `X-LIC-LOCATION`; si no hay y trae reglas anuales de
+//!    `STANDARD` y `DAYLIGHT`, la zona IANA con las mismas reglas (mismo desfase cada día de este año
+//!    y el siguiente; R4.5); si no, el desfase de su regla `STANDARD` como zona fija `Etc/GMT±N`.
 
-use chrono::{DateTime, LocalResult, NaiveDateTime, Offset, TimeZone, Utc};
+use chrono::{DateTime, Datelike, LocalResult, NaiveDateTime, Offset, TimeZone, Utc};
 use chrono_tz::Tz;
 
 use crate::ical::Component;
@@ -41,6 +42,10 @@ pub fn resolve_tzid(tzid: &str, vtimezones: &[&Component]) -> Option<Tz> {
     }
     let vtz = vtimezones.iter().find(|v| v.text("TZID").is_some_and(|id| id.trim() == t))?;
     if let Some(tz) = vtz.text("X-LIC-LOCATION").and_then(|l| iana(l.trim())) {
+        return Some(tz);
+    }
+    // Con horario de verano: la zona IANA que sigue las mismas reglas.
+    if let Some(tz) = iana_matching(vtz, Utc::now().year()) {
         return Some(tz);
     }
     // Desfase de la regla estándar (o de la única que haya).
@@ -334,6 +339,176 @@ pub fn local_to_utc(local: NaiveDateTime, tz: Tz) -> DateTime<Utc> {
     }
 }
 
+// ----------------------------------------------------------------- VTIMEZONE con horario de verano
+
+/// Zonas que se prueban primero al buscar la IANA equivalente a un `VTIMEZONE` propio (las más
+/// comunes, para no acabar en un nombre raro con las mismas reglas).
+const PREFERRED: &[&str] = &[
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "America/Anchorage",
+    "America/Halifax",
+    "America/St_Johns",
+    "America/Mexico_City",
+    "America/Havana",
+    "America/Santiago",
+    "America/Asuncion",
+    "Europe/London",
+    "Europe/Dublin",
+    "Europe/Lisbon",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "Europe/Madrid",
+    "Europe/Athens",
+    "Europe/Helsinki",
+    "Asia/Jerusalem",
+    "Asia/Beirut",
+    "Australia/Sydney",
+    "Australia/Adelaide",
+    "Australia/Lord_Howe",
+    "Pacific/Auckland",
+    "Pacific/Chatham",
+];
+
+/// Una observancia (`STANDARD`/`DAYLIGHT`) de un `VTIMEZONE`, con su regla anual si la tiene.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Observance {
+    from: i32,
+    to: i32,
+    /// `DTSTART` (hora local con el desfase `from`).
+    start: NaiveDateTime,
+    /// `RRULE:FREQ=YEARLY;BYMONTH=m;BYDAY=nWD` (n negativo cuenta desde el final del mes).
+    rule: Option<(u32, i8, chrono::Weekday)>,
+}
+
+/// Lee las observancias; `None` si no hay al menos una `STANDARD` y una `DAYLIGHT` con regla
+/// anual que se entienda (lo demás sigue por desfase fijo).
+fn observances(vtz: &Component) -> Option<Vec<Observance>> {
+    let mut out = Vec::new();
+    let mut kinds = (false, false);
+    for (kind, c) in vtz.children("STANDARD").map(|c| (0, c)).chain(vtz.children("DAYLIGHT").map(|c| (1, c))).take(16) {
+        let from = parse_utc_offset(&c.text("TZOFFSETFROM")?)?;
+        let to = parse_utc_offset(&c.text("TZOFFSETTO")?)?;
+        let start = NaiveDateTime::parse_from_str(c.text("DTSTART")?.trim(), "%Y%m%dT%H%M%S").ok()?;
+        let rule = c.text("RRULE").and_then(|r| yearly_rule(&r));
+        if rule.is_some() {
+            if kind == 0 {
+                kinds.0 = true;
+            } else {
+                kinds.1 = true;
+            }
+        }
+        out.push(Observance { from, to, start, rule });
+    }
+    (kinds.0 && kinds.1).then_some(out)
+}
+
+/// `FREQ=YEARLY;BYMONTH=3;BYDAY=2SU` (o `-1SU`, `BYDAY=SU` con `BYSETPOS`… no: solo n y día).
+fn yearly_rule(r: &str) -> Option<(u32, i8, chrono::Weekday)> {
+    let mut freq = false;
+    let mut month = None;
+    let mut byday = None;
+    for part in r.split(';').take(12) {
+        let (k, v) = part.split_once('=')?;
+        match k.trim().to_ascii_uppercase().as_str() {
+            "FREQ" => freq = v.trim().eq_ignore_ascii_case("YEARLY"),
+            "BYMONTH" => month = v.trim().parse::<u32>().ok().filter(|m| (1..=12).contains(m)),
+            "BYDAY" => {
+                let v = v.trim().to_ascii_uppercase();
+                let (n, wd) = v.split_at(v.len().saturating_sub(2));
+                let n: i8 = if n.is_empty() || n == "+" { 1 } else { n.trim_start_matches('+').parse().ok()? };
+                if n == 0 || !(-5..=5).contains(&n) {
+                    return None;
+                }
+                let wd = match wd {
+                    "MO" => chrono::Weekday::Mon,
+                    "TU" => chrono::Weekday::Tue,
+                    "WE" => chrono::Weekday::Wed,
+                    "TH" => chrono::Weekday::Thu,
+                    "FR" => chrono::Weekday::Fri,
+                    "SA" => chrono::Weekday::Sat,
+                    "SU" => chrono::Weekday::Sun,
+                    _ => return None,
+                };
+                byday = Some((n, wd));
+            }
+            // UNTIL, INTERVAL=1, etc.: se ignoran (las reglas vigentes no los llevan).
+            _ => {}
+        }
+    }
+    let (n, wd) = byday?;
+    freq.then_some((month?, n, wd))
+}
+
+/// El n-ésimo `wd` de `month` de `year` (n < 0 desde el final).
+fn nth_weekday(year: i32, month: u32, n: i8, wd: chrono::Weekday) -> Option<chrono::NaiveDate> {
+    if n > 0 {
+        let first = chrono::NaiveDate::from_ymd_opt(year, month, 1)?;
+        let shift = (7 + wd.num_days_from_monday() as i64 - first.weekday().num_days_from_monday() as i64) % 7;
+        let d = first.checked_add_signed(chrono::Duration::days(shift + 7 * (i64::from(n) - 1)))?;
+        (d.month() == month).then_some(d)
+    } else {
+        let next = if month == 12 {
+            chrono::NaiveDate::from_ymd_opt(year.checked_add(1)?, 1, 1)?
+        } else {
+            chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)?
+        };
+        let last = next.pred_opt()?;
+        let shift = (7 + last.weekday().num_days_from_monday() as i64 - wd.num_days_from_monday() as i64) % 7;
+        let d = last.checked_sub_signed(chrono::Duration::days(shift + 7 * (i64::from(n.saturating_neg()) - 1)))?;
+        (d.month() == month).then_some(d)
+    }
+}
+
+/// Desfase del `VTIMEZONE` en el instante `utc`: el de la observancia que empezó más tarde.
+fn vtz_offset(obs: &[Observance], utc: NaiveDateTime) -> Option<i32> {
+    let mut best: Option<(NaiveDateTime, i32)> = None;
+    for o in obs {
+        let onsets: Vec<NaiveDateTime> = match o.rule {
+            Some((m, n, wd)) => [utc.year().saturating_sub(1), utc.year()]
+                .iter()
+                .filter_map(|y| nth_weekday(*y, m, n, wd).map(|d| d.and_time(o.start.time())))
+                .filter(|l| *l >= o.start)
+                .collect(),
+            None => vec![o.start],
+        };
+        for local in onsets {
+            let on_utc = local.checked_sub_signed(chrono::Duration::seconds(i64::from(o.from)))?;
+            if on_utc <= utc && best.is_none_or(|(b, _)| on_utc > b) {
+                best = Some((on_utc, o.to));
+            }
+        }
+    }
+    best.map(|(_, off)| off)
+}
+
+/// Zona IANA con las mismas reglas que el `VTIMEZONE` (mismo desfase cada día de este año y el
+/// siguiente), o `None`.
+fn iana_matching(vtz: &Component, year: i32) -> Option<Tz> {
+    let obs = observances(vtz)?;
+    let samples: Vec<(NaiveDateTime, i32)> = (0..730)
+        .filter_map(|d| {
+            let t = chrono::NaiveDate::from_ymd_opt(year, 1, 1)?
+                .checked_add_signed(chrono::Duration::days(d))?
+                .and_hms_opt(12, 0, 0)?;
+            Some((t, vtz_offset(&obs, t)?))
+        })
+        .collect();
+    if samples.len() < 700 {
+        return None;
+    }
+    let matches =
+        |tz: &Tz| samples.iter().all(|(t, off)| tz.offset_from_utc_datetime(t).fix().local_minus_utc() == *off);
+    let preferred = PREFERRED.iter().filter_map(|n| n.parse::<Tz>().ok());
+    let rest = chrono_tz::TZ_VARIANTS.iter().copied().filter(|t| {
+        let n = t.name();
+        n.contains('/') && !n.starts_with("Etc/") && !n.starts_with("SystemV/") && !n.starts_with("US/")
+    });
+    preferred.chain(rest).find(matches)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,6 +548,53 @@ END:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VTIMEZONE\r\nTZID:Lic\r\nX-LIC-LOCATION:A
         assert_eq!(resolve_tzid("Custom Zone", &refs), Some(chrono_tz::Etc::GMTPlus5));
         assert_eq!(resolve_tzid("Lic", &refs), Some(chrono_tz::Asia::Tokyo));
         assert_eq!(resolve_tzid("Unknown", &refs), None);
+    }
+
+    /// R4.5: un `VTIMEZONE` propio con horario de verano ya no queda en desfase fijo.
+    #[test]
+    fn vtimezone_with_dst_rules_maps_to_iana() {
+        let eu = "BEGIN:VTIMEZONE\r\nTZID:Mi hora de Europa\r\nBEGIN:STANDARD\r\nDTSTART:19701025T030000\r\n\
+TZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\nRRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU\r\nEND:STANDARD\r\n\
+BEGIN:DAYLIGHT\r\nDTSTART:19700329T020000\r\nTZOFFSETFROM:+0100\r\nTZOFFSETTO:+0200\r\n\
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\n";
+        let us = "BEGIN:VTIMEZONE\r\nTZID:Oficina NY\r\nBEGIN:STANDARD\r\nDTSTART:20071104T020000\r\n\
+TZOFFSETFROM:-0400\r\nTZOFFSETTO:-0500\r\nRRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU\r\nEND:STANDARD\r\n\
+BEGIN:DAYLIGHT\r\nDTSTART:20070311T020000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0400\r\n\
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\n";
+        let comps = crate::ical::parse(&format!("{eu}{us}")).unwrap();
+        let refs: Vec<&Component> = comps.iter().collect();
+        let tz = resolve_tzid("Mi hora de Europa", &refs).unwrap();
+        assert_eq!(tz, chrono_tz::Europe::Paris, "{}", tz.name());
+        assert_eq!(resolve_tzid("Oficina NY", &refs), Some(chrono_tz::America::New_York));
+        // Verano de verdad: 1 de julio a mediodía en «Oficina NY» = 16:00 UTC (EDT, −4).
+        let jul = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap().and_hms_opt(12, 0, 0).unwrap();
+        assert_eq!(local_to_utc(jul, chrono_tz::America::New_York).hour(), 16);
+        // Mismas reglas comprobadas a mano en el propio VTIMEZONE.
+        let obs = observances(refs[1]).unwrap();
+        let t = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap().and_hms_opt(12, 0, 0).unwrap();
+        assert_eq!(vtz_offset(&obs, t(1, 15)), Some(-5 * 3600));
+        assert_eq!(vtz_offset(&obs, t(3, 7)), Some(-5 * 3600));
+        assert_eq!(vtz_offset(&obs, t(3, 9)), Some(-4 * 3600));
+        assert_eq!(vtz_offset(&obs, t(11, 2)), Some(-5 * 3600));
+        // Reglas que ninguna zona sigue (verano en febrero): desfase fijo como antes.
+        let odd = us.replace("BYMONTH=3", "BYMONTH=2").replace("Oficina NY", "Rara");
+        let comps = crate::ical::parse(&odd).unwrap();
+        let refs: Vec<&Component> = comps.iter().collect();
+        assert_eq!(resolve_tzid("Rara", &refs), Some(chrono_tz::Etc::GMTPlus5));
+    }
+
+    #[test]
+    fn nth_weekdays() {
+        let d = |y, m, n, w| nth_weekday(y, m, n, w).map(|d| d.to_string());
+        assert_eq!(d(2026, 3, 2, chrono::Weekday::Sun).as_deref(), Some("2026-03-08"));
+        assert_eq!(d(2026, 3, -1, chrono::Weekday::Sun).as_deref(), Some("2026-03-29"));
+        assert_eq!(d(2026, 12, -1, chrono::Weekday::Thu).as_deref(), Some("2026-12-31"));
+        assert_eq!(d(2026, 2, 5, chrono::Weekday::Mon), None);
+        assert_eq!(yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU"), Some((10, -1, chrono::Weekday::Sun)));
+        assert_eq!(yearly_rule("FREQ=YEARLY;BYMONTH=13;BYDAY=1SU"), None);
+        assert_eq!(yearly_rule("FREQ=MONTHLY;BYMONTH=3;BYDAY=1SU"), None);
+        assert_eq!(yearly_rule("FREQ=YEARLY;BYMONTH=3;BYDAY=9XX"), None);
+        assert_eq!(yearly_rule("basura"), None);
     }
 
     #[test]
