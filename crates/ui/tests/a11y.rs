@@ -138,8 +138,13 @@ fn every_interactive_element_has_a_name() {
     h.get_by_label("Nuevo mensaje").click();
     settle(&mut h);
     problems.extend(unnamed(&h).into_iter().map(|p| format!("Redactor: {p}")));
-    // La paleta de comandos (`iurefficient-ui`) se revisa cuando el ui-kit publique el nombre de
-    // su campo (pendiente de R4.1 en `docs/gaps.md`).
+    // Paleta de comandos.
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "app.palette");
+    settle(&mut h);
+    problems.extend(unnamed(&h).into_iter().map(|p| format!("Paleta: {p}")));
     h.key_press(egui::Key::Escape);
     settle(&mut h);
     // Ajustes (cada sección).
