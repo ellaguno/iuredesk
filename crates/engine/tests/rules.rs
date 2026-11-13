@@ -149,3 +149,30 @@ fn iurefficient_badges_and_quick_filter() {
     settle(&mut s);
     assert_eq!(s.rows().len(), all);
 }
+
+/// R4.5: «Etiquetar…» pone la etiqueta (palabra clave fuera de Gmail), la ofrece marcada, la quita
+/// si ya la llevan todos y se deshace.
+#[test]
+fn label_command_toggles_and_undoes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path());
+    let id: MessageId = s.rows()[0].id;
+    s.set_selection(vec![id], Some(id));
+    let first = s.run("mail.label");
+    assert!(matches!(first, Ok(Outcome::Assist(ref a)) if a == "mail.label"), "{first:?} {:?}", s.focused());
+    let out = s.run("mail.label:Clientes VIP").unwrap();
+    assert!(matches!(out, Outcome::Notice(ref n) if n.undo), "{out:?}");
+    let has = |s: &mut Session| s.envelope(id).is_some_and(|e| e.keywords.iter().any(|k| k == "Clientes VIP"));
+    assert!(has(&mut s));
+    let choices = s.label_choices();
+    assert!(choices.iter().any(|(n, on)| n == "Clientes VIP" && *on), "{choices:?}");
+    // Otra vez: la quita.
+    s.run("mail.label:clientes vip").unwrap();
+    assert!(!has(&mut s));
+    // Deshacer la quitada: vuelve.
+    s.run("undo").unwrap();
+    settle(&mut s);
+    assert!(has(&mut s), "deshacer devuelve la etiqueta");
+    // Sin nombre útil no hace nada.
+    assert!(matches!(s.run("mail.label:   "), Ok(Outcome::Assist(_))));
+}

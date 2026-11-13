@@ -140,7 +140,9 @@ pub(crate) fn more_items(ui: &mut Ui, snoozed: bool, out: &mut Option<String>) {
             }
         }
     });
-    let items: [(&str, Icon, &str, &str); 5] = [
+    let items: [(&str, Icon, &str, &str); 6] = [
+        // R4.5: etiquetas (en Gmail, varias por mensaje).
+        ("mail.label", Icon::Tag, "Label…", "Etiquetar…"),
         ("mail.followup", Icon::Bell, "Remind me if nobody replies…", "Recordarme si no responden…"),
         (
             "mail.rule_from_message",

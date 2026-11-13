@@ -1131,7 +1131,7 @@ impl Session {
 
     /// Mensajes a los que se aplica una acción: la selección, o el enfocado. En modo
     /// conversación, incluye los mensajes de cada conversación que están en la vista actual.
-    fn targets(&mut self) -> Vec<MessageId> {
+    pub(crate) fn targets(&mut self) -> Vec<MessageId> {
         let base: Vec<MessageId> =
             if self.selection.is_empty() { self.focused.into_iter().collect() } else { self.selection.clone() };
         if !self.prefs.conversations || !self.search.is_empty() || self.folder == FolderSel::Flagged {

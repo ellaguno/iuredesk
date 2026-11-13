@@ -76,6 +76,8 @@ enum ToastAction {
 enum PaletteMode {
     Commands,
     MoveTo,
+    /// R4.5: «Etiquetar…».
+    Label,
 }
 
 /// La aplicación de escritorio.
@@ -902,6 +904,7 @@ impl DeskApp {
             Outcome::Restyle => self.apply_style(ctx, false),
             Outcome::EditEvent(d) => crate::event_editor::open(self, *d),
             Outcome::Assist(id) if id == "app.check_updates" => crate::update_ui::check_now(self),
+            Outcome::Assist(id) if id == "mail.label" => self.open_label_palette(),
             Outcome::Assist(id) if id == "help.guide" => {
                 if !crate::open_url(&iuredesk_engine::update::guide_url(lang::lang() == lang::Lang::Es)) {
                     self.notice(Notice::error(iuredesk_engine::Text::new(
@@ -1187,9 +1190,27 @@ impl DeskApp {
         self.palette.open();
     }
 
+    /// R4.5: la paleta con las etiquetas (✓ las que ya llevan todos los elegidos: elegirla la
+    /// quita). Escribir un nombre nuevo ofrece crearla.
+    fn open_label_palette(&mut self) {
+        let items = self
+            .session
+            .label_choices()
+            .into_iter()
+            .map(|(name, on)| {
+                let hint = if on { pick("✓ remove", "✓ quitar") } else { "" };
+                PaletteItem::new(format!("mail.label:{name}"), name).hint(hint).icon(iurefficient_ui::Icon::Tag)
+            })
+            .collect();
+        self.palette_items = items;
+        self.palette_mode = PaletteMode::Label;
+        self.palette.placeholder = Some(pick("Label with…", "Etiquetar con…").to_string());
+        self.palette.open();
+    }
+
     fn show_palette(&mut self, ctx: &Context) {
         if !self.palette.is_open() {
-            if self.palette_mode == PaletteMode::MoveTo {
+            if self.palette_mode != PaletteMode::Commands {
                 self.palette_mode = PaletteMode::Commands;
                 self.palette.placeholder = None;
             }
@@ -1198,6 +1219,21 @@ impl DeskApp {
         let items = match self.palette_mode {
             PaletteMode::Commands => self.command_items(),
             PaletteMode::MoveTo => self.palette_items.clone(),
+            PaletteMode::Label => {
+                let mut items = self.palette_items.clone();
+                let q: String = self.palette.query().trim().chars().take(120).collect();
+                if !q.is_empty() && !items.iter().any(|i| i.label.eq_ignore_ascii_case(&q)) {
+                    items.push(
+                        PaletteItem::new(
+                            format!("mail.label:{q}"),
+                            format!("{} «{q}»", pick("New label", "Etiqueta nueva")),
+                        )
+                        .keywords(q.clone())
+                        .icon(iurefficient_ui::Icon::Plus),
+                    );
+                }
+                items
+            }
         };
         if let Some(id) = self.palette.show(ctx, &items) {
             self.palette_mode = PaletteMode::Commands;

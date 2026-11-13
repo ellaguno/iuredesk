@@ -69,8 +69,12 @@ pub(crate) fn handles(base: &str) -> bool {
             | "app.rules"
             | "app.vacation"
             | "app.labels"
+            | "mail.label"
     )
 }
+
+/// Tope de mensajes por «Etiquetar…».
+const MAX_LABEL_BATCH: usize = 500;
 
 /// Los que necesitan un mensaje seleccionado.
 pub(crate) fn needs_target(base: &str) -> bool {
@@ -82,6 +86,7 @@ pub(crate) fn needs_target(base: &str) -> bool {
             | "mail.rule_from_message"
             | "mail.unsubscribe"
             | "mail.always_category"
+            | "mail.label"
     )
 }
 
@@ -164,9 +169,23 @@ fn is_user_label(k: &str) -> bool {
 /// Paso inverso propio de este módulo.
 #[derive(Clone, Debug)]
 pub(crate) enum RulesUndo {
-    Keywords { id: MessageId, keywords: Vec<String>, added: String },
+    Keywords {
+        id: MessageId,
+        keywords: Vec<String>,
+        added: String,
+    },
+    /// R4.5: etiqueta de Gmail (carpeta) puesta o quitada a mano.
+    GmailLabel {
+        id: MessageId,
+        label: FolderId,
+        added: bool,
+        keywords: Vec<String>,
+    },
     Unsnooze(Vec<MessageId>),
-    RestoreRule { pos: usize, rule: Box<Rule> },
+    RestoreRule {
+        pos: usize,
+        rule: Box<Rule>,
+    },
     Followup(MessageId),
 }
 
@@ -524,6 +543,12 @@ impl Session {
             RulesUndo::Keywords { id, keywords, added } => {
                 iuredesk_rules::apply::undo_keywords(&self.store, id, keywords, &added).map_err(Self::rules_err)?;
                 self.envelopes.remove(&id);
+            }
+            RulesUndo::GmailLabel { id, label, added, keywords } => {
+                if let Some(h) = &self.live.handle {
+                    let _ = if added { h.remove_label(id, label) } else { h.add_label(id, label) };
+                }
+                self.put_local_keywords(id, keywords)?;
             }
             RulesUndo::Unsnooze(ids) => {
                 for id in ids {
@@ -1060,6 +1085,136 @@ impl Session {
         let seq = iuredesk_rules::apply::put_keywords(&self.store, env, true, name).map_err(Self::rules_err)?;
         if seq.is_some() {
             self.kick(account);
+        }
+        self.envelopes.remove(&id);
+        Ok(())
+    }
+
+    /// R4.5: etiquetas que ofrece «Etiquetar…» y si **todos** los mensajes elegidos ya la llevan
+    /// (entonces el comando la quita). Las conocidas más, en Gmail, las etiquetas de usuario de la
+    /// cuenta (sus carpetas sin función).
+    pub fn label_choices(&mut self) -> Vec<(String, bool)> {
+        let ids = self.targets();
+        let envs: Vec<MessageEnvelope> =
+            ids.iter().take(MAX_LABEL_BATCH).filter_map(|i| self.envelope(*i).cloned()).collect();
+        let mut names: Vec<String> = self.known_labels().into_iter().map(|(n, _)| n).collect();
+        // Las que ya llevan los elegidos (para poder quitarlas).
+        for e in &envs {
+            names.extend(e.keywords.iter().filter(|k| is_user_label(k)).take(50).cloned());
+        }
+        let accounts: HashSet<AccountId> = envs.iter().map(|e| e.account).collect();
+        for acct in accounts {
+            if self.live.handle.as_ref().is_some_and(|h| h.uses_labels(acct)) {
+                for f in self.folders_of(acct) {
+                    if f.role == FolderRole::Custom && !names.iter().any(|n| n.eq_ignore_ascii_case(&f.name)) {
+                        names.push(f.name.clone());
+                    }
+                }
+            }
+        }
+        names.sort_by_key(|n| n.to_lowercase());
+        names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        names
+            .into_iter()
+            .take(500)
+            .map(|n| {
+                let all =
+                    !envs.is_empty() && envs.iter().all(|e| e.keywords.iter().any(|k| k.eq_ignore_ascii_case(&n)));
+                (n, all)
+            })
+            .collect()
+    }
+
+    /// R4.5: pone la etiqueta `name` a los mensajes elegidos (o la quita si todos la llevan).
+    /// Gmail: si la etiqueta ya existe en la cuenta es una carpeta (`X-GM-LABELS`); si no, palabra
+    /// clave, que Gmail convierte en etiqueta. Otras cuentas: palabra clave IMAP. Con deshacer.
+    pub fn toggle_label(&mut self, name: &str) -> Result<Outcome> {
+        let name: String = name.trim().chars().take(120).collect();
+        if name.is_empty() {
+            return Ok(Outcome::Done);
+        }
+        let ids = self.targets();
+        let envs: Vec<MessageEnvelope> =
+            ids.iter().take(MAX_LABEL_BATCH).filter_map(|i| self.envelope(*i).cloned()).collect();
+        if envs.is_empty() {
+            return Ok(Outcome::Notice(Notice::info("Select a message first.", "Primero selecciona un mensaje.")));
+        }
+        let has = |e: &MessageEnvelope| e.keywords.iter().any(|k| k.eq_ignore_ascii_case(&name));
+        let add = !envs.iter().all(has);
+        let mut steps = Vec::new();
+        for env in envs {
+            if has(&env) == add {
+                continue;
+            }
+            let before = env.keywords.clone();
+            let mut after = before.clone();
+            if add {
+                after.push(name.clone());
+            } else {
+                after.retain(|k| !k.eq_ignore_ascii_case(&name));
+            }
+            let gmail_label = self.live.handle.as_ref().filter(|h| h.uses_labels(env.account)).and(
+                self.folders_of(env.account).into_iter().find(|f| f.name.eq_ignore_ascii_case(&name)).map(|f| f.id),
+            );
+            match (gmail_label, &self.live.handle) {
+                (Some(label), Some(h)) => {
+                    let r = if add { h.add_label(env.id, label) } else { h.remove_label(env.id, label) };
+                    r.map_err(|e| EngineError::Invalid(e.message(crate::lang::spanish())))?;
+                    self.put_local_keywords(env.id, after)?;
+                    steps.push((
+                        Inverse::Rules(Box::new(RulesUndo::GmailLabel {
+                            id: env.id,
+                            label,
+                            added: add,
+                            keywords: before,
+                        })),
+                        None,
+                    ));
+                }
+                _ => {
+                    let id = env.id;
+                    let account = env.account;
+                    let mut e = env;
+                    e.keywords = after;
+                    let seq =
+                        iuredesk_rules::apply::put_keywords(&self.store, e, add, &name).map_err(Self::rules_err)?;
+                    if seq.is_some() {
+                        self.kick(account);
+                    }
+                    self.envelopes.remove(&id);
+                    steps.push((
+                        Inverse::Rules(Box::new(RulesUndo::Keywords { id, keywords: before, added: name.clone() })),
+                        seq,
+                    ));
+                }
+            }
+        }
+        if steps.is_empty() {
+            return Ok(Outcome::Done);
+        }
+        if add && self.rules.seen_labels.len() < 2_000 {
+            self.rules.seen_labels.insert(name.clone());
+        }
+        let n = steps.len();
+        let text = match (add, n) {
+            (true, 1) => Text::new(format!("Label «{name}» added"), format!("Etiqueta «{name}» puesta")),
+            (true, n) => Text::new(format!("Label «{name}» added to {n}"), format!("Etiqueta «{name}» puesta a {n}")),
+            (false, 1) => Text::new(format!("Label «{name}» removed"), format!("Etiqueta «{name}» quitada")),
+            (false, n) => {
+                Text::new(format!("Label «{name}» removed from {n}"), format!("Etiqueta «{name}» quitada a {n}"))
+            }
+        };
+        self.push_undo(text.clone(), steps);
+        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
+    }
+
+    /// Cambia solo las palabras clave guardadas (sin operación al servidor).
+    fn put_local_keywords(&mut self, id: MessageId, keywords: Vec<String>) -> Result<()> {
+        if let Some(mut env) = self.store.get_envelope(id).map_err(store_err)? {
+            env.keywords = keywords;
+            self.store
+                .put_messages(vec![iuredesk_store::NewMessage { envelope: env, raw: None, body_text: None }])
+                .map_err(store_err)?;
         }
         self.envelopes.remove(&id);
         Ok(())
@@ -1784,6 +1939,10 @@ impl Session {
             "mail.always_category" => match arg.and_then(Category::from_key) {
                 Some(c) => self.always(c),
                 None => Ok(Outcome::Rules("always_category".into())),
+            },
+            "mail.label" => match arg.map(str::trim).filter(|a| !a.is_empty()) {
+                Some(name) => self.toggle_label(name),
+                None => Ok(Outcome::Assist("mail.label".into())),
             },
             "mail.iure_only" => {
                 self.set_iure_only(!self.rules.iure_only);

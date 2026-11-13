@@ -365,6 +365,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::Mail,
         "category primary promotions social updates forums categoria principal promociones notificaciones foros",
     ),
+    c("mail.label", "Label…", "Etiquetar…", "tag", Group::Mail, "label tag etiqueta etiquetar gmail"),
     c(
         "mail.always_category",
         "Always move sender to…",
