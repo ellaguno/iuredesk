@@ -392,6 +392,12 @@ impl Graph {
         if let Some(x) = &patch.description {
             edited.description = x.clone();
         }
+        if let Some(x) = &patch.attendees {
+            edited.attendees = x.clone();
+        }
+        if let Some(x) = &patch.reminders {
+            edited.reminders = x.clone();
+        }
         let (s, e) = patch.times(&at_t, &at_end);
         edited.start = s;
         edited.end = e;

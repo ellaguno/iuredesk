@@ -309,6 +309,7 @@ fn graph_series_occurrence_scopes() {
     assert!(d.occurrence.is_some(), "pregunta el alcance");
     assert_eq!(s.series_scopes(&d).len(), 3);
     d.title = "Junta M365 (toda)".into();
+    d.add_attendee(iuredesk_model::Mailbox::new("Luis", "luis@x.com"), false);
     let ops_before = s.store().peek_ops(1_000).unwrap().len();
     s.save_event_draft(&d, SeriesScope::All).unwrap();
     let ops = s.store().peek_ops(1_000).unwrap();
@@ -316,11 +317,15 @@ fn graph_series_occurrence_scopes() {
     assert_eq!(ops.last().unwrap().kind, "pim.event.series");
     assert!(!fake.calls.lock().unwrap().iter().any(|c| c.starts_with("save:")), "la instancia no se sube");
     for id in [a, b] {
-        assert_eq!(s.calendar_event(id).unwrap().summary, "Junta M365 (toda)");
+        let e = s.calendar_event(id).unwrap();
+        assert_eq!(e.summary, "Junta M365 (toda)");
+        assert!(e.attendees.iter().any(|x| x.mailbox.addr == "luis@x.com"), "invitado en toda la serie");
     }
     s.run("undo").unwrap();
     for id in [a, b] {
-        assert_eq!(s.calendar_event(id).unwrap().summary, "Junta M365");
+        let e = s.calendar_event(id).unwrap();
+        assert_eq!(e.summary, "Junta M365");
+        assert!(e.attendees.is_empty(), "deshacer quita al invitado");
     }
     assert_eq!(s.store().peek_ops(1_000).unwrap().last().unwrap().kind, "pim.event.series", "inverso al maestro");
 

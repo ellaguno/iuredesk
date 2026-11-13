@@ -405,6 +405,20 @@ pub fn series_patch_json(master: &Value, p: &crate::series::SeriesPatch) -> Map<
     if let Some(x) = &p.description {
         m.insert("body".into(), json!({ "contentType": "text", "content": x }));
     }
+    if let Some(a) = &p.attendees {
+        m.insert("attendees".into(), attendees_json(a));
+    }
+    if let Some(r) = &p.reminders {
+        match r.first() {
+            Some(r) => {
+                m.insert("isReminderOn".into(), json!(true));
+                m.insert("reminderMinutesBeforeStart".into(), json!(r.minutes_before.max(0)));
+            }
+            None => {
+                m.insert("isReminderOn".into(), json!(false));
+            }
+        }
+    }
     if p.shift_secs != 0 || p.duration_secs.is_some() {
         let ev = event_from_graph(master);
         let (s, e) = p.times(&ev.start, &ev.end);

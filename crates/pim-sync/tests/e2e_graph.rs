@@ -578,6 +578,11 @@ async fn graph_whole_series_patches_the_master() {
     assert_eq!(iuredesk_pim_sync::ops::graph_series_master(&store, first.id).as_deref(), Some("m1"));
     let mut edited = first.clone();
     edited.summary = "Junta (nuevo horario)".into();
+    edited.attendees.push(iuredesk_model::Attendee {
+        mailbox: iuredesk_model::Mailbox::new("Luis", "luis@contoso.com"),
+        ..Default::default()
+    });
+    edited.reminders = vec![iuredesk_model::Reminder { minutes_before: 30 }];
     let one_hour = chrono::Duration::hours(1);
     edited.start = EventTime::DateTime { utc: first.start.to_utc() + one_hour, tzid: None };
     edited.end = EventTime::DateTime { utc: first.end.to_utc() + one_hour, tzid: None };
@@ -594,6 +599,10 @@ async fn graph_whole_series_patches_the_master() {
         assert_eq!(p["subject"], "Junta (nuevo horario)");
         assert_eq!(p["start"]["dateTime"], "2026-11-09T17:00:00", "una hora después, en su zona");
         assert_eq!(p["start"]["timeZone"], "Europe/Paris");
+        let invited: Vec<&str> =
+            p["attendees"].as_array().unwrap().iter().filter_map(|a| a["emailAddress"]["address"].as_str()).collect();
+        assert_eq!(invited, vec!["ana@contoso.com", "luis@contoso.com"]);
+        assert_eq!((p["isReminderOn"].clone(), p["reminderMinutesBeforeStart"].clone()), (json!(true), json!(30)));
         assert!(!g.patches.iter().any(|(i, _)| i == "e1" || i == "e2"), "las instancias no se tocan");
     }
     // Deshacer: las apariciones vuelven y el maestro recibe el parche inverso.
@@ -605,6 +614,8 @@ async fn graph_whole_series_patches_the_master() {
     assert_eq!(id, "m1");
     assert_eq!(p["subject"], "Junta semanal");
     assert_eq!(p["start"]["dateTime"], "2026-11-09T16:00:00");
+    assert_eq!(p["attendees"].as_array().map(Vec::len), Some(1), "deshacer quita a Luis");
+    assert_eq!(p["isReminderOn"], json!(false), "y el recordatorio");
 }
 
 /// R4.5: «este y los siguientes» en una serie de Microsoft 365: la serie original termina el día

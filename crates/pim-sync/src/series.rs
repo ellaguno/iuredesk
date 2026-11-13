@@ -19,7 +19,7 @@
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use chrono_tz::Tz;
 use iuredesk_dav::recur::{Limits, expand};
-use iuredesk_model::{Event, EventId, EventOverride, EventTime};
+use iuredesk_model::{Attendee, Event, EventId, EventOverride, EventTime, Reminder};
 
 use crate::error::{PimError, Result};
 use crate::map::ical::new_event_ics;
@@ -120,6 +120,12 @@ pub struct SeriesPatch {
     pub shift_secs: i64,
     /// Duración nueva, en segundos, si cambió.
     pub duration_secs: Option<i64>,
+    /// Invitados nuevos, si cambiaron (Graph manda la actualización a los invitados).
+    #[serde(default)]
+    pub attendees: Option<Vec<Attendee>>,
+    /// Recordatorios nuevos, si cambiaron.
+    #[serde(default)]
+    pub reminders: Option<Vec<Reminder>>,
 }
 
 impl SeriesPatch {
@@ -135,6 +141,8 @@ impl SeriesPatch {
             description: changed(&old.description, &edited.description),
             shift_secs: shift,
             duration_secs: new_dur,
+            attendees: (old.attendees != edited.attendees).then(|| edited.attendees.clone()),
+            reminders: (old.reminders != edited.reminders).then(|| edited.reminders.clone()),
         };
         let back = SeriesPatch {
             summary: fwd.summary.as_ref().map(|_| old.summary.clone()),
@@ -142,6 +150,8 @@ impl SeriesPatch {
             description: fwd.description.as_ref().map(|_| old.description.clone()),
             shift_secs: shift.saturating_neg(),
             duration_secs: new_dur.map(|_| dur(old)),
+            attendees: fwd.attendees.as_ref().map(|_| old.attendees.clone()),
+            reminders: fwd.reminders.as_ref().map(|_| old.reminders.clone()),
         };
         (fwd, back)
     }
@@ -152,6 +162,8 @@ impl SeriesPatch {
             && self.description.is_none()
             && self.shift_secs == 0
             && self.duration_secs.is_none()
+            && self.attendees.is_none()
+            && self.reminders.is_none()
     }
 
     /// Inicio y fin de una aparición (o del maestro) con el parche aplicado.
@@ -200,10 +212,40 @@ impl SeriesPatch {
         {
             e.description = x.clone();
         }
+        // Invitados: se compara la lista de direcciones (las respuestas cambian de una aparición a
+        // otra); los que ya estaban conservan la suya.
+        if let Some(x) = &self.attendees
+            && addrs(&e.attendees) == addrs(&like.attendees)
+        {
+            e.attendees = x
+                .iter()
+                .map(|a| {
+                    let mut a = a.clone();
+                    if let Some(prev) =
+                        e.attendees.iter().find(|p| p.mailbox.addr.eq_ignore_ascii_case(&a.mailbox.addr))
+                    {
+                        a.partstat = prev.partstat.clone();
+                    }
+                    a
+                })
+                .collect();
+        }
+        if let Some(x) = &self.reminders
+            && e.reminders == like.reminders
+        {
+            e.reminders = x.clone();
+        }
         let (s, en) = self.times(&e.start, &e.end);
         e.start = s;
         e.end = en;
     }
+}
+
+/// Direcciones de los invitados, en minúsculas y ordenadas.
+fn addrs(a: &[Attendee]) -> Vec<String> {
+    let mut v: Vec<String> = a.iter().map(|x| x.mailbox.addr.to_lowercase()).collect();
+    v.sort();
+    v
 }
 
 /// Copia «nueva» de un evento: sin id, sin vínculo con el servidor y con otro `UID`.
@@ -459,6 +501,41 @@ mod tests {
         let d = |n| EventTime::Date(chrono::NaiveDate::from_ymd_opt(2026, 3, n).unwrap());
         let day = SeriesPatch { shift_secs: 2 * 86_400, ..Default::default() };
         assert_eq!(day.times(&d(2), &d(3)), (d(4), d(5)));
+    }
+
+    /// R4.5: invitados y recordatorios de toda una serie de Microsoft 365: los que ya estaban
+    /// conservan su respuesta; una aparición con otros invitados (cambiada aparte) no se toca.
+    #[test]
+    fn series_patch_attendees_and_reminders() {
+        use iuredesk_model::{Mailbox, PartStat};
+        let att =
+            |addr: &str, p: PartStat| Attendee { mailbox: Mailbox::new("", addr), partstat: p, ..Default::default() };
+        let mut m = weekly(None);
+        m.attendees = vec![att("ana@x.com", PartStat::NeedsAction)];
+        m.reminders = vec![Reminder { minutes_before: 15 }];
+        let mut edited = m.clone();
+        edited.attendees.push(att("luis@x.com", PartStat::NeedsAction));
+        edited.reminders = vec![Reminder { minutes_before: 30 }];
+        let (p, back) = SeriesPatch::between(&m, &edited);
+        assert_eq!(p.attendees.as_ref().map(Vec::len), Some(2));
+        assert_eq!(p.reminders, Some(vec![Reminder { minutes_before: 30 }]));
+        assert_eq!(back.attendees.as_ref().map(Vec::len), Some(1));
+        assert_eq!(back.reminders, Some(vec![Reminder { minutes_before: 15 }]));
+        assert!(!SeriesPatch { reminders: Some(vec![]), ..Default::default() }.is_empty());
+        // Otra aparición donde Ana ya aceptó: sigue aceptada y se suma Luis.
+        let mut other = m.clone();
+        other.attendees = vec![att("ANA@x.com", PartStat::Accepted)];
+        p.apply(&mut other, &m);
+        assert_eq!(other.attendees.len(), 2);
+        assert_eq!(other.attendees[0].partstat, PartStat::Accepted);
+        assert_eq!(other.reminders, vec![Reminder { minutes_before: 30 }]);
+        // Una aparición con otros invitados y otro recordatorio, cambiada aparte, se queda igual.
+        let mut apart = m.clone();
+        apart.attendees = vec![att("eva@x.com", PartStat::Accepted)];
+        apart.reminders = vec![Reminder { minutes_before: 5 }];
+        p.apply(&mut apart, &m);
+        assert_eq!(apart.attendees.len(), 1);
+        assert_eq!(apart.reminders, vec![Reminder { minutes_before: 5 }]);
     }
 
     #[test]
