@@ -18,6 +18,7 @@
     clippy::unreachable
 )]
 
+pub mod large;
 mod send;
 
 use std::sync::Arc;
@@ -338,6 +339,37 @@ impl GraphClient {
             let body = if raw.is_empty() { Value::Null } else { serde_json::from_slice(&raw).unwrap_or(Value::Null) };
             return Ok(GraphResponse { status, body, raw });
         }
+    }
+
+    /// Sube un trozo de un adjunto a la URL ya firmada de una sesión de subida (R4.5). Va **sin**
+    /// token (Graph lo rechaza en esa URL) y solo por HTTPS (o por HTTP si la raíz de Graph lo es:
+    /// servidor falso de pruebas). Devuelve el código HTTP si es 2xx.
+    pub async fn upload_chunk(&self, upload_url: &str, start: usize, total: usize, data: &[u8]) -> Result<u16> {
+        let scheme_ok = upload_url.starts_with("https://")
+            || (upload_url.starts_with("http://") && self.base.starts_with("http://"));
+        if !scheme_ok || upload_url.len() > 4096 {
+            return Err(GraphError::Invalid("URL de subida no válida".into()));
+        }
+        if data.is_empty() || start.saturating_add(data.len()) > total {
+            return Err(GraphError::Invalid("trozo fuera de rango".into()));
+        }
+        let end = start.saturating_add(data.len()).saturating_sub(1);
+        let resp = self
+            .http
+            .put(upload_url)
+            .header(reqwest::header::CONTENT_RANGE, format!("bytes {start}-{end}/{total}"))
+            .header(reqwest::header::CONTENT_LENGTH, data.len())
+            .body(data.to_vec())
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        if (200..300).contains(&status) {
+            return Ok(status);
+        }
+        if status == 429 || status == 503 {
+            return Err(GraphError::Throttled { retry_after: retry_after(resp.headers()) });
+        }
+        Err(GraphError::Http { status, code: String::new() })
     }
 
     /// `GET` que debe salir bien; devuelve el JSON.

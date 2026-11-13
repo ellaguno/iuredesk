@@ -3768,6 +3768,7 @@ dependencies = [
  "iuredesk-compose",
  "iuredesk-model",
  "iuredesk-oauth",
+ "mail-parser",
  "reqwest",
  "serde_json",
  "thiserror 2.0.21",

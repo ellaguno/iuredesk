@@ -6,8 +6,9 @@
 //! destinatarios de las cabeceras del MIME, así que aquí se añade un `Bcc:` con los destinatarios
 //! del sobre que no estén en `To:`/`Cc:` (Graph lo quita de las copias entregadas).
 //!
-//! Graph no admite peticiones de más de ~4 MB: un mensaje mayor se manda por el transporte de
-//! reserva (SMTP de la cuenta) si lo hay, o se informa como demasiado grande.
+//! Graph no admite peticiones de más de ~4 MB: un mensaje mayor se manda en partes (borrador +
+//! adjuntos subidos aparte + `send`, ver [`crate::large`]); si no tiene adjuntos que separar, por
+//! el transporte de reserva (SMTP de la cuenta) si lo hay, o se informa como demasiado grande.
 
 use std::sync::Arc;
 
@@ -73,6 +74,17 @@ impl Transport for GraphSendTransport {
     fn send<'a>(&'a self, msg: &'a OutgoingMessage) -> BoxFuture<'a, Result<SendReceipt, SendError>> {
         Box::pin(async move {
             if msg.raw.len() > MAX_MIME_BYTES {
+                // R4.5: adjuntos grandes por sesión de subida.
+                if let Some((small, parts)) = crate::large::detach_attachments(&msg.raw, MAX_MIME_BYTES) {
+                    let mime = with_bcc_header(&small, &msg.recipients);
+                    crate::large::send_in_parts(&self.client, &mime, &parts).await.map_err(|e| map_error(&e))?;
+                    return Ok(SendReceipt {
+                        server_reply: format!(
+                            "202 Accepted (Microsoft Graph, {} adjuntos subidos aparte)",
+                            parts.len()
+                        ),
+                    });
+                }
                 if let Some(f) = &self.fallback {
                     return f.send(msg).await;
                 }
