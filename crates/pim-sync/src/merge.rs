@@ -50,6 +50,7 @@ pub fn merge_event(base: &Event, local: &Event, server: &Event) -> Option<Event>
             status,
             transparency,
             online_meeting,
+            overrides,
         ]
     );
     if conflict {

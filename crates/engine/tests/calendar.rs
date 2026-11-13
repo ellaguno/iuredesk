@@ -152,15 +152,48 @@ fn recurring_edit_scopes() {
     assert_eq!(occ.len(), 2);
     let second = occ[1].clone();
 
-    // Solo este: la serie sigue y la del 26 queda como evento suelto.
+    // Solo este (R4.5): la del 26 queda como excepción dentro de la misma serie.
+    let events_before = s.store().events_in_calendar(second.calendar).unwrap().len();
     let mut d: EventDraft = s.draft_for(&second).unwrap();
     d.title = "Junta movida".into();
     s.save_event_draft(&d, SeriesScope::This).unwrap();
     let after = range(&mut s, 19, 31);
-    assert_eq!(after.iter().filter(|o| o.summary == "Junta movida").count(), 1);
+    let moved: Vec<_> = after.iter().filter(|o| o.summary == "Junta movida").collect();
+    assert_eq!(moved.len(), 1);
+    assert!(moved[0].recurring && moved[0].id == second.id, "sigue en la serie: {:?}", moved[0]);
     assert!(after.iter().any(|o| o.summary.starts_with("Junta semanal") && o.recurring));
+    assert_eq!(s.store().events_in_calendar(second.calendar).unwrap().len(), events_before, "sin evento suelto");
+    assert_eq!(s.calendar_event(second.id).unwrap().overrides.len(), 1);
+    // Abrirla otra vez muestra sus propios datos, y volver a editarla no crea otra excepción.
+    let again = after.iter().find(|o| o.summary == "Junta movida").unwrap().clone();
+    let mut d = s.draft_for(&again).unwrap();
+    assert_eq!(d.title, "Junta movida");
+    d.location = "Sala 3".into();
+    s.save_event_draft(&d, SeriesScope::This).unwrap();
+    let ev = s.calendar_event(second.id).unwrap();
+    assert_eq!(ev.overrides.len(), 1);
+    assert_eq!(ev.overrides[0].location, "Sala 3");
+    s.run("undo").unwrap();
     s.run("undo").unwrap();
     assert_eq!(range(&mut s, 19, 31).iter().filter(|o| o.summary == "Junta movida").count(), 0);
+    assert!(s.calendar_event(second.id).unwrap().overrides.is_empty());
+
+    // En un calendario que no guarda excepciones (Graph) se separa como antes.
+    s.demo_calendar_caps(
+        second.calendar,
+        iuredesk_pim_sync::CalendarCaps { server_invites: true, meeting: None, exceptions: false },
+    );
+    let mut d: EventDraft = s.draft_for(&second).unwrap();
+    d.title = "Junta movida".into();
+    s.save_event_draft(&d, SeriesScope::This).unwrap();
+    let after = range(&mut s, 19, 31);
+    assert!(after.iter().any(|o| o.summary == "Junta movida" && !o.recurring), "evento suelto");
+    assert_eq!(s.store().events_in_calendar(second.calendar).unwrap().len(), events_before + 1);
+    s.run("undo").unwrap();
+    s.demo_calendar_caps(
+        second.calendar,
+        iuredesk_pim_sync::CalendarCaps { server_invites: false, meeting: None, exceptions: true },
+    );
 
     // Este y los siguientes: dos series, la nueva desde el 26.
     let mut d = s.draft_for(&second).unwrap();

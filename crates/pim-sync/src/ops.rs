@@ -281,6 +281,39 @@ pub fn save_event(store: &Store, event: &Event) -> Result<EventId> {
     Ok(id)
 }
 
+/// R4.5: tras migrar al esquema 4, llena [`Event::overrides`] con las excepciones que ya tenía el
+/// objeto crudo de cada evento (antes no se guardaban en el modelo). Una sola vez: la marca
+/// [`iuredesk_store::OVERRIDES_BACKFILL_KEY`] la deja la migración y se borra al terminar. Sin
+/// operaciones a la cola: es lo que ya está en el servidor. Devuelve cuántos eventos cambió.
+pub fn backfill_overrides(store: &Store, user_tz: chrono_tz::Tz) -> Result<usize> {
+    let key = iuredesk_store::OVERRIDES_BACKFILL_KEY;
+    if store.sync_state(key)?.is_none() {
+        return Ok(0);
+    }
+    let mut n = 0usize;
+    for cal in store.calendars()? {
+        for mut ev in store.events_in_calendar(cal.id)? {
+            if !ev.overrides.is_empty() || !ev.is_recurring() {
+                continue;
+            }
+            let Some((_, data)) = store.raw_object_data(PimRef::Event(ev.id))? else { continue };
+            let Ok(ics) = iuredesk_dav::calendar::ICalendar::parse_bytes(&data) else { continue };
+            let Some(read) = crate::map::ical::events_from_ics(&ics, user_tz).into_iter().find(|e| e.uid == ev.uid)
+            else {
+                continue;
+            };
+            if read.overrides.is_empty() {
+                continue;
+            }
+            ev.overrides = read.overrides;
+            store.put_event(&ev)?;
+            n = n.saturating_add(1);
+        }
+    }
+    store.delete_sync_state(key)?;
+    Ok(n)
+}
+
 /// Borra un evento en local y encola el borrado remoto.
 pub fn delete_event(store: &Store, id: EventId) -> Result<()> {
     let Some(ev) = store.get_event(id)? else { return Ok(()) };
@@ -437,6 +470,44 @@ pub fn delete_task(store: &Store, id: TaskId) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    /// R4.5: tras migrar, las excepciones que solo estaban en el objeto crudo pasan al modelo una
+    /// vez; sin la marca no se hace nada.
+    #[test]
+    fn backfills_overrides_from_raw_once() {
+        use chrono::TimeZone;
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path()).unwrap();
+        let cal = s.put_calendar(&Calendar { account: AccountId(1), ..Default::default() }).unwrap();
+        let start = Utc.with_ymd_and_hms(2026, 10, 5, 9, 0, 0).unwrap();
+        let id = s
+            .put_event(&Event {
+                calendar: cal,
+                uid: "s1".into(),
+                summary: "Semanal".into(),
+                start: EventTime::DateTime { utc: start, tzid: None },
+                end: EventTime::DateTime { utc: start + chrono::Duration::hours(1), tzid: None },
+                rrule: Some("FREQ=WEEKLY".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:s1\r\nDTSTART:20261005T090000Z\r\n\
+DTEND:20261005T100000Z\r\nRRULE:FREQ=WEEKLY\r\nSUMMARY:Semanal\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:s1\r\n\
+RECURRENCE-ID:20261012T090000Z\r\nDTSTART:20261012T110000Z\r\nDTEND:20261012T120000Z\r\nSUMMARY:Movida\r\n\
+END:VEVENT\r\nEND:VCALENDAR\r\n";
+        s.put_raw_object(PimRef::Event(id), ics.as_bytes(), "/cal/s1.ics", Some("e1")).unwrap();
+        assert_eq!(backfill_overrides(&s, chrono_tz::UTC).unwrap(), 0, "sin marca no toca nada");
+        s.put_sync_state(iuredesk_store::OVERRIDES_BACKFILL_KEY, &[1]).unwrap();
+        assert_eq!(backfill_overrides(&s, chrono_tz::UTC).unwrap(), 1);
+        let ev = s.get_event(id).unwrap().unwrap();
+        assert_eq!(ev.overrides.len(), 1);
+        assert_eq!(ev.overrides[0].summary, "Movida");
+        assert_eq!(ev.overrides[0].recurrence_id.to_utc(), Utc.with_ymd_and_hms(2026, 10, 12, 9, 0, 0).unwrap());
+        assert_eq!(s.ops_len().unwrap(), 0, "no sube nada");
+        assert!(s.sync_state(iuredesk_store::OVERRIDES_BACKFILL_KEY).unwrap().is_none());
+        assert_eq!(backfill_overrides(&s, chrono_tz::UTC).unwrap(), 0, "una sola vez");
+    }
+
     use iuredesk_model::{Attendee, Calendar, EventTime};
 
     use super::*;

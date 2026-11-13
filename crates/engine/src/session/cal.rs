@@ -13,7 +13,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Timelike, Utc};
 use iuredesk_model::{CalendarId, Event, EventId, EventTime, Mailbox, MessageId, PartStat, SharedCalendars};
 use iuredesk_pim_sync::ops::PimOp;
-use iuredesk_pim_sync::series::{detach_occurrence, exclude_occurrence, split_series, truncate_before};
+use iuredesk_pim_sync::series::{
+    detach_occurrence, exclude_occurrence, override_occurrence, split_series, truncate_before,
+};
 use iuredesk_pim_sync::{ImipReply, PimError, PimSyncHandle, SeriesScope};
 use iuredesk_store::{PimRef, Store};
 
@@ -374,7 +376,14 @@ impl Session {
         };
         let mut d = EventDraft::from_event(&ev, occ, self.zone, self.event_private(&ev.uid));
         if ev.is_recurring() {
-            d.occurrence = Some(occurrence_start(o));
+            let at = occurrence_start(o);
+            // R4.5: una aparición ya cambiada se edita con sus datos, no con los de la serie.
+            if let Some(x) = ev.overrides.iter().find(|x| x.is_instance(at.to_utc())) {
+                d.title = x.summary.clone();
+                d.location = x.location.clone();
+                d.description = x.description.clone();
+            }
+            d.occurrence = Some(at);
         }
         Some(d)
     }
@@ -527,6 +536,12 @@ impl Session {
         let at = occurrence.filter(|_| master.is_recurring());
         match (at, scope) {
             (Some(at), SeriesScope::This) => {
+                // R4.5: excepción dentro de la serie si el servidor las guarda y lo editado cabe en ella.
+                let exceptions = self.calendar_caps(master.calendar).is_none_or(|c| c.exceptions);
+                if let Some(series) = exceptions.then(|| override_occurrence(&master, &at, &edited)).flatten() {
+                    backend.save_event(&self.store, &series).map_err(pim_err)?;
+                    return Ok(out);
+                }
                 let (series, single) = detach_occurrence(&master, &at, &edited);
                 backend.save_event(&self.store, &series).map_err(pim_err)?;
                 let nid = backend.save_event(&self.store, &single).map_err(pim_err)?;

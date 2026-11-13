@@ -337,6 +337,7 @@ impl EventDraft {
         ev.rrule = self.repeat.to_rrule(first_day, self.all_day, zone);
         if ev.rrule.is_none() {
             ev.exdates.clear();
+            ev.overrides.clear();
         }
         let mut rem: Vec<i64> = self.reminders.clone();
         rem.sort_unstable();

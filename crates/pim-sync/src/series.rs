@@ -1,8 +1,11 @@
 //! Editar una serie repetida desde una de sus apariciones (como Outlook y Apple Calendar):
 //!
-//! - **Solo este evento** ([`detach_occurrence`]): la serie excluye esa fecha (`EXDATE`) y la
-//!   aparición editada pasa a ser un evento propio. (Una excepción `RECURRENCE-ID` dentro del
-//!   mismo objeto conservaría el vínculo con la serie; queda pendiente — ver `docs/gaps.md`.)
+//! - **Solo este evento** ([`override_occurrence`], R4.5): la aparición queda como excepción
+//!   (`RECURRENCE-ID`) dentro de la misma serie, con su título, lugar, notas, horario y estado
+//!   propios; sigue siendo parte de la serie para el servidor y los invitados. Si se cambió algo
+//!   que una excepción no guarda (invitados, recordatorios, calendario…) o el servidor no las admite
+//!   (Graph), se usa [`detach_occurrence`]: la serie excluye esa fecha (`EXDATE`) y la aparición
+//!   pasa a ser un evento propio.
 //! - **Este y los siguientes** ([`split_series`]): la serie original termina justo antes de la
 //!   aparición (`UNTIL`) y nace una serie nueva (otro `UID`) desde ella con los cambios; `COUNT`
 //!   se reparte entre las dos y los `EXDATE` van a la mitad que les toca. Es la forma que entienden
@@ -16,7 +19,7 @@
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use chrono_tz::Tz;
 use iuredesk_dav::recur::{Limits, expand};
-use iuredesk_model::{Event, EventId, EventTime};
+use iuredesk_model::{Event, EventId, EventOverride, EventTime};
 
 use crate::error::{PimError, Result};
 use crate::map::ical::new_event_ics;
@@ -59,6 +62,9 @@ fn instant(t: &EventTime) -> DateTime<Utc> {
 /// La serie sin la aparición que empieza en `at`.
 pub fn exclude_occurrence(master: &Event, at: &EventTime) -> Event {
     let mut m = master.clone();
+    // Su excepción, si la había, se va con ella (R4.5).
+    let instant = instant(at);
+    m.overrides.retain(|o| !o.is_instance(instant));
     let v = exdate_value(at);
     if !m.exdates.contains(&v) {
         m.exdates.push(v);
@@ -66,6 +72,41 @@ pub fn exclude_occurrence(master: &Event, at: &EventTime) -> Event {
     m.exdates.sort();
     m.exdates.dedup();
     m
+}
+
+/// «Solo este evento» como excepción de la serie (R4.5): la serie con la aparición que empezaba en
+/// `at` cambiada por lo editado. `None` si `edited` cambia algo que una excepción no lleva
+/// (invitados, organizador, recordatorios, disponibilidad, videollamada o calendario): entonces se
+/// separa con [`detach_occurrence`].
+pub fn override_occurrence(master: &Event, at: &EventTime, edited: &Event) -> Option<Event> {
+    let fits = edited.attendees == master.attendees
+        && edited.organizer == master.organizer
+        && edited.reminders == master.reminders
+        && edited.transparency == master.transparency
+        && edited.online_meeting == master.online_meeting
+        && edited.calendar == master.calendar;
+    if !fits {
+        return None;
+    }
+    let instant = instant(at);
+    let mut m = master.clone();
+    let o = EventOverride {
+        recurrence_id: at.clone(),
+        start: edited.start.clone(),
+        end: edited.end.clone(),
+        summary: edited.summary.clone(),
+        location: edited.location.clone(),
+        description: edited.description.clone(),
+        status: edited.status.clone(),
+    };
+    match m.overrides.iter_mut().find(|x| x.is_instance(instant)) {
+        Some(x) => *x = o,
+        None => m.overrides.push(o),
+    }
+    // Una aparición excluida que se vuelve a editar deja de estarlo.
+    let ex = exdate_value(at);
+    m.exdates.retain(|e| *e != ex);
+    Some(m)
 }
 
 /// Copia «nueva» de un evento: sin id, sin vínculo con el servidor y con otro `UID`.
@@ -77,6 +118,8 @@ fn fresh_copy(e: &Event) -> Event {
         etag: None,
         sequence: 0,
         updated: None,
+        // Las excepciones son de la serie original (otro UID): no se copian.
+        overrides: Vec::new(),
         ..e.clone()
     }
 }
@@ -145,6 +188,8 @@ pub fn truncate_before(master: &Event, at: &EventTime) -> Option<Event> {
     m.rrule = Some(join_parts(&parts));
     let cut = instant(at);
     m.exdates.retain(|x| exdate_instant(x).is_none_or(|t| t < cut));
+    // Las apariciones cambiadas que ya no están en la serie se van (R4.5).
+    m.overrides.retain(|o| o.recurrence_id.to_utc() < cut);
     Some(m)
 }
 
@@ -236,6 +281,46 @@ mod tests {
         assert!(single.id.is_unassigned() && single.rrule.is_none() && single.remote_id.is_none());
         assert_ne!(single.uid, m.uid);
         assert_eq!(single.summary, "Movida");
+    }
+
+    /// R4.5: «solo este» como excepción: se agrega, se reemplaza, saca la fecha de los `EXDATE`, y
+    /// no aplica si cambian los invitados; borrar o recortar la serie se lleva sus excepciones.
+    #[test]
+    fn this_only_as_exception() {
+        let m = weekly(None);
+        let mut edited = m.clone();
+        edited.summary = "Movida".into();
+        edited.start = EventTime::DateTime { utc: Utc.with_ymd_and_hms(2026, 3, 16, 11, 0, 0).unwrap(), tzid: None };
+        edited.end = EventTime::DateTime { utc: Utc.with_ymd_and_hms(2026, 3, 16, 12, 0, 0).unwrap(), tzid: None };
+        let s = override_occurrence(&m, &at(16), &edited).unwrap();
+        assert_eq!((s.id, s.uid.as_str(), s.rrule.as_deref()), (m.id, m.uid.as_str(), m.rrule.as_deref()));
+        assert_eq!(s.summary, "Semanal", "la serie no cambia");
+        assert_eq!(s.overrides.len(), 1);
+        assert_eq!(s.overrides[0].recurrence_id, at(16));
+        assert_eq!(s.overrides[0].summary, "Movida");
+        // Otra vez la misma aparición: se reemplaza.
+        edited.summary = "Movida otra vez".into();
+        let s = override_occurrence(&s, &at(16), &edited).unwrap();
+        assert_eq!(s.overrides.len(), 1);
+        assert_eq!(s.overrides[0].summary, "Movida otra vez");
+        // Una fecha excluida que se edita vuelve.
+        let s2 = override_occurrence(&s, &at(9), &edited).unwrap();
+        assert!(!s2.exdates.contains(&"20260309T090000Z".to_string()));
+        assert_eq!(s2.overrides.len(), 2);
+        // Con otros invitados no cabe en una excepción.
+        let mut other = edited.clone();
+        other.attendees.push(iuredesk_model::Attendee {
+            mailbox: iuredesk_model::Mailbox::new("Luis", "luis@x.com"),
+            ..Default::default()
+        });
+        assert!(override_occurrence(&m, &at(16), &other).is_none());
+        // Borrar esa aparición o recortar la serie antes de ella se lleva la excepción.
+        assert!(exclude_occurrence(&s2, &at(16)).overrides.iter().all(|o| o.recurrence_id != at(16)));
+        let head = truncate_before(&s2, &at(16)).unwrap();
+        assert_eq!(head.overrides.len(), 1, "solo la del 9");
+        // La serie nueva de «este y los siguientes» no hereda excepciones de otro UID.
+        let (_, tail) = split_series(&s2, &at(23), &s2, chrono_tz::UTC).unwrap();
+        assert!(tail.overrides.is_empty());
     }
 
     #[test]

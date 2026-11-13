@@ -46,6 +46,7 @@ pub use blob::{BlobStore, MAX_BLOB_SIZE};
 pub use error::{Result, StoreError};
 pub use links::{EmailLink, MAX_LINKS_PER_MESSAGE, link_key};
 pub use mail::{AccountLabel, FolderCount, NewMessage, ProviderMeta};
+pub use migrations::OVERRIDES_BACKFILL_KEY;
 pub use pim::MAX_INDEXED_DAYS;
 pub use pim_remote::{CollectionRef, CollectionSync, PimRef, RawObject, SyncedItem};
 pub use queue::{MAX_OP_PAYLOAD, QueuedOp};
@@ -59,13 +60,13 @@ use crate::search::{IndexDoc, SearchIndex};
 pub const REDB_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
 /// Versión actual del esquema de redb.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Migración de un esquema `n` a `n + 1` (la posición `i` migra de `i + 1` a `i + 2`).
 type Migration = fn(&WriteTransaction) -> Result<()>;
 /// Migraciones registradas. Al cambiar el formato de un registro o una tabla se añade aquí una
 /// función y se incrementa [`SCHEMA_VERSION`].
-const MIGRATIONS: &[Migration] = &[migrations::v1_to_v2, migrations::v2_to_v3];
+const MIGRATIONS: &[Migration] = &[migrations::v1_to_v2, migrations::v2_to_v3, migrations::v3_to_v4];
 
 /// Clave de la versión de esquema en `meta`.
 const META_SCHEMA: &str = "schema_version";

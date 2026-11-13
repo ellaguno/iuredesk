@@ -1156,6 +1156,7 @@ impl DeskApp {
         let caps = iuredesk_engine::session::CalendarCaps {
             server_invites: meet,
             meeting: meet.then_some(MeetingProvider::GoogleMeet),
+            exceptions: true,
         };
         self.session.demo_calendar_caps(d.calendar, caps);
         d.title = pick("Contract review", "Revisión del contrato").into();

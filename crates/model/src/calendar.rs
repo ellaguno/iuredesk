@@ -173,6 +173,29 @@ impl OnlineMeeting {
     }
 }
 
+/// Una aparición de una serie cambiada a mano (`VEVENT` con `RECURRENCE-ID` en el mismo objeto;
+/// esquema 4 del almacén). Solo lleva lo que se puede cambiar de una aparición: lo demás (asistentes,
+/// recordatorios…) lo hereda de la serie.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventOverride {
+    /// Inicio **original** de la aparición en la serie (identifica la repetición).
+    pub recurrence_id: EventTime,
+    /// Inicio y fin nuevos.
+    pub start: EventTime,
+    pub end: EventTime,
+    pub summary: String,
+    pub location: String,
+    pub description: String,
+    pub status: EventStatus,
+}
+
+impl EventOverride {
+    /// ¿Es la aparición que empezaba en `instant`?
+    pub fn is_instance(&self, instant: DateTime<Utc>) -> bool {
+        self.recurrence_id.to_utc() == instant
+    }
+}
+
 /// Evento de calendario (`VEVENT`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
@@ -216,6 +239,8 @@ pub struct Event {
     pub updated: Option<DateTime<Utc>>,
     /// Reunión en línea (UX-11, esquema 3 del almacén).
     pub online_meeting: Option<OnlineMeeting>,
+    /// Apariciones cambiadas de la serie (R4.5, esquema 4 del almacén).
+    pub overrides: Vec<EventOverride>,
 }
 
 impl Event {

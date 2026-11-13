@@ -110,7 +110,7 @@ fn saved(s: &Session, title: &str) -> Event {
 }
 
 fn email_caps(s: &mut Session, cal: iuredesk_model::CalendarId) {
-    s.demo_calendar_caps(cal, CalendarCaps { server_invites: false, meeting: None });
+    s.demo_calendar_caps(cal, CalendarCaps { server_invites: false, meeting: None, exceptions: true });
 }
 
 #[test]
@@ -182,7 +182,10 @@ fn server_scheduling_sends_nothing_from_here_and_meet_is_requested() {
     let dir = tempfile::tempdir().unwrap();
     let (mut s, _) = session(dir.path());
     let mut d = new_meeting(&s, &["ana@contoso.com"]);
-    s.demo_calendar_caps(d.calendar, CalendarCaps { server_invites: true, meeting: Some(MeetingProvider::GoogleMeet) });
+    s.demo_calendar_caps(
+        d.calendar,
+        CalendarCaps { server_invites: true, meeting: Some(MeetingProvider::GoogleMeet), exceptions: true },
+    );
     assert_eq!(s.meeting_provider(d.calendar), Some(MeetingProvider::GoogleMeet));
     d.video_call = true;
     let sum = s.invite_summary(&d).unwrap();

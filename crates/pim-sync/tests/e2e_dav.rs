@@ -179,6 +179,41 @@ async fn full_cycle_against_fake_server() {
     let etag_now = event_by_uid(&e.store, "serie-1").etag;
     assert!(etag_now.is_some());
 
+    // --- R4.5: la excepción del servidor se lee en el modelo; «solo este» agrega otra en el mismo
+    // objeto (RECURRENCE-ID en la zona de la serie) sin tocar la primera
+    let read = event_by_uid(&e.store, "serie-1");
+    assert_eq!(read.overrides.len(), 1);
+    assert_eq!(read.overrides[0].summary, "Reunión movida");
+    let at26 = EventTime::DateTime { utc: Utc.with_ymd_and_hms(2026, 10, 26, 8, 0, 0).unwrap(), tzid: None };
+    let mut edited = read.clone();
+    edited.summary = "Reunión con el cliente".into();
+    edited.start = EventTime::DateTime { utc: Utc.with_ymd_and_hms(2026, 10, 26, 14, 0, 0).unwrap(), tzid: None };
+    edited.end = EventTime::DateTime { utc: Utc.with_ymd_and_hms(2026, 10, 26, 15, 0, 0).unwrap(), tzid: None };
+    let with = iuredesk_pim_sync::series::override_occurrence(&read, &at26, &edited).unwrap();
+    e.handle.save_event(&with).unwrap();
+    e.handle.sync_now_wait("ana-icloud").await.unwrap();
+    let on_server = e.server.lock().unwrap().data(&format!("{CAL}serie-1.ics")).unwrap();
+    assert!(on_server.contains("RECURRENCE-ID;TZID=Europe/Madrid:20261019T090000"), "{on_server}");
+    assert!(on_server.contains("RECURRENCE-ID;TZID=Europe/Madrid:20261026T090000"), "{on_server}");
+    assert!(on_server.contains("SUMMARY:Reunión con el cliente"));
+    assert!(on_server.contains("SUMMARY:Reunión semanal (nueva)"), "la serie sigue igual");
+    assert_eq!(on_server.matches("RRULE:").count(), 1, "la excepción no lleva la regla");
+    let occ: Vec<_> = occurrences_between(&e.store, &[], from, to, e.tz)
+        .unwrap()
+        .into_iter()
+        .filter(|o| o.event == series.id)
+        .collect();
+    let moved = occ.iter().find(|o| o.summary == "Reunión con el cliente").expect("la aparición cambiada");
+    assert_eq!(moved.start.to_utc(), Utc.with_ymd_and_hms(2026, 10, 26, 14, 0, 0).unwrap());
+    assert!(moved.overridden && moved.recurring);
+    assert_eq!(occ.len(), 5, "la misma cantidad de apariciones");
+    // Quitar la excepción (deshacer) la borra del servidor; la del 19 se queda.
+    e.handle.save_event(&read).unwrap();
+    e.handle.sync_now_wait("ana-icloud").await.unwrap();
+    let on_server = e.server.lock().unwrap().data(&format!("{CAL}serie-1.ics")).unwrap();
+    assert!(!on_server.contains("20261026T090000"), "{on_server}");
+    assert!(on_server.contains("RECURRENCE-ID;TZID=Europe/Madrid:20261019T090000"));
+
     // --- cambio en el servidor (otro cliente) → llega por sync-collection incremental
     {
         let mut st = e.server.lock().unwrap();

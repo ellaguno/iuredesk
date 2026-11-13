@@ -1,7 +1,8 @@
 //! `VEVENT`/`VTODO` ⇄ [`Event`]/[`Task`].
 //!
 //! **Leer** ([`events_from_ics`], [`tasks_from_ics`]) da un elemento del modelo por serie (el
-//! componente sin `RECURRENCE-ID`); las excepciones se quedan en el objeto crudo y las aplica
+//! componente sin `RECURRENCE-ID`) con sus apariciones cambiadas en [`Event::overrides`] (R4.5);
+//! el resto de cada excepción se queda en el objeto crudo y la aplica
 //! [`crate::occurrences_between`].
 //!
 //! **Escribir** nunca regenera: [`patch_event`] y [`patch_task`] comparan el elemento tal como se
@@ -17,8 +18,8 @@ use iuredesk_dav::ical::{Component, Property};
 use iuredesk_dav::tz::local_to_utc;
 use iuredesk_dav::value::{self, DateTimeValue, format_utc};
 use iuredesk_model::{
-    Attendee, AttendeeRole, Event, EventStatus, EventTime, Mailbox, MeetingProvider, OnlineMeeting, PartStat, Reminder,
-    Task, TaskStatus, Transparency,
+    Attendee, AttendeeRole, Event, EventOverride, EventStatus, EventTime, Mailbox, MeetingProvider, OnlineMeeting,
+    PartStat, Reminder, Task, TaskStatus, Transparency,
 };
 
 /// Recordatorios máximos que se leen de un evento.
@@ -300,11 +301,112 @@ pub fn events_from_ics(cal: &ICalendar, user_tz: Tz) -> Vec<Event> {
         }
         let Some(idx) = master_index(cal, "VEVENT", &uid) else { continue };
         if let Some(m) = cal.root.components.get(idx) {
-            out.push(event_from_component(cal, m, user_tz));
+            let mut ev = event_from_component(cal, m, user_tz);
+            if m.prop("RECURRENCE-ID").is_none() {
+                ev.overrides = overrides_from(cal, &uid, user_tz);
+            }
+            out.push(ev);
             seen.push(uid);
         }
     }
     out
+}
+
+/// Tope de apariciones cambiadas que se leen de una serie.
+const MAX_OVERRIDES: usize = 500;
+
+/// Las excepciones (`VEVENT` con `RECURRENCE-ID`) de la serie `uid`.
+fn overrides_from(cal: &ICalendar, uid: &str, user_tz: Tz) -> Vec<EventOverride> {
+    cal.root
+        .children("VEVENT")
+        .filter(|c| EventView::new(c).uid().as_deref() == Some(uid))
+        .filter_map(|c| {
+            let view = EventView::new(c);
+            let rid = view.recurrence_id()?;
+            let e = event_from_component(cal, c, user_tz);
+            Some(EventOverride {
+                recurrence_id: event_time(cal, &rid, user_tz),
+                start: e.start,
+                end: e.end,
+                summary: e.summary,
+                location: e.location,
+                description: e.description,
+                status: e.status,
+            })
+        })
+        .take(MAX_OVERRIDES)
+        .collect()
+}
+
+/// Índice de la excepción de `uid` que corresponde a la aparición `instant`.
+fn override_index(cal: &ICalendar, uid: &str, instant: DateTime<Utc>, user_tz: Tz) -> Option<usize> {
+    cal.root.components.iter().position(|c| {
+        let v = EventView::new(c);
+        c.name == "VEVENT"
+            && v.uid().as_deref() == Some(uid)
+            && v.recurrence_id().is_some_and(|r| event_time(cal, &r, user_tz).to_utc() == instant)
+    })
+}
+
+fn event_status_str(s: &EventStatus) -> &'static str {
+    match s {
+        EventStatus::Confirmed => "CONFIRMED",
+        EventStatus::Tentative => "TENTATIVE",
+        EventStatus::Cancelled => "CANCELLED",
+    }
+}
+
+/// Lleva a `cal` las apariciones cambiadas de `old` → `new` (R4.5): agrega o actualiza el
+/// `VEVENT` con `RECURRENCE-ID` de cada una que cambió y quita las que ya no están. Las excepciones
+/// que no vienen en `old` (p. ej. de antes del esquema 4) no se tocan. Devuelve `true` si cambió algo.
+fn patch_overrides(cal: &mut ICalendar, old: &Event, new: &Event, user_tz: Tz, now: DateTime<Utc>) -> bool {
+    let mut changed = false;
+    let same = |a: &EventOverride, b: &EventOverride| a.recurrence_id.to_utc() == b.recurrence_id.to_utc();
+    for o in new.overrides.iter().take(MAX_OVERRIDES) {
+        if old.overrides.iter().any(|p| p == o) {
+            continue;
+        }
+        let instant = o.recurrence_id.to_utc();
+        let idx = match override_index(cal, &new.uid, instant, user_tz) {
+            Some(i) => i,
+            None => {
+                // Nueva: copia del maestro sin la regla, con su RECURRENCE-ID en la zona de la serie.
+                let Some(m) = master_index(cal, "VEVENT", &new.uid).and_then(|i| cal.root.components.get(i)) else {
+                    continue;
+                };
+                let mut c = m.clone();
+                for p in ["RRULE", "RDATE", "EXDATE", "EXRULE", "RECURRENCE-ID", "CREATED"] {
+                    c.remove(p);
+                }
+                let rid = match (&o.recurrence_id, &new.start) {
+                    (EventTime::DateTime { utc, .. }, EventTime::DateTime { tzid, .. }) => {
+                        EventTime::DateTime { utc: *utc, tzid: tzid.clone() }
+                    }
+                    (t, _) => t.clone(),
+                };
+                c.push(time_property("RECURRENCE-ID", &rid));
+                cal.root.components.push(c);
+                cal.root.components.len().saturating_sub(1)
+            }
+        };
+        let Some(comp) = cal.root.components.get_mut(idx) else { continue };
+        set_text(comp, "SUMMARY", &o.summary);
+        set_text(comp, "LOCATION", &o.location);
+        set_text(comp, "DESCRIPTION", &o.description);
+        set_time(comp, "DTSTART", &o.start);
+        comp.remove("DURATION");
+        set_time(comp, "DTEND", &o.end);
+        comp.set(Property::new("STATUS", event_status_str(&o.status)));
+        touch(comp, now);
+        changed = true;
+    }
+    for p in old.overrides.iter().filter(|p| !new.overrides.iter().any(|o| same(o, p))) {
+        if let Some(i) = override_index(cal, &new.uid, p.recurrence_id.to_utc(), user_tz) {
+            cal.root.components.remove(i);
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn task_status(comp: &Component) -> TaskStatus {
@@ -538,6 +640,8 @@ fn touch(comp: &mut Component, now: DateTime<Utc>) {
 pub fn patch_event(cal: &mut ICalendar, old: &Event, new: &Event, user_tz: Tz, now: DateTime<Utc>) -> bool {
     let Some(idx) = master_index(cal, "VEVENT", &new.uid) else {
         cal.root.components.push(new_vevent(new, now));
+        let none = Event { overrides: Vec::new(), ..new.clone() };
+        patch_overrides(cal, &none, new, user_tz, now);
         return true;
     };
     let snapshot = cal.clone();
@@ -616,7 +720,8 @@ pub fn patch_event(cal: &mut ICalendar, old: &Event, new: &Event, user_tz: Tz, n
     if changed {
         touch(comp, now);
     }
-    changed
+    // R4.5: apariciones cambiadas.
+    patch_overrides(cal, old, new, user_tz, now) || changed
 }
 
 fn new_vevent(ev: &Event, now: DateTime<Utc>) -> Component {
@@ -662,6 +767,11 @@ fn new_vevent(ev: &Event, now: DateTime<Utc>) -> Component {
 pub fn new_event_ics(ev: &Event, now: DateTime<Utc>) -> ICalendar {
     let mut cal = ICalendar::new();
     cal.root.components.push(new_vevent(ev, now));
+    if !ev.overrides.is_empty() {
+        let none = Event { overrides: Vec::new(), ..ev.clone() };
+        // Las horas de las excepciones ya vienen en UTC: la zona del usuario no interviene.
+        patch_overrides(&mut cal, &none, ev, chrono_tz::UTC, now);
+    }
     cal
 }
 

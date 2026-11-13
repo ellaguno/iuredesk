@@ -34,6 +34,9 @@ pub struct CalendarCaps {
     pub server_invites: bool,
     /// Videollamada que el servidor sabe crear (Teams en Microsoft 365, Meet en Google).
     pub meeting: Option<MeetingProvider>,
+    /// R4.5: guarda apariciones cambiadas de una serie (`RECURRENCE-ID` en el mismo objeto: CalDAV).
+    /// Graph no (sus instancias son otros eventos): ahí «solo este» separa la aparición.
+    pub exceptions: bool,
 }
 
 /// Capacidad del canal de eventos.
@@ -140,6 +143,11 @@ impl PimSyncEngine {
         let (events, first_rx) = broadcast::channel(EVENT_CAPACITY);
         let (shutdown, _) = watch::channel(false);
         let opts = Arc::new(opts);
+        // R4.5: una vez tras migrar, las excepciones del objeto crudo pasan al modelo (si no, la
+        // próxima edición de la serie las daría por borradas).
+        if let Err(e) = crate::ops::backfill_overrides(&store, opts.user_tz) {
+            let _ = events.send(PimEvent::Error(FriendlyError::new(None, &e)));
+        }
         let creds = Arc::new(Creds { secrets, tokens });
         let mut inner = Inner {
             store: Arc::clone(&store),
@@ -378,11 +386,14 @@ impl PimSyncHandle {
         let c = self.inner.store.get_calendar(cal).ok().flatten()?;
         let s = self.slot_by_acct(c.account)?;
         Some(match &s.ctx.account.source {
-            PimSource::Graph { .. } => CalendarCaps { server_invites: true, meeting: Some(MeetingProvider::Teams) },
+            PimSource::Graph { .. } => {
+                CalendarCaps { server_invites: true, meeting: Some(MeetingProvider::Teams), exceptions: false }
+            }
             PimSource::Dav { .. } => CalendarCaps {
                 server_invites: s.ctx.opts.trust_server_scheduling && server_schedules(&self.inner.store, s.acct),
                 meeting: (s.ctx.account.calendar_api.is_some() && crate::gmeet::calendar_id(&c.remote_path).is_some())
                     .then_some(MeetingProvider::GoogleMeet),
+                exceptions: true,
             },
         })
     }
