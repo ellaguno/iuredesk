@@ -391,3 +391,56 @@ fn drain(rx: &mut tokio::sync::broadcast::Receiver<PimEvent>) -> Vec<PimEvent> {
     }
     v
 }
+
+/// R4.5: en Microsoft 365 una serie llega por `calendarView/delta` como una aparición por evento
+/// (`type: occurrence`, con `seriesMasterId`; el maestro no viene). Editar una es un `PATCH` a esa
+/// instancia, que Graph convierte en excepción: «solo este» sin tocar la serie ni las demás.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn graph_series_occurrence_edit_patches_only_that_instance() {
+    let state = Arc::new(Mutex::new(G::default()));
+    {
+        let mut g = state.lock().unwrap();
+        for (id, d) in [("e1", 9), ("e2", 16)] {
+            let mut v = ev(id, "Junta semanal", d);
+            if let Value::Object(m) = &mut v {
+                m.insert("type".into(), json!("occurrence"));
+                m.insert("seriesMasterId".into(), json!("m1"));
+                m.insert("iCalUId".into(), json!("uid-serie"));
+            }
+            g.events.insert(id.into(), v);
+            g.bump(id);
+        }
+        g.events.insert("e3".into(), ev("e3", "Café", 7));
+        g.bump("e3");
+    }
+    let h = Arc::clone(&state);
+    let base = serve(move |req| route(&h, req)).await;
+    state.lock().unwrap().base = base.clone();
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
+    let pim = PimAccount {
+        account: account(),
+        source: PimSource::Graph { base_url: format!("{base}/v1.0") },
+        tasks_api: None,
+        calendar_api: None,
+    };
+    let opts = PimSyncOptions { poll_interval: Duration::from_secs(3600), sync_on_start: false, ..Default::default() };
+    let tokens: Arc<dyn TokenProvider> = Arc::new(FakeTokens);
+    let handle =
+        PimSyncEngine::start(Arc::clone(&store), vec![pim], Some(tokens), Arc::new(MemoryStore::default()), opts);
+    handle.sync_now_wait("ana-m365").await.unwrap();
+    let cal = store.calendars().unwrap().remove(0);
+    let series: Vec<Event> =
+        store.events_in_calendar(cal.id).unwrap().into_iter().filter(|e| e.summary == "Junta semanal").collect();
+    assert_eq!(series.len(), 2, "una por aparición");
+    assert!(series.iter().all(|e| !e.is_recurring()), "sin maestro: cada una se edita sola");
+    let mut second = series.into_iter().find(|e| e.remote_id.as_deref() == Some("e2")).unwrap();
+    second.summary = "Junta con el cliente".into();
+    handle.save_event(&second).unwrap();
+    handle.sync_now_wait("ana-m365").await.unwrap();
+    let g = state.lock().unwrap();
+    let patched: Vec<&str> = g.patches.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(patched, vec!["e2"], "solo la instancia: {:?}", g.requests);
+    assert_eq!(g.patches[0].1["subject"], "Junta con el cliente");
+    assert!(!g.requests.iter().any(|r| r.contains("/me/events/m1")), "la serie no se toca");
+}
