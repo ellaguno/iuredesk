@@ -289,7 +289,8 @@ jobs:
     name: Release
     needs: package
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    # Compila xtask para la página de descargas (R4.3).
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -325,6 +326,15 @@ jobs:
         run: |
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
+      # R4.3: página de descargas (estática, sin JavaScript). Se publica en GitHub Pages solo si
+      # la variable del repositorio IUREDESK_PAGES vale "true" (Settings → Pages → GitHub Actions).
+      - name: Página de descargas
+        if: github.ref_type == 'tag'
+        run: cargo run -q -p xtask -- site dist --tag "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --out site
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref_type == 'tag' && vars.IUREDESK_PAGES == 'true'
+        with:
+          path: site
       - name: Release en este repositorio
         if: github.ref_type == 'tag'
         env:
@@ -344,3 +354,19 @@ jobs:
         with:
           name: iuredesk-todos
           path: dist/
+
+  pages:
+    name: Página de descargas
+    needs: release
+    if: github.ref_type == 'tag' && vars.IUREDESK_PAGES == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -224,6 +224,14 @@ Una de dos:
   sirven en la CI alojada.
 Sin firma, SmartScreen avisará al instalar.
 
+## Página de descargas (R4.3)
+`cargo xtask site dist --tag vX.Y.Z` escribe `dist/site/index.html` (o `--out <carpeta>`): una página
+estática, sin JavaScript, con el instalador de cada sistema, su SHA-256, su firma minisign, las notas
+y la guía. `release.yml` la genera en cada etiqueta. Para publicarla en GitHub Pages: Settings →
+Pages → *Source: GitHub Actions* y la variable del repositorio `IUREDESK_PAGES=true` (Settings →
+Secrets and variables → Actions → Variables); el job `pages` la despliega después del release. Un
+dominio propio se configura en la misma pantalla de Pages.
+
 ## Pendiente
 - macOS: hacer la prueba manual de los Apple Events (ver «Integración con el escritorio»).
 - Probar los instaladores de Windows y macOS en equipos reales (avisos, «Aplicaciones

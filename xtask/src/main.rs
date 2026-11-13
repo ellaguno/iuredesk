@@ -34,6 +34,7 @@ mod icons;
 mod msi;
 mod package;
 mod sign;
+mod site;
 mod unsafety;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -67,6 +68,8 @@ fn main() -> ExitCode {
         "bench" => bench(std::env::args().skip(2).collect()),
         "sign" => sign::sign(std::env::args().skip(2).collect()),
         "keygen" => sign::keygen(std::env::args().skip(2).collect()),
+        // R4.3: página de descargas del release (GitHub Pages).
+        "site" => site::site(std::env::args().skip(2).collect()),
         other => Err(format!("tarea desconocida: {other}")),
     };
     match r {
