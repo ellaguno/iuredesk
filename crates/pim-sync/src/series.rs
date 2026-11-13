@@ -109,6 +109,103 @@ pub fn override_occurrence(master: &Event, at: &EventTime, edited: &Event) -> Op
     Some(m)
 }
 
+/// R4.5: cambios a toda una serie de Microsoft 365 hechos desde una de sus apariciones (Graph no
+/// trae el maestro: se le aplican al servidor con un `PATCH` y en local a las demás apariciones).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SeriesPatch {
+    pub summary: Option<String>,
+    pub location: Option<String>,
+    pub description: Option<String>,
+    /// Corrimiento del inicio, en segundos.
+    pub shift_secs: i64,
+    /// Duración nueva, en segundos, si cambió.
+    pub duration_secs: Option<i64>,
+}
+
+impl SeriesPatch {
+    /// Lo que cambió de la aparición `old` a `edited` (y el parche que lo deshace).
+    pub fn between(old: &Event, edited: &Event) -> (SeriesPatch, SeriesPatch) {
+        let changed = |a: &String, b: &String| (a != b).then(|| b.clone());
+        let dur = |e: &Event| (instant(&e.end) - instant(&e.start)).num_seconds();
+        let shift = (instant(&edited.start) - instant(&old.start)).num_seconds();
+        let new_dur = (dur(old) != dur(edited)).then(|| dur(edited));
+        let fwd = SeriesPatch {
+            summary: changed(&old.summary, &edited.summary),
+            location: changed(&old.location, &edited.location),
+            description: changed(&old.description, &edited.description),
+            shift_secs: shift,
+            duration_secs: new_dur,
+        };
+        let back = SeriesPatch {
+            summary: fwd.summary.as_ref().map(|_| old.summary.clone()),
+            location: fwd.location.as_ref().map(|_| old.location.clone()),
+            description: fwd.description.as_ref().map(|_| old.description.clone()),
+            shift_secs: shift.saturating_neg(),
+            duration_secs: new_dur.map(|_| dur(old)),
+        };
+        (fwd, back)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.summary.is_none()
+            && self.location.is_none()
+            && self.description.is_none()
+            && self.shift_secs == 0
+            && self.duration_secs.is_none()
+    }
+
+    /// Inicio y fin de una aparición (o del maestro) con el parche aplicado.
+    pub fn times(&self, start: &EventTime, end: &EventTime) -> (EventTime, EventTime) {
+        let shift = Duration::seconds(self.shift_secs.clamp(-3_650 * 86_400, 3_650 * 86_400));
+        match (start, end) {
+            (EventTime::Date(s), EventTime::Date(e)) => {
+                let days = Duration::days(shift.num_days());
+                let ns = *s + days;
+                let ne = match self.duration_secs {
+                    Some(d) => ns + Duration::days((d / 86_400).max(1)),
+                    None => *e + days,
+                };
+                (EventTime::Date(ns), EventTime::Date(ne))
+            }
+            _ => {
+                let tz = |t: &EventTime| match t {
+                    EventTime::DateTime { tzid, .. } => tzid.clone(),
+                    EventTime::Date(_) => None,
+                };
+                let ns = instant(start) + shift;
+                let ne = match self.duration_secs {
+                    Some(d) => ns + Duration::seconds(d.clamp(0, 3_650 * 86_400)),
+                    None => instant(end) + shift,
+                };
+                (EventTime::DateTime { utc: ns, tzid: tz(start) }, EventTime::DateTime { utc: ne, tzid: tz(end) })
+            }
+        }
+    }
+
+    /// Aplica el parche a una aparición: los textos solo si no se habían cambiado aparte (iguales
+    /// a los de `like`, la aparición editada antes del cambio).
+    pub fn apply(&self, e: &mut Event, like: &Event) {
+        if let Some(x) = &self.summary
+            && e.summary == like.summary
+        {
+            e.summary = x.clone();
+        }
+        if let Some(x) = &self.location
+            && e.location == like.location
+        {
+            e.location = x.clone();
+        }
+        if let Some(x) = &self.description
+            && e.description == like.description
+        {
+            e.description = x.clone();
+        }
+        let (s, en) = self.times(&e.start, &e.end);
+        e.start = s;
+        e.end = en;
+    }
+}
+
 /// Copia «nueva» de un evento: sin id, sin vínculo con el servidor y con otro `UID`.
 fn fresh_copy(e: &Event) -> Event {
     Event {
@@ -321,6 +418,47 @@ mod tests {
         // La serie nueva de «este y los siguientes» no hereda excepciones de otro UID.
         let (_, tail) = split_series(&s2, &at(23), &s2, chrono_tz::UTC).unwrap();
         assert!(tail.overrides.is_empty());
+    }
+
+    /// R4.5: parche de toda una serie de Microsoft 365: qué cambió, su inverso, horario corrido
+    /// (y días completos) y textos que solo cambian donde no se habían tocado aparte.
+    #[test]
+    fn series_patch_between_times_and_apply() {
+        let m = weekly(None);
+        let mut edited = m.clone();
+        edited.summary = "Junta nueva".into();
+        edited.start = at(2);
+        edited.start = EventTime::DateTime { utc: Utc.with_ymd_and_hms(2026, 3, 2, 10, 30, 0).unwrap(), tzid: None };
+        edited.end = EventTime::DateTime { utc: Utc.with_ymd_and_hms(2026, 3, 2, 12, 0, 0).unwrap(), tzid: None };
+        let (p, back) = SeriesPatch::between(&m, &edited);
+        assert_eq!(p.summary.as_deref(), Some("Junta nueva"));
+        assert!(p.location.is_none() && p.description.is_none());
+        assert_eq!((p.shift_secs, p.duration_secs), (5_400, Some(5_400)));
+        assert_eq!(
+            (back.summary.as_deref(), back.shift_secs, back.duration_secs),
+            (Some("Semanal"), -5_400, Some(3_600))
+        );
+        assert!(!p.is_empty() && SeriesPatch::between(&m, &m).0.is_empty());
+        // Otra aparición (la del 9): se corre igual; su título solo si seguía igual al de la serie.
+        let mut other = m.clone();
+        other.start = at(9);
+        other.end = EventTime::DateTime { utc: Utc.with_ymd_and_hms(2026, 3, 9, 10, 0, 0).unwrap(), tzid: None };
+        let mut renamed = other.clone();
+        renamed.summary = "Cambiada aparte".into();
+        p.apply(&mut other, &m);
+        p.apply(&mut renamed, &m);
+        assert_eq!(other.summary, "Junta nueva");
+        assert_eq!(renamed.summary, "Cambiada aparte");
+        assert_eq!(other.start.to_utc(), Utc.with_ymd_and_hms(2026, 3, 9, 10, 30, 0).unwrap());
+        assert_eq!(other.end.to_utc(), Utc.with_ymd_and_hms(2026, 3, 9, 12, 0, 0).unwrap());
+        // Ida y vuelta.
+        back.apply(&mut other, &edited);
+        assert_eq!(other.start, at(9));
+        assert_eq!(other.summary, "Semanal");
+        // Días completos: se corren días enteros.
+        let d = |n| EventTime::Date(chrono::NaiveDate::from_ymd_opt(2026, 3, n).unwrap());
+        let day = SeriesPatch { shift_secs: 2 * 86_400, ..Default::default() };
+        assert_eq!(day.times(&d(2), &d(3)), (d(4), d(5)));
     }
 
     #[test]

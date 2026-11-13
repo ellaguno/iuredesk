@@ -1047,6 +1047,11 @@ fn markdown_preview(ui: &mut Ui, text: &str) {
 fn scope_question(app: &mut DeskApp, ctx: &Context) {
     let Some(pending) = app.calendar.editor.ask.take() else { return };
     let mut choice: Option<Option<SeriesScope>> = None;
+    // R4.5: en una serie de Microsoft 365 no se ofrece «este y los siguientes».
+    let scopes: &[SeriesScope] = match &pending {
+        Pending::Save(d) => app.session.series_scopes(d),
+        _ => &[SeriesScope::This, SeriesScope::ThisAndFollowing, SeriesScope::All],
+    };
     let (title, body) = match &pending {
         Pending::Delete(_) => (
             pick("Delete a repeating event", "Eliminar un evento que se repite"),
@@ -1070,6 +1075,9 @@ fn scope_question(app: &mut DeskApp, ctx: &Context) {
             (SeriesScope::ThisAndFollowing, pick("This and following events", "Este y los siguientes")),
             (SeriesScope::All, pick("All events in the series", "Toda la serie")),
         ] {
+            if !scopes.contains(&scope) {
+                continue;
+            }
             if ui.add_sized([w, 30.0], egui::Button::new(label)).clicked() {
                 choice = Some(Some(scope));
             }

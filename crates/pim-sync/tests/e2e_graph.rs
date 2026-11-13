@@ -44,6 +44,8 @@ struct G {
     requests: Vec<String>,
     patches: Vec<(String, Value)>,
     accepted: Vec<String>,
+    /// Lo que trae además la segunda pasada del delta (apariciones de una serie creada aquí).
+    extra_delta: Vec<Value>,
 }
 
 impl G {
@@ -96,18 +98,21 @@ fn handle(st: &Mutex<G>, req: Req) -> Resp {
                 g.events.remove("e3");
                 let e2 = g.events.get("e2").cloned().unwrap_or(Value::Null);
                 g.phase = 2;
+                let mut value = vec![e2, json!({"id": "e3", "@removed": {"reason": "deleted"}})];
+                value.extend(std::mem::take(&mut g.extra_delta));
                 return json_resp(
                     200,
                     json!({
-                        "value": [e2, {"id": "e3", "@removed": {"reason": "deleted"}}],
+                        "value": value,
                         "@odata.deltaLink": format!("{base}/v1.0/me/calendars/cal1/calendarView/delta?$deltatoken=d2"),
                     }),
                 );
             }
             if query.contains("deltatoken=d2") {
+                let value = std::mem::take(&mut g.extra_delta);
                 return json_resp(
                     200,
-                    json!({"value": [], "@odata.deltaLink": format!("{base}/v1.0/me/calendars/cal1/calendarView/delta?$deltatoken=d2")}),
+                    json!({"value": value, "@odata.deltaLink": format!("{base}/v1.0/me/calendars/cal1/calendarView/delta?$deltatoken=d2")}),
                 );
             }
             assert!(query.contains("startDateTime=") && query.contains("endDateTime="), "{query}");
@@ -443,4 +448,161 @@ async fn graph_series_occurrence_edit_patches_only_that_instance() {
     assert_eq!(patched, vec!["e2"], "solo la instancia: {:?}", g.requests);
     assert_eq!(g.patches[0].1["subject"], "Junta con el cliente");
     assert!(!g.requests.iter().any(|r| r.contains("/me/events/m1")), "la serie no se toca");
+}
+
+/// R4.5: una serie creada en IureDesk en Microsoft 365 no se ve duplicada: la respuesta del `POST`
+/// es el maestro (con `recurrence`) y luego el delta trae sus apariciones; cuando llegan, el
+/// maestro local se descarta y quedan ellas (que son las que se editan).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn graph_series_created_here_is_not_duplicated() {
+    let state = Arc::new(Mutex::new(G::default()));
+    {
+        let mut g = state.lock().unwrap();
+        for (id, s, d) in [("e1", "Revisión", 5), ("e2", "Comida", 6), ("e3", "Café", 7)] {
+            g.events.insert(id.into(), ev(id, s, d));
+            g.bump(id);
+        }
+    }
+    let h = Arc::clone(&state);
+    let base = serve(move |req| route(&h, req)).await;
+    state.lock().unwrap().base = base.clone();
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
+    let pim = PimAccount {
+        account: account(),
+        source: PimSource::Graph { base_url: format!("{base}/v1.0") },
+        tasks_api: None,
+        calendar_api: None,
+    };
+    let opts = PimSyncOptions { poll_interval: Duration::from_secs(3600), sync_on_start: false, ..Default::default() };
+    let tokens: Arc<dyn TokenProvider> = Arc::new(FakeTokens);
+    let handle =
+        PimSyncEngine::start(Arc::clone(&store), vec![pim], Some(tokens), Arc::new(MemoryStore::default()), opts);
+    handle.sync_now_wait("ana-m365").await.unwrap();
+    let cal = store.calendars().unwrap().remove(0);
+    let start = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 11, 10, 9, 0, 0).unwrap();
+    let series = Event {
+        calendar: cal.id,
+        summary: "Serie nueva".into(),
+        start: EventTime::DateTime { utc: start, tzid: None },
+        end: EventTime::DateTime { utc: start + chrono::Duration::hours(1), tzid: None },
+        rrule: Some("FREQ=DAILY;COUNT=3".into()),
+        ..Default::default()
+    };
+    handle.save_event(&series).unwrap();
+    handle.sync_now_wait("ana-m365").await.unwrap();
+    // El servidor ya tiene la serie: su próxima pasada del delta trae las tres apariciones.
+    {
+        let mut g = state.lock().unwrap();
+        assert!(g.events.contains_key("new1"), "se creó con POST");
+        for k in 0..3u32 {
+            let mut o = ev(&format!("new1-o{k}"), "Serie nueva", 10 + k);
+            if let Value::Object(m) = &mut o {
+                m.insert("type".into(), json!("occurrence"));
+                m.insert("seriesMasterId".into(), json!("new1"));
+                m.insert("iCalUId".into(), json!("uid-new1"));
+                m.insert("@odata.etag".into(), json!(format!("W/\"o{k}\"")));
+            }
+            g.extra_delta.push(o);
+        }
+    }
+    handle.sync_now_wait("ana-m365").await.unwrap();
+    let from = start - chrono::Duration::days(1);
+    let to = start + chrono::Duration::days(10);
+    let seen: Vec<_> = iuredesk_pim_sync::occurrences_between(&store, &[], from, to, chrono_tz::UTC)
+        .unwrap()
+        .into_iter()
+        .filter(|o| o.summary == "Serie nueva")
+        .collect();
+    assert_eq!(seen.len(), 3, "sin duplicados: {:?}", seen.iter().map(|o| o.start.clone()).collect::<Vec<_>>());
+    let local: Vec<Event> =
+        store.events_in_calendar(cal.id).unwrap().into_iter().filter(|e| e.summary == "Serie nueva").collect();
+    assert!(local.iter().all(|e| !e.is_recurring()), "el maestro local se descartó");
+}
+
+/// R4.5: «toda la serie» desde una aparición de Microsoft 365: `PATCH` al maestro (no a la
+/// instancia) con el título y el horario corrido en la zona original; las demás apariciones
+/// cambian en local al momento; deshacer manda el parche inverso.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn graph_whole_series_patches_the_master() {
+    let state = Arc::new(Mutex::new(G::default()));
+    {
+        let mut g = state.lock().unwrap();
+        for (id, d) in [("e1", 9), ("e2", 16)] {
+            let mut v = ev(id, "Junta semanal", d);
+            if let Value::Object(m) = &mut v {
+                m.insert("type".into(), json!("occurrence"));
+                m.insert("seriesMasterId".into(), json!("m1"));
+                m.insert("iCalUId".into(), json!("uid-serie"));
+            }
+            g.events.insert(id.into(), v);
+            g.bump(id);
+        }
+        // El maestro: 15:00 UTC = 16:00 en Romance Standard Time (noviembre).
+        let mut m = ev("m1", "Junta semanal", 9);
+        if let Value::Object(o) = &mut m {
+            o.insert("type".into(), json!("seriesMaster"));
+            o.insert(
+                "start".into(),
+                json!({"dateTime": "2026-11-09T16:00:00.0000000", "timeZone": "Romance Standard Time"}),
+            );
+            o.insert(
+                "end".into(),
+                json!({"dateTime": "2026-11-09T17:00:00.0000000", "timeZone": "Romance Standard Time"}),
+            );
+        }
+        g.events.insert("m1".into(), m);
+        g.events.insert("e3".into(), ev("e3", "Café", 7));
+        g.bump("e3");
+    }
+    let h = Arc::clone(&state);
+    let base = serve(move |req| route(&h, req)).await;
+    state.lock().unwrap().base = base.clone();
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
+    let pim = PimAccount {
+        account: account(),
+        source: PimSource::Graph { base_url: format!("{base}/v1.0") },
+        tasks_api: None,
+        calendar_api: None,
+    };
+    let opts = PimSyncOptions { poll_interval: Duration::from_secs(3600), sync_on_start: false, ..Default::default() };
+    let tokens: Arc<dyn TokenProvider> = Arc::new(FakeTokens);
+    let handle =
+        PimSyncEngine::start(Arc::clone(&store), vec![pim], Some(tokens), Arc::new(MemoryStore::default()), opts);
+    handle.sync_now_wait("ana-m365").await.unwrap();
+    let cal = store.calendars().unwrap().remove(0);
+    let occ: Vec<Event> =
+        store.events_in_calendar(cal.id).unwrap().into_iter().filter(|e| e.summary == "Junta semanal").collect();
+    let first = occ.iter().find(|e| e.remote_id.as_deref() == Some("e1")).unwrap().clone();
+    assert_eq!(iuredesk_pim_sync::ops::graph_series_master(&store, first.id).as_deref(), Some("m1"));
+    let mut edited = first.clone();
+    edited.summary = "Junta (nuevo horario)".into();
+    let one_hour = chrono::Duration::hours(1);
+    edited.start = EventTime::DateTime { utc: first.start.to_utc() + one_hour, tzid: None };
+    edited.end = EventTime::DateTime { utc: first.end.to_utc() + one_hour, tzid: None };
+    let (back, before) = iuredesk_pim_sync::ops::patch_graph_series(&store, &first, &edited, "m1").unwrap().unwrap();
+    assert_eq!(before.len(), 2);
+    // En local, las dos apariciones ya cambiaron.
+    let now: Vec<Event> = store.events_in_calendar(cal.id).unwrap();
+    assert_eq!(now.iter().filter(|e| e.summary == "Junta (nuevo horario)").count(), 2);
+    handle.sync_now_wait("ana-m365").await.unwrap();
+    {
+        let g = state.lock().unwrap();
+        let (id, p) = g.patches.last().expect("PATCH al maestro");
+        assert_eq!(id, "m1", "al maestro, no a la instancia: {:?}", g.patches);
+        assert_eq!(p["subject"], "Junta (nuevo horario)");
+        assert_eq!(p["start"]["dateTime"], "2026-11-09T17:00:00", "una hora después, en su zona");
+        assert_eq!(p["start"]["timeZone"], "Europe/Paris");
+        assert!(!g.patches.iter().any(|(i, _)| i == "e1" || i == "e2"), "las instancias no se tocan");
+    }
+    // Deshacer: las apariciones vuelven y el maestro recibe el parche inverso.
+    iuredesk_pim_sync::ops::undo_graph_series(&store, "m1", back, &before).unwrap();
+    assert_eq!(store.events_in_calendar(cal.id).unwrap().iter().filter(|e| e.summary == "Junta semanal").count(), 2);
+    handle.sync_now_wait("ana-m365").await.unwrap();
+    let g = state.lock().unwrap();
+    let (id, p) = g.patches.last().unwrap();
+    assert_eq!(id, "m1");
+    assert_eq!(p["subject"], "Junta semanal");
+    assert_eq!(p["start"]["dateTime"], "2026-11-09T16:00:00");
 }

@@ -100,6 +100,15 @@ pub enum PimOp {
         /// Versión que se borró.
         etag: Option<String>,
     },
+    /// R4.5: cambiar toda una serie de Microsoft 365 (`PATCH` al maestro `master`).
+    PatchSeries {
+        /// Calendario de la serie.
+        calendar: CalendarId,
+        /// Id del maestro en Graph (`seriesMasterId`).
+        master: String,
+        /// Qué cambia.
+        patch: crate::series::SeriesPatch,
+    },
 }
 
 impl PimOp {
@@ -113,6 +122,7 @@ impl PimOp {
             Self::DeleteContact { .. } => "pim.contact.delete",
             Self::PutTask { .. } => "pim.task.put",
             Self::DeleteTask { .. } => "pim.task.delete",
+            Self::PatchSeries { .. } => "pim.event.series",
         }
     }
 
@@ -312,6 +322,64 @@ pub fn backfill_overrides(store: &Store, user_tz: chrono_tz::Tz) -> Result<usize
     }
     store.delete_sync_state(key)?;
     Ok(n)
+}
+
+/// R4.5: id del maestro de la serie (`seriesMasterId`) de un evento de Microsoft 365 que es una
+/// aparición o excepción de una serie; `None` en lo demás (CalDAV, eventos sueltos).
+pub fn graph_series_master(store: &Store, id: EventId) -> Option<String> {
+    let (_, data) = store.raw_object_data(PimRef::Event(id)).ok()??;
+    let v: serde_json::Value = serde_json::from_slice(&data).ok()?;
+    v.get("seriesMasterId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|m| !m.is_empty() && m.len() < 1024)
+        .map(str::to_string)
+}
+
+/// R4.5: «toda la serie» desde una aparición de Microsoft 365: encola el `PATCH` al maestro y
+/// aplica el cambio en local a las apariciones de la serie (sin subirlas: el servidor las cambia
+/// solo). Devuelve el parche inverso y cómo estaban las apariciones (para deshacer), o `None` si
+/// no cambió nada.
+pub fn patch_graph_series(
+    store: &Store,
+    old: &Event,
+    edited: &Event,
+    master: &str,
+) -> Result<Option<(crate::series::SeriesPatch, Vec<Event>)>> {
+    let (patch, back) = crate::series::SeriesPatch::between(old, edited);
+    if patch.is_empty() {
+        return Ok(None);
+    }
+    let (acct, read_only) = calendar_account(store, old.calendar)?;
+    if read_only {
+        return Err(PimError::ReadOnly);
+    }
+    let mut before = Vec::new();
+    for mut e in store.events_in_calendar(old.calendar)?.into_iter().take(5_000) {
+        if graph_series_master(store, e.id).as_deref() != Some(master) {
+            continue;
+        }
+        before.push(e.clone());
+        patch.apply(&mut e, old);
+        store.put_event(&e)?;
+    }
+    enqueue(store, acct, &PimOp::PatchSeries { calendar: old.calendar, master: master.to_string(), patch })?;
+    Ok(Some((back, before)))
+}
+
+/// Deshace [`patch_graph_series`]: el parche inverso al servidor y las apariciones como estaban.
+pub fn undo_graph_series(
+    store: &Store,
+    master: &str,
+    back: crate::series::SeriesPatch,
+    before: &[Event],
+) -> Result<()> {
+    let Some(first) = before.first() else { return Ok(()) };
+    let (acct, _) = calendar_account(store, first.calendar)?;
+    for e in before {
+        store.put_event(e)?;
+    }
+    enqueue(store, acct, &PimOp::PatchSeries { calendar: first.calendar, master: master.to_string(), patch: back })?;
+    Ok(())
 }
 
 /// Borra un evento en local y encola el borrado remoto.

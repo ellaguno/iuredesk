@@ -323,6 +323,29 @@ impl Graph {
         )
     }
 
+    /// R4.5: «toda la serie» → `PATCH` al maestro (el servidor cambia sus apariciones y el delta
+    /// las trae). Si el maestro ya no existe, no hay nada que hacer.
+    async fn push_series(&self, ctx: &Ctx, master: &str, patch: &crate::series::SeriesPatch) -> Result<()> {
+        let url = self.url(&format!("/me/events/{}", enc(master)));
+        let current = match self.get_json(ctx, &url).await {
+            Ok(v) => v,
+            Err(PimError::NotFound(_)) => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        let body = gmap::series_patch_json(&current, patch);
+        if body.is_empty() {
+            return Ok(());
+        }
+        let resp = self.request(ctx, Method::PATCH, &url, Some(&Value::Object(body)), None).await?;
+        if resp.status == StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        if !resp.status.is_success() {
+            return Err(Self::error(&resp, "serie"));
+        }
+        Ok(())
+    }
+
     async fn resolve_event(&self, ctx: &Ctx, local: Event, base: Option<Event>) -> Result<()> {
         let store = &ctx.store;
         let r = PimRef::Event(local.id);
@@ -598,6 +621,7 @@ impl Provider for Graph {
         Box::pin(async move {
             match op {
                 PimOp::PutEvent { event } => self.push_event(ctx, *event).await,
+                PimOp::PatchSeries { master, patch, .. } => self.push_series(ctx, master, patch).await,
                 PimOp::Rsvp { event, partstat, comment } => {
                     self.push_rsvp(ctx, *event, partstat, comment.as_deref()).await
                 }
@@ -763,6 +787,19 @@ fn apply_item(
         }
         _ => v.clone(),
     };
+    // R4.5: `calendarView` trae las apariciones de una serie, no su maestro. Si guardamos el
+    // maestro (respuesta del `POST` de una serie creada aquí), al llegar sus apariciones se
+    // descarta: si no, la serie se vería dos veces (su expansión local y las apariciones).
+    if matches!(apply, Apply::Event(_))
+        && let Some(master) = v.get("seriesMasterId").and_then(Value::as_str).filter(|m| !m.is_empty() && *m != id)
+        && let Some(item) = st.items.remove(master)
+    {
+        for r in item.refs {
+            if let PimRef::Event(e) = r {
+                store.delete_event(e)?;
+            }
+        }
+    }
     let r = match apply {
         Apply::Event(cal) => {
             let mut e = gmap::event_from_graph(&full);

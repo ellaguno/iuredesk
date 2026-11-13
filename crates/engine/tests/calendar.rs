@@ -269,3 +269,68 @@ fn invitation_accept_imports_and_queues_the_reply() {
         s.store().peek_ops(1000).unwrap().into_iter().filter(|o| o.kind == iuredesk_pim_sync::OP_IMIP_REPLY).count();
     assert_eq!(replies, 1, "respuesta iMIP para la bandeja de salida");
 }
+
+/// R4.5: una aparición de una serie de Microsoft 365 (Graph trae cada una suelta, con
+/// `seriesMasterId`) pregunta «Solo este» o «Toda la serie»; «toda» encola el cambio al maestro y
+/// cambia las demás apariciones en local; deshacer las devuelve; «solo este» guarda la instancia.
+#[test]
+fn graph_series_occurrence_scopes() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, fake) = session(dir.path());
+    let cal = s.store().calendars().unwrap().into_iter().find(|c| !c.read_only).unwrap().id;
+    let mk = |d: u32, rid: &str, s: &mut Session| {
+        let start = Utc.with_ymd_and_hms(2026, 10, d, 15, 0, 0).unwrap();
+        let id = s
+            .store()
+            .put_event(&Event {
+                calendar: cal,
+                uid: "uid-serie".into(),
+                summary: "Junta M365".into(),
+                start: EventTime::DateTime { utc: start, tzid: None },
+                end: EventTime::DateTime { utc: start + chrono::Duration::hours(1), tzid: None },
+                remote_id: Some(rid.into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let json = format!(r#"{{"id":"{rid}","type":"occurrence","seriesMasterId":"m1","subject":"Junta M365"}}"#);
+        s.store().put_raw_object(iuredesk_store::PimRef::Event(id), json.as_bytes(), rid, Some("e")).unwrap();
+        id
+    };
+    let a = mk(22, "o1", &mut s);
+    let b = mk(29, "o2", &mut s);
+    s.run("nav.calendar").unwrap();
+    settle(&mut s);
+    let occ = s
+        .visible_occurrences(Zone::utc().day_start(day(19)), Zone::utc().day_start(day(31)))
+        .into_iter()
+        .find(|o| o.id == a)
+        .unwrap();
+    let mut d: EventDraft = s.draft_for(&occ).unwrap();
+    assert!(d.occurrence.is_some(), "pregunta el alcance");
+    assert_eq!(s.series_scopes(&d), &[SeriesScope::This, SeriesScope::All]);
+    d.title = "Junta M365 (toda)".into();
+    let ops_before = s.store().peek_ops(1_000).unwrap().len();
+    s.save_event_draft(&d, SeriesScope::All).unwrap();
+    let ops = s.store().peek_ops(1_000).unwrap();
+    assert_eq!(ops.len(), ops_before + 1);
+    assert_eq!(ops.last().unwrap().kind, "pim.event.series");
+    assert!(!fake.calls.lock().unwrap().iter().any(|c| c.starts_with("save:")), "la instancia no se sube");
+    for id in [a, b] {
+        assert_eq!(s.calendar_event(id).unwrap().summary, "Junta M365 (toda)");
+    }
+    s.run("undo").unwrap();
+    for id in [a, b] {
+        assert_eq!(s.calendar_event(id).unwrap().summary, "Junta M365");
+    }
+    assert_eq!(s.store().peek_ops(1_000).unwrap().last().unwrap().kind, "pim.event.series", "inverso al maestro");
+
+    // «Solo este»: se guarda la instancia (Graph la vuelve excepción) y la otra no cambia.
+    let mut d = s.draft_for(&occ).unwrap();
+    d.title = "Solo la primera".into();
+    s.save_event_draft(&d, SeriesScope::This).unwrap();
+    assert_eq!(s.calendar_event(a).unwrap().summary, "Solo la primera");
+    assert_eq!(s.calendar_event(b).unwrap().summary, "Junta M365");
+    // Un evento de CalDAV o suelto ofrece los tres.
+    let plain = s.new_event_draft(day(20).and_hms_opt(9, 0, 0).unwrap(), day(20).and_hms_opt(10, 0, 0).unwrap(), false);
+    assert_eq!(s.series_scopes(&plain.unwrap()).len(), 3);
+}

@@ -392,6 +392,28 @@ fn attendees_json(list: &[Attendee]) -> Value {
 
 /// Cuerpo de un `PATCH` con lo que cambió de `old` a `new` (vacío: nada que subir). Con
 /// `old = None` es el cuerpo completo de un `POST` de creación.
+/// R4.5: `PATCH` del maestro de una serie (`master`, el JSON de Graph) con un
+/// [`crate::series::SeriesPatch`]: textos y el horario corrido en la zona original de la serie.
+pub fn series_patch_json(master: &Value, p: &crate::series::SeriesPatch) -> Map<String, Value> {
+    let mut m = Map::new();
+    if let Some(x) = &p.summary {
+        m.insert("subject".into(), json!(x));
+    }
+    if let Some(x) = &p.location {
+        m.insert("location".into(), json!({ "displayName": x }));
+    }
+    if let Some(x) = &p.description {
+        m.insert("body".into(), json!({ "contentType": "text", "content": x }));
+    }
+    if p.shift_secs != 0 || p.duration_secs.is_some() {
+        let ev = event_from_graph(master);
+        let (s, e) = p.times(&ev.start, &ev.end);
+        m.insert("start".into(), time_json(&s));
+        m.insert("end".into(), time_json(&e));
+    }
+    m
+}
+
 pub fn event_patch(old: Option<&Event>, new: &Event) -> Map<String, Value> {
     let blank = Event::default();
     let full = old.is_none();
