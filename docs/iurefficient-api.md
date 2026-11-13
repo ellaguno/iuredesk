@@ -109,7 +109,7 @@ pdf, doc(x), odt, rtf, txt, md, hojas, presentaciones, imágenes, audio y compri
 
 | ¿Existe? | Endpoint | Notas |
 |---|---|---|
-| Sí | `POST /api/chat/global/chat` (`message, system_prompt, document_ids`) | Ya en connect (`global_chat`). Sirve hoy para redactar/resumir/analizar un correo con un `system_prompt` propio; 403 `quota_exceeded`. Variante asíncrona `/global/chat/async` + `GET /messages/<id>/stream` (SSE). |
+| Sí | `POST /api/chat/global/chat` (`message, system_prompt, document_ids`) y su variante asíncrona `/global/chat/async` + `GET /messages/<id>/stream` (SSE) + `/messages/<id>/status` | En connect 0.9 (`chat`): `ask_streaming` es lo que usa el proveedor Iurefficient (respuesta en streaming, también en el chat de caso). Siempre con `conversation_id` (`new_conversation`/`delete_conversation`): sin él la instancia usa como historial todo el chat del usuario o del caso. 403 con `quota_exceeded` → `ApiError::is_quota_exceeded` (connect 0.9.1). |
 | Sí | `POST /api/chat/cases/<id>/chat` (y `/stream`, `/async`) | Chat con el contexto del caso (RAG). |
 | Sí | `GET /api/documents/<id>/ai-options`, `POST /api/blueprints/<id>/compose`, `GET /compose-status/<task>`, `GET/POST /api/documents/<id>/commitments[/apply]` | Ya en connect (minutas y compromisos). |
 | Sí | `POST /api/cases/<id>/ai-summary` → `{summary, generated_at}` | Resumen del caso. |

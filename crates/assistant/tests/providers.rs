@@ -295,47 +295,127 @@ fn session(url: &str) -> Arc<Session> {
     Arc::new(Session::new(acc, "IureDesk-test").unwrap())
 }
 
+fn conv(id: &str) -> Reply {
+    Reply::json(201, &format!(r#"{{"conversation":{{"id":"{id}"}}}}"#))
+}
+
+fn queued(id: &str) -> Reply {
+    Reply::json(202, &format!(r#"{{"user_message":{{"id":"{id}"}},"job_id":"j"}}"#))
+}
+
+fn completed(content: &str) -> Reply {
+    let msg = serde_json::json!({"status": "completed", "assistant_message": {"id": "a", "content": content}});
+    Reply::json(200, &msg.to_string())
+}
+
+fn deleted() -> Reply {
+    Reply::json(200, r#"{"message":"ok"}"#)
+}
+
 #[tokio::test]
 async fn iurefficient_global_and_case_chat() {
     let srv = serve(vec![
-        Reply::json(200, r#"{"assistant_message":{"content":" {\"text\": \"Listo\"} "}}"#),
-        Reply::json(200, r#"{"assistant_message":{"content":"Del caso"}}"#),
+        // Global: conversación, encolar, flujo, estado final, borrar la conversación.
+        conv("c1"),
+        queued("u1"),
+        Reply::sse(&[
+            "id: 1\nevent: token\ndata: {\"text\": \"{\\\"text\\\": \"}\n\n",
+            "id: 2\nevent: token\ndata: {\"text\": \"\\\"Listo\\\"}\"}\n\n",
+            "event: done\ndata: {\"status\": \"completed\"}\n\n",
+        ]),
+        completed(" {\"text\": \"Listo\"} "),
+        deleted(),
+        // Caso: el flujo no trae fragmentos (instancia sin Redis): llega entera de una vez.
+        conv("c2"),
+        queued("u2"),
+        Reply::sse(&["event: done\ndata: {\"status\": \"completed\"}\n\n"]),
+        completed("Del caso"),
+        deleted(),
     ])
     .await;
     let p = IurefficientProvider::new(session(&srv.url));
     assert!(!p.is_external());
     let (out, evs) = collect(&p, &req("hola"), &fast_limits()).await;
     assert_eq!(out.unwrap().text, "{\"text\": \"Listo\"}");
-    assert_eq!(deltas(&evs).len(), 1);
+    assert_eq!(deltas(&evs), vec!["{\"text\": ".to_string(), "\"Listo\"}".to_string()]);
     let mut r = req("resume");
     r.case_id = Some("c-42".into());
-    assert_eq!(collect(&p, &r, &fast_limits()).await.0.unwrap().text, "Del caso");
+    let (out, evs) = collect(&p, &r, &fast_limits()).await;
+    assert_eq!(out.unwrap().text, "Del caso");
+    assert_eq!(deltas(&evs), vec!["Del caso".to_string()]);
+
     let reqs = srv.requests();
-    assert_eq!(reqs[0].path, "/api/chat/global/chat");
-    assert_eq!(reqs[0].json()["system_prompt"], "Eres útil.");
-    assert_eq!(reqs[0].json()["message"], "hola");
-    assert_eq!(reqs[1].path, "/api/chat/cases/c-42/chat");
-    assert!(reqs[1].json()["message"].as_str().unwrap().starts_with("Eres útil."));
+    let paths: Vec<String> = reqs.iter().map(|r| format!("{} {}", r.method, r.path)).collect();
+    assert_eq!(paths[0], "POST /api/chat/global/conversations");
+    assert_eq!(paths[1], "POST /api/chat/global/chat/async");
+    assert_eq!(reqs[1].json()["system_prompt"], "Eres útil.");
+    assert_eq!(reqs[1].json()["message"], "hola");
+    // Siempre en su propia conversación: si no, la instancia usa todo el chat del usuario.
+    assert_eq!(reqs[1].json()["conversation_id"], "c1");
+    assert!(paths[2].starts_with("GET /api/chat/messages/u1/stream"));
+    assert_eq!(paths[3], "GET /api/chat/messages/u1/status");
+    assert_eq!(paths[4], "DELETE /api/chat/global/conversations/c1");
+    assert_eq!(paths[5], "POST /api/chat/cases/c-42/conversations");
+    assert_eq!(paths[6], "POST /api/chat/cases/c-42/chat/async");
+    assert!(reqs[6].json()["message"].as_str().unwrap().starts_with("Eres útil."));
+    assert!(reqs[6].json().get("system_prompt").is_none());
+    assert_eq!(paths[9], "DELETE /api/chat/cases/c-42/conversations/c2");
 
     let mut bad = req("x");
     bad.case_id = Some("../admin".into());
     assert!(collect(&p, &bad, &fast_limits()).await.0.is_err());
+    assert_eq!(srv.requests().len(), 10, "un caso no válido no llega a la instancia");
 }
 
 #[tokio::test]
 async fn iurefficient_quota_terms_and_rate_limit() {
     let srv = serve(vec![
-        Reply::json(403, r#"{"error":"quota_exceeded"}"#),
+        conv("c1"),
+        Reply::json(
+            403,
+            r#"{"error":"Límite de solicitudes IA alcanzado (10/10 este mes).","quota_exceeded":"ai_requests"}"#,
+        ),
+        deleted(),
+        conv("c2"),
         Reply::json(403, r#"{"code":"terms_acceptance_required","message":"terms_acceptance_required"}"#),
+        deleted(),
+        conv("c3"),
         Reply::json(429, r#"{"error":"slow"}"#),
-        Reply::json(200, r#"{"assistant_message":{"content":"ok"}}"#),
+        deleted(),
+        // Reintento tras el 429.
+        conv("c4"),
+        queued("u4"),
+        Reply::sse(&["event: done\ndata: {\"status\": \"completed\"}\n\n"]),
+        completed("ok"),
+        deleted(),
     ])
     .await;
     let p = IurefficientProvider::new(session(&srv.url));
     let limits = fast_limits();
-    assert!(matches!(collect(&p, &req("x"), &limits).await.0, Err(AiError::Quota(_))));
+    let quota = collect(&p, &req("x"), &limits).await.0;
+    assert!(matches!(&quota, Err(AiError::Quota(m)) if m.starts_with("Límite de solicitudes IA")), "{quota:?}");
     assert!(matches!(collect(&p, &req("x"), &limits).await.0, Err(AiError::NotAvailable(_))));
     assert_eq!(collect(&p, &req("x"), &limits).await.0.unwrap().text, "ok");
+    // Cada conversación creada se borró, también las de las llamadas que fallaron.
+    let deletes = srv.requests().iter().filter(|r| r.method == "DELETE").count();
+    assert_eq!(deletes, 4);
+}
+
+#[tokio::test]
+async fn iurefficient_worker_failure_is_reported() {
+    let srv = serve(vec![
+        conv("c1"),
+        queued("u1"),
+        // La instancia no cierra el flujo si el worker falla: el latido hace consultar el estado.
+        Reply::sse(&["id: 1\nevent: token\ndata: {\"text\": \"Emp\"}\n\n", ": latido\n\n"]),
+        Reply::json(200, r#"{"status":"failed","message":{"id":"u1","error_message":"modelo caído"}}"#),
+        deleted(),
+    ])
+    .await;
+    let p = IurefficientProvider::new(session(&srv.url));
+    let (out, evs) = collect(&p, &req("hola"), &fast_limits()).await;
+    assert!(matches!(&out, Err(AiError::Network(m)) if m.contains("modelo caído")), "{out:?}");
+    assert_eq!(deltas(&evs), vec!["Emp".to_string()]);
 }
 
 struct FakeTokens(AtomicU32);

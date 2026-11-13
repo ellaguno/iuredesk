@@ -67,7 +67,7 @@ iuredesk-html-view = { path = "crates/html-view" }
 iuredesk-ui = { path = "crates/ui" }
 
 # suite Iurefficient (repos hermanos)
-iurefficient-connect = { git = "https://github.com/ellaguno/iurefficient-connect", tag = "v0.8.0", default-features = false }
+iurefficient-connect = { git = "https://github.com/ellaguno/iurefficient-connect", tag = "v0.9.1", default-features = false }
 # ui-kit compartido con IureProject (PLAN.md D11). Para desarrollo local: [patch] en .cargo/config.toml.
 iurefficient-ui = { git = "https://github.com/ellaguno/iurefficient-ui", branch = "main" }
 
@@ -116,10 +116,10 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 webpki-roots = "1"
 base64 = "0.22"
 md-5 = "0.10"
-# oauth: azar para PKCE, abrir el navegador del sistema, URL, cancelación (Rust puro)
 # ews: NTLMv2 propio (MS-NLMP) para Exchange local
 md4 = "0.10"
 hmac = "0.12"
+# oauth: azar para PKCE, abrir el navegador del sistema, URL, cancelación (Rust puro)
 getrandom = "0.2"
 open = "5"
 url = "2"

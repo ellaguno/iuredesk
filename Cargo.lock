@@ -3578,6 +3578,7 @@ dependencies = [
 name = "iuredesk-assistant"
 version = "0.1.0-alpha.13"
 dependencies = [
+ "anyhow",
  "chrono",
  "chrono-tz",
  "iuredesk-accounts",
@@ -4053,8 +4054,8 @@ dependencies = [
 
 [[package]]
 name = "iurefficient-connect"
-version = "0.8.0"
-source = "git+https://github.com/ellaguno/iurefficient-connect?tag=v0.8.0#778a99e8db76ddcbfe3a5159d18b4e9f5800636c"
+version = "0.9.1"
+source = "git+https://github.com/ellaguno/iurefficient-connect?tag=v0.9.1#94a91d47ad991890a63d2b184e40da86aa998cd6"
 dependencies = [
  "anyhow",
  "bytes",
