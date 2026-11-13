@@ -521,7 +521,7 @@ impl Provider for CalDav {
                     self.push_delete(ctx, CollectionRef::TaskList(*list), href, etag.as_deref()).await
                 }
                 // Solo Microsoft 365: en CalDAV la serie se edita en su propio objeto.
-                PimOp::PatchSeries { .. } => Ok(()),
+                PimOp::PatchSeries { .. } | PimOp::SplitSeries { .. } | PimOp::UndoSplitSeries { .. } => Ok(()),
                 PimOp::DeleteContact { book, href, etag } => {
                     self.push_delete(ctx, CollectionRef::AddressBook(*book), href, etag.as_deref()).await
                 }

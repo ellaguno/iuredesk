@@ -606,3 +606,105 @@ async fn graph_whole_series_patches_the_master() {
     assert_eq!(p["subject"], "Junta semanal");
     assert_eq!(p["start"]["dateTime"], "2026-11-09T16:00:00");
 }
+
+/// R4.5: «este y los siguientes» en una serie de Microsoft 365: la serie original termina el día
+/// antes de la aparición (`range` → `endDate`), se crea la serie nueva desde ella con el cambio y
+/// lo que quedaba de `COUNT`; deshacer devuelve la regla y borra la serie nueva.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn graph_this_and_following_splits_the_series() {
+    let state = Arc::new(Mutex::new(G::default()));
+    {
+        let mut g = state.lock().unwrap();
+        for (id, d) in [("e1", 9), ("e2", 16)] {
+            let mut v = ev(id, "Junta semanal", d);
+            if let Value::Object(m) = &mut v {
+                m.insert("type".into(), json!("occurrence"));
+                m.insert("seriesMasterId".into(), json!("m1"));
+            }
+            g.events.insert(id.into(), v);
+            g.bump(id);
+        }
+        // Maestro: lunes 16:00 (Romance Standard Time) desde el 2 de noviembre, seis veces.
+        let mut m = ev("m1", "Junta semanal", 2);
+        if let Value::Object(o) = &mut m {
+            o.insert("type".into(), json!("seriesMaster"));
+            o.insert(
+                "start".into(),
+                json!({"dateTime": "2026-11-02T16:00:00.0000000", "timeZone": "Romance Standard Time"}),
+            );
+            o.insert(
+                "end".into(),
+                json!({"dateTime": "2026-11-02T17:00:00.0000000", "timeZone": "Romance Standard Time"}),
+            );
+            o.insert(
+                "recurrence".into(),
+                json!({
+                    "pattern": {"type": "weekly", "interval": 1, "daysOfWeek": ["monday"], "firstDayOfWeek": "monday"},
+                    "range": {"type": "numbered", "startDate": "2026-11-02", "numberOfOccurrences": 6}
+                }),
+            );
+        }
+        g.events.insert("m1".into(), m);
+        g.events.insert("e3".into(), ev("e3", "Café", 7));
+        g.bump("e3");
+    }
+    let h = Arc::clone(&state);
+    let base = serve(move |req| route(&h, req)).await;
+    state.lock().unwrap().base = base.clone();
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
+    let pim = PimAccount {
+        account: account(),
+        source: PimSource::Graph { base_url: format!("{base}/v1.0") },
+        tasks_api: None,
+        calendar_api: None,
+    };
+    let opts = PimSyncOptions {
+        poll_interval: Duration::from_secs(3600),
+        sync_on_start: false,
+        user_tz: chrono_tz::Europe::Paris,
+        ..Default::default()
+    };
+    let tokens: Arc<dyn TokenProvider> = Arc::new(FakeTokens);
+    let handle =
+        PimSyncEngine::start(Arc::clone(&store), vec![pim], Some(tokens), Arc::new(MemoryStore::default()), opts);
+    handle.sync_now_wait("ana-m365").await.unwrap();
+    let cal = store.calendars().unwrap().remove(0);
+    let evs = store.events_in_calendar(cal.id).unwrap();
+    let first = evs.iter().find(|e| e.remote_id.as_deref() == Some("e1")).unwrap().clone();
+    let second = evs.iter().find(|e| e.remote_id.as_deref() == Some("e2")).unwrap().clone();
+    let mut edited = second.clone();
+    edited.summary = "Junta (nueva etapa)".into();
+    let (token, before) = iuredesk_pim_sync::ops::split_graph_series(&store, &second, &edited, "m1").unwrap().unwrap();
+    assert_eq!(before.len(), 1, "solo esta y las siguientes");
+    assert_eq!(store.get_event(second.id).unwrap().unwrap().summary, "Junta (nueva etapa)");
+    assert_eq!(store.get_event(first.id).unwrap().unwrap().summary, "Junta semanal");
+    handle.sync_now_wait("ana-m365").await.unwrap();
+    {
+        let g = state.lock().unwrap();
+        let (id, cut) = g.patches.iter().find(|(i, p)| i == "m1" && p.get("recurrence").is_some()).expect("recorte");
+        assert_eq!(id, "m1");
+        assert_eq!(cut["recurrence"]["range"]["type"], "endDate");
+        assert_eq!(cut["recurrence"]["range"]["endDate"], "2026-11-15", "el día antes de la aparición");
+        assert!(cut["recurrence"]["range"].get("numberOfOccurrences").is_none());
+        let new = g.events.get("new1").expect("serie nueva con POST");
+        assert_eq!(new["subject"], "Junta (nueva etapa)");
+        assert_eq!(new["start"]["dateTime"], "2026-11-16T16:00:00", "{}", new["start"]);
+        assert_eq!(new["start"]["timeZone"], "Europe/Paris");
+        assert_eq!(new["recurrence"]["range"]["type"], "numbered");
+        assert_eq!(new["recurrence"]["range"]["numberOfOccurrences"], 4, "quedaban 4 de 6");
+        assert_eq!(new["recurrence"]["range"]["startDate"], "2026-11-16");
+        assert_eq!(new["recurrence"]["pattern"]["daysOfWeek"], json!(["monday"]));
+    }
+    let key = iuredesk_pim_sync::ops::split_state_key(&token);
+    assert!(store.sync_state(&key).unwrap().is_some());
+    // Deshacer: la regla vuelve y la serie nueva se borra.
+    iuredesk_pim_sync::ops::undo_split_graph_series(&store, "m1", &token, &before).unwrap();
+    assert_eq!(store.get_event(second.id).unwrap().unwrap().summary, "Junta semanal");
+    handle.sync_now_wait("ana-m365").await.unwrap();
+    let g = state.lock().unwrap();
+    assert!(!g.events.contains_key("new1"), "serie nueva borrada");
+    assert_eq!(g.events["m1"]["recurrence"]["range"]["type"], "numbered");
+    assert_eq!(g.events["m1"]["recurrence"]["range"]["numberOfOccurrences"], 6);
+    assert!(store.sync_state(&key).unwrap().is_none());
+}

@@ -123,6 +123,8 @@ pub(crate) struct CalUndo {
     pub(super) sent: Vec<iuredesk_compose::OutboxId>,
     /// R4.5: series de Microsoft 365 cambiadas enteras (maestro, parche inverso, apariciones antes).
     series: Vec<(String, iuredesk_pim_sync::series::SeriesPatch, Vec<Event>)>,
+    /// R4.5: series de Microsoft 365 divididas (maestro, clave, apariciones antes).
+    splits: Vec<(String, String, Vec<Event>)>,
 }
 
 /// Invitación con lo que depende de mi calendario (se recalcula cuando cambian los datos).
@@ -399,14 +401,10 @@ impl Session {
         iuredesk_pim_sync::ops::graph_series_master(&self.store, id)
     }
 
-    /// Alcances que tiene sentido preguntar al guardar el formulario `d` (en una serie de Microsoft
-    /// 365 no hay «este y los siguientes»: Graph exigiría partir la serie).
-    pub fn series_scopes(&self, d: &EventDraft) -> &'static [SeriesScope] {
-        if d.id.is_some_and(|id| self.graph_series_master(id).is_some()) {
-            &[SeriesScope::This, SeriesScope::All]
-        } else {
-            &[SeriesScope::This, SeriesScope::ThisAndFollowing, SeriesScope::All]
-        }
+    /// Alcances que se preguntan al guardar el formulario `d` (los tres, también en las series de
+    /// Microsoft 365).
+    pub fn series_scopes(&self, _d: &EventDraft) -> &'static [SeriesScope] {
+        &[SeriesScope::This, SeriesScope::ThisAndFollowing, SeriesScope::All]
     }
 
     /// ¿Lo puedo editar? (No en calendarios de solo lectura.)
@@ -522,7 +520,11 @@ impl Session {
 
     fn finish(&mut self, text: Text, out: EditResult) -> Outcome {
         self.calendar_changed();
-        if out.undo.restore.is_empty() && out.undo.remove.is_empty() && out.undo.series.is_empty() {
+        if out.undo.restore.is_empty()
+            && out.undo.remove.is_empty()
+            && out.undo.series.is_empty()
+            && out.undo.splits.is_empty()
+        {
             return Outcome::Notice(Notice { kind: super::NoticeKind::Success, text, undo: false, secs: None });
         }
         let notice_text = text.clone();
@@ -557,14 +559,21 @@ impl Session {
         // R4.5: aparición de una serie de Microsoft 365 (Graph no trae el maestro). «Toda la serie»
         // va al maestro; lo demás edita solo esta instancia (Graph la vuelve excepción).
         if !master.is_recurring()
-            && scope == SeriesScope::All
+            && scope != SeriesScope::This
             && let Some(series) = self.graph_series_master(id)
         {
             out.undo.restore.clear();
-            if let Some((back, before)) =
-                iuredesk_pim_sync::ops::patch_graph_series(&self.store, &master, &edited, &series).map_err(pim_err)?
+            if scope == SeriesScope::All {
+                if let Some((back, before)) =
+                    iuredesk_pim_sync::ops::patch_graph_series(&self.store, &master, &edited, &series)
+                        .map_err(pim_err)?
+                {
+                    out.undo.series.push((series, back, before));
+                }
+            } else if let Some((token, before)) =
+                iuredesk_pim_sync::ops::split_graph_series(&self.store, &master, &edited, &series).map_err(pim_err)?
             {
-                out.undo.series.push((series, back, before));
+                out.undo.splits.push((series, token, before));
             }
             return Ok(out);
         }
@@ -619,6 +628,9 @@ impl Session {
             for id in &u.sent {
                 let _ = sender.outbox.cancel(*id);
             }
+        }
+        for (master, token, before) in u.splits {
+            iuredesk_pim_sync::ops::undo_split_graph_series(&self.store, &master, &token, &before).map_err(pim_err)?;
         }
         for (master, back, before) in u.series {
             iuredesk_pim_sync::ops::undo_graph_series(&self.store, &master, back, &before).map_err(pim_err)?;

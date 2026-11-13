@@ -16,6 +16,7 @@ use crate::merge;
 use crate::ops::{self, PimOp};
 use crate::provider::{BoxFuture, Ctx, Provider};
 use crate::{ConflictResolution, PimEvent};
+use iuredesk_model::EventTime;
 
 /// Ruta local de la libreta única de contactos de Graph.
 const CONTACTS_PATH: &str = "contacts";
@@ -346,6 +347,116 @@ impl Graph {
         Ok(())
     }
 
+    /// R4.5: «este y los siguientes». La serie termina el día antes de la aparición (su `range`
+    /// pasa a `endDate`) y se crea otra desde la aparición, con lo editado y lo que quedaba de la
+    /// regla (`COUNT` repartido, igual que en CalDAV). Desde la primera aparición es toda la serie.
+    async fn push_split(
+        &self,
+        ctx: &Ctx,
+        calendar: iuredesk_model::CalendarId,
+        master: &str,
+        at: &EventTime,
+        patch: &crate::series::SeriesPatch,
+        token: &str,
+    ) -> Result<()> {
+        let url = self.url(&format!("/me/events/{}", enc(master)));
+        let mjson = match self.get_json(ctx, &url).await {
+            Ok(v) => v,
+            Err(PimError::NotFound(_)) => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        let original = mjson.get("recurrence").cloned().unwrap_or(Value::Null);
+        let m_ev = gmap::event_from_graph(&mjson);
+        if original.is_null() || !m_ev.is_recurring() {
+            return Ok(());
+        }
+        // La aparición en la zona de la serie y su copia editada.
+        let at_t = match (&m_ev.start, at) {
+            (EventTime::DateTime { tzid, .. }, EventTime::DateTime { utc, .. }) => {
+                EventTime::DateTime { utc: *utc, tzid: tzid.clone() }
+            }
+            (_, t) => t.clone(),
+        };
+        let len = m_ev.end.to_utc() - m_ev.start.to_utc();
+        let at_end = match &at_t {
+            EventTime::DateTime { utc, tzid } => EventTime::DateTime { utc: *utc + len, tzid: tzid.clone() },
+            EventTime::Date(d) => EventTime::Date(*d + Duration::days(len.num_days().max(1))),
+        };
+        let mut edited = m_ev.clone();
+        if let Some(x) = &patch.summary {
+            edited.summary = x.clone();
+        }
+        if let Some(x) = &patch.location {
+            edited.location = x.clone();
+        }
+        if let Some(x) = &patch.description {
+            edited.description = x.clone();
+        }
+        let (s, e) = patch.times(&at_t, &at_end);
+        edited.start = s;
+        edited.end = e;
+        let (head, tail) = crate::series::split_series(&m_ev, &at_t, &edited, ctx.opts.user_tz)?;
+        if head.is_none() {
+            return self.push_series(ctx, master, patch).await;
+        }
+        // Fin de la serie original: el día anterior a la aparición, en la zona de la serie.
+        let local_day = match &at_t {
+            EventTime::Date(d) => *d,
+            EventTime::DateTime { utc, tzid } => match tzid.as_deref().and_then(|z| z.parse::<chrono_tz::Tz>().ok()) {
+                Some(z) => utc.with_timezone(&z).date_naive(),
+                None => utc.date_naive(),
+            },
+        };
+        let Some(last_day) = local_day.pred_opt() else { return Ok(()) };
+        let mut cut = original.clone();
+        if let Some(Value::Object(r)) = cut.get_mut("range") {
+            r.insert("type".into(), json!("endDate"));
+            r.insert("endDate".into(), json!(last_day.format("%Y-%m-%d").to_string()));
+            r.remove("numberOfOccurrences");
+        }
+        let resp = self.request(ctx, Method::PATCH, &url, Some(&json!({ "recurrence": cut })), None).await?;
+        if !resp.status.is_success() {
+            return Err(Self::error(&resp, "serie"));
+        }
+        // La serie nueva.
+        let Some(cal) = ctx.store.get_calendar(calendar)? else { return Ok(()) };
+        let body = gmap::event_patch(None, &tail);
+        let post = self.url(&format!("/me/calendars/{}/events", enc(&cal.remote_path)));
+        let resp = self.request(ctx, Method::POST, &post, Some(&Value::Object(body)), None).await?;
+        if !resp.status.is_success() {
+            // Sin la serie nueva: se devuelve la regla para no perder las apariciones.
+            let _ = self.request(ctx, Method::PATCH, &url, Some(&json!({ "recurrence": original })), None).await;
+            return Err(Self::error(&resp, "serie"));
+        }
+        let created = resp.body.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+        let state = json!({ "created": created, "recurrence": original });
+        ctx.store.put_sync_state(&ops::split_state_key(token), state.to_string().as_bytes())?;
+        Ok(())
+    }
+
+    /// Deshace [`Graph::push_split`]: la regla original vuelve al maestro y se borra la serie nueva.
+    async fn push_unsplit(&self, ctx: &Ctx, master: &str, token: &str) -> Result<()> {
+        let key = ops::split_state_key(token);
+        let Some(raw) = ctx.store.sync_state(&key)? else { return Ok(()) };
+        let state: Value = serde_json::from_slice(&raw).unwrap_or(Value::Null);
+        if let Some(rec) = state.get("recurrence").filter(|r| !r.is_null()) {
+            let url = self.url(&format!("/me/events/{}", enc(master)));
+            let resp = self.request(ctx, Method::PATCH, &url, Some(&json!({ "recurrence": rec })), None).await?;
+            if !resp.status.is_success() && resp.status != StatusCode::NOT_FOUND {
+                return Err(Self::error(&resp, "serie"));
+            }
+        }
+        if let Some(created) = state.get("created").and_then(Value::as_str).filter(|c| !c.is_empty()) {
+            let url = self.url(&format!("/me/events/{}", enc(created)));
+            let resp = self.request(ctx, Method::DELETE, &url, None, None).await?;
+            if !resp.status.is_success() && resp.status != StatusCode::NOT_FOUND {
+                return Err(Self::error(&resp, "serie"));
+            }
+        }
+        ctx.store.delete_sync_state(&key)?;
+        Ok(())
+    }
+
     async fn resolve_event(&self, ctx: &Ctx, local: Event, base: Option<Event>) -> Result<()> {
         let store = &ctx.store;
         let r = PimRef::Event(local.id);
@@ -622,6 +733,10 @@ impl Provider for Graph {
             match op {
                 PimOp::PutEvent { event } => self.push_event(ctx, *event).await,
                 PimOp::PatchSeries { master, patch, .. } => self.push_series(ctx, master, patch).await,
+                PimOp::SplitSeries { calendar, master, at, patch, token } => {
+                    self.push_split(ctx, *calendar, master, at, patch, token).await
+                }
+                PimOp::UndoSplitSeries { master, token, .. } => self.push_unsplit(ctx, master, token).await,
                 PimOp::Rsvp { event, partstat, comment } => {
                     self.push_rsvp(ctx, *event, partstat, comment.as_deref()).await
                 }

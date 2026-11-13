@@ -307,7 +307,7 @@ fn graph_series_occurrence_scopes() {
         .unwrap();
     let mut d: EventDraft = s.draft_for(&occ).unwrap();
     assert!(d.occurrence.is_some(), "pregunta el alcance");
-    assert_eq!(s.series_scopes(&d), &[SeriesScope::This, SeriesScope::All]);
+    assert_eq!(s.series_scopes(&d).len(), 3);
     d.title = "Junta M365 (toda)".into();
     let ops_before = s.store().peek_ops(1_000).unwrap().len();
     s.save_event_draft(&d, SeriesScope::All).unwrap();
@@ -323,6 +323,17 @@ fn graph_series_occurrence_scopes() {
         assert_eq!(s.calendar_event(id).unwrap().summary, "Junta M365");
     }
     assert_eq!(s.store().peek_ops(1_000).unwrap().last().unwrap().kind, "pim.event.series", "inverso al maestro");
+
+    // «Este y los siguientes»: esta y las posteriores cambian en local; se encola la división.
+    let mut d = s.draft_for(&occ).unwrap();
+    d.title = "Nueva etapa".into();
+    s.save_event_draft(&d, SeriesScope::ThisAndFollowing).unwrap();
+    assert_eq!(s.store().peek_ops(1_000).unwrap().last().unwrap().kind, "pim.event.split");
+    assert_eq!(s.calendar_event(a).unwrap().summary, "Nueva etapa");
+    assert_eq!(s.calendar_event(b).unwrap().summary, "Nueva etapa");
+    s.run("undo").unwrap();
+    assert_eq!(s.calendar_event(b).unwrap().summary, "Junta M365");
+    assert_eq!(s.store().peek_ops(1_000).unwrap().last().unwrap().kind, "pim.event.unsplit");
 
     // «Solo este»: se guarda la instancia (Graph la vuelve excepción) y la otra no cambia.
     let mut d = s.draft_for(&occ).unwrap();

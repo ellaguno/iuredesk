@@ -109,6 +109,19 @@ pub enum PimOp {
         /// Qué cambia.
         patch: crate::series::SeriesPatch,
     },
+    /// R4.5: «este y los siguientes» en una serie de Microsoft 365: la serie `master` termina el
+    /// día antes de la aparición `at` y nace otra desde ella con `patch` aplicado.
+    SplitSeries {
+        calendar: CalendarId,
+        master: String,
+        /// Inicio original de la aparición.
+        at: iuredesk_model::EventTime,
+        patch: crate::series::SeriesPatch,
+        /// Clave para deshacer (`sync_state`: la serie creada y la regla original).
+        token: String,
+    },
+    /// Deshace un [`PimOp::SplitSeries`]: la regla original al maestro y se borra la serie creada.
+    UndoSplitSeries { calendar: CalendarId, master: String, token: String },
 }
 
 impl PimOp {
@@ -123,6 +136,8 @@ impl PimOp {
             Self::PutTask { .. } => "pim.task.put",
             Self::DeleteTask { .. } => "pim.task.delete",
             Self::PatchSeries { .. } => "pim.event.series",
+            Self::SplitSeries { .. } => "pim.event.split",
+            Self::UndoSplitSeries { .. } => "pim.event.unsplit",
         }
     }
 
@@ -364,6 +379,68 @@ pub fn patch_graph_series(
     }
     enqueue(store, acct, &PimOp::PatchSeries { calendar: old.calendar, master: master.to_string(), patch })?;
     Ok(Some((back, before)))
+}
+
+/// Clave de `sync_state` de un [`PimOp::SplitSeries`] (serie creada y regla original).
+pub fn split_state_key(token: &str) -> String {
+    format!("graph-split/{}", token.chars().take(200).collect::<String>())
+}
+
+/// R4.5: «este y los siguientes» desde una aparición de Microsoft 365: encola la división y
+/// aplica el cambio en local a esta aparición y las siguientes de la serie. Devuelve la clave y
+/// cómo estaban (para deshacer), o `None` si no hay serie.
+pub fn split_graph_series(
+    store: &Store,
+    old: &Event,
+    edited: &Event,
+    master: &str,
+) -> Result<Option<(String, Vec<Event>)>> {
+    let (acct, read_only) = calendar_account(store, old.calendar)?;
+    if read_only {
+        return Err(PimError::ReadOnly);
+    }
+    let (patch, _) = crate::series::SeriesPatch::between(old, edited);
+    let from = old.start.to_utc();
+    let mut before = Vec::new();
+    for mut e in store.events_in_calendar(old.calendar)?.into_iter().take(5_000) {
+        if e.start.to_utc() < from || graph_series_master(store, e.id).as_deref() != Some(master) {
+            continue;
+        }
+        before.push(e.clone());
+        patch.apply(&mut e, old);
+        store.put_event(&e)?;
+    }
+    if before.is_empty() {
+        return Ok(None);
+    }
+    let token = new_uid("split");
+    enqueue(
+        store,
+        acct,
+        &PimOp::SplitSeries {
+            calendar: old.calendar,
+            master: master.to_string(),
+            at: old.start.clone(),
+            patch,
+            token: token.clone(),
+        },
+    )?;
+    Ok(Some((token, before)))
+}
+
+/// Deshace [`split_graph_series`].
+pub fn undo_split_graph_series(store: &Store, master: &str, token: &str, before: &[Event]) -> Result<()> {
+    let Some(first) = before.first() else { return Ok(()) };
+    let (acct, _) = calendar_account(store, first.calendar)?;
+    for e in before {
+        store.put_event(e)?;
+    }
+    enqueue(
+        store,
+        acct,
+        &PimOp::UndoSplitSeries { calendar: first.calendar, master: master.to_string(), token: token.to_string() },
+    )?;
+    Ok(())
 }
 
 /// Deshace [`patch_graph_series`]: el parche inverso al servidor y las apariciones como estaban.
