@@ -268,6 +268,33 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::View,
         "iurefficient context sidebar collapse panel contexto plegar ocultar",
     ),
+    // R4.1: tamaño del texto de toda la app (fuera del correo, Ctrl +/−/0) y paso entre paneles.
+    c(
+        "view.text_bigger",
+        "Larger text",
+        "Texto más grande",
+        "zoom-in",
+        Group::View,
+        "text size bigger larger texto tamaño",
+    ),
+    c(
+        "view.text_smaller",
+        "Smaller text",
+        "Texto más pequeño",
+        "zoom-out",
+        Group::View,
+        "text size smaller texto tamaño",
+    ),
+    c(
+        "view.text_reset",
+        "Normal text size",
+        "Tamaño de texto normal",
+        "fit",
+        Group::View,
+        "text size reset texto tamaño",
+    ),
+    c("view.next_pane", "Next pane", "Panel siguiente", "chevron_right", Group::View, "pane focus f6 panel foco"),
+    c("view.prev_pane", "Previous pane", "Panel anterior", "chevron_left", Group::View, "pane focus f6 panel foco"),
     c("view.zoom_in", "Zoom in message", "Acercar el mensaje", "zoom-in", Group::View, "zoom bigger larger text"),
     c("view.zoom_out", "Zoom out message", "Alejar el mensaje", "zoom-out", Group::View, "zoom smaller text"),
     c(
@@ -594,6 +621,8 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
     let common = match id {
         "app.palette" => Some(Chord::cmd("K")),
         "help.guide" => Some(Chord::key("F1")),
+        "view.next_pane" => Some(Chord::key("F6")),
+        "view.prev_pane" => Some(Chord::shift("F6")),
         "ai.compose" => Some(Chord::cmd("J")),
         // «A» de asistente; Ctrl+Mayús+I ya es el panel de contexto del correo.
         "ai.panel" => Some(Chord::cmd_shift("A")),

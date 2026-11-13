@@ -202,3 +202,47 @@ fn app_specific_color_pairs_meet_wcag_aa() {
     }
     assert!(low.is_empty(), "contraste bajo:\n{}", low.join("\n"));
 }
+
+/// R4.1: F6 recorre los paneles (búsqueda, lista, lectura) y Mayús+F6 vuelve; Ctrl +/−/0 fuera
+/// del correo cambia el tamaño del texto guardado (en el correo sigue siendo el zoom del mensaje).
+#[test]
+fn f6_cycles_panes_and_ctrl_plus_scales_text() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    let _ = h.state_mut().session.run("nav.mail");
+    let first = h.state().session.rows().first().map(|r| r.id).unwrap();
+    h.state_mut().session.set_selection(vec![first], Some(first));
+    settle(&mut h);
+    assert!(h.state().pane_count() >= 3, "búsqueda, lista y lectura: {}", h.state().pane_count());
+    let focused = |h: &Harness<'_, DeskApp>| h.ctx.memory(|m| m.focused());
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        h.key_press(egui::Key::F6);
+        settle(&mut h);
+        let f = focused(&h).expect("F6 da el foco a un panel");
+        assert!(!seen.contains(&f), "cada F6 va a otro panel: {f:?} {seen:?}");
+        seen.push(f);
+    }
+    h.key_press(egui::Key::F6);
+    settle(&mut h);
+    assert_eq!(focused(&h), seen.first().copied(), "vuelve al primero");
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F6);
+    settle(&mut h);
+    assert_eq!(focused(&h), seen.last().copied(), "Mayús+F6 retrocede");
+
+    // Tamaño del texto fuera del correo.
+    h.key_press(egui::Key::Escape);
+    let _ = h.state_mut().session.run("nav.calendar");
+    settle(&mut h);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Plus);
+    settle(&mut h);
+    assert_eq!(h.state().session.prefs.text_scale_pct, 105);
+    // Un solo paso (el tamaño del texto es el factor de zoom; el de egui no se suma encima).
+    assert!((h.ctx.zoom_factor() - 1.05).abs() < 1e-4, "{}", h.ctx.zoom_factor());
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Num0);
+    settle(&mut h);
+    assert_eq!(h.state().session.prefs.text_scale_pct, 100);
+    assert!((h.ctx.zoom_factor() - 1.0).abs() < 1e-4);
+}

@@ -25,6 +25,8 @@ Generated from IureDesk's commands; don't edit by hand. Choose the scheme in Set
 |---|---|---|---|
 | Focused reading | `F11` | `F11` | `F11` |
 | Show / hide the context panel | `Ctrl+Shift+I` | `Ctrl+Shift+I` | `Ctrl+Shift+I` |
+| Next pane | `F6` | `F6` | `F6` |
+| Previous pane | `Shift+F6` | `Shift+F6` | `Shift+F6` |
 | Zoom in message | `Ctrl++` | `Ctrl++` | `Ctrl++` |
 | Zoom out message | `Ctrl+-` | `Ctrl+-` | `Ctrl+-` |
 | Reset message zoom | `Ctrl+0` | `Ctrl+0` | `Ctrl+0` |

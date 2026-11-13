@@ -38,6 +38,9 @@ necesita Iurefficient; si lo usas, IureDesk lo conecta con tu correo.
   «archivar», «nuevo evento», «tema oscuro»… La paleta muestra el atajo de cada acción.
 - **Deshacer siempre.** Archivar, eliminar, mover, marcar o completar se deshace con `Ctrl+Z` (`Z`
   con los atajos de Gmail) o con el botón «Deshacer» del aviso.
+- **Teclado.** `F6` lleva el foco al panel siguiente (búsqueda, lista, mensaje) y `Mayús+F6` al
+  anterior. `Ctrl` + `+`/`-`/`0` cambia el tamaño del texto de toda la app (en el correo, el del
+  mensaje); también en Ajustes → Apariencia.
 - **Sin conexión.** Todo lo que ya bajó se lee sin internet. Lo que hagas sin conexión queda en
   cola y se manda solo al volver.
 

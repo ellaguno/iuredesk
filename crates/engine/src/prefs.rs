@@ -349,6 +349,8 @@ fn default_text_scale() -> u32 {
 
 /// Tamaños de texto aceptados (%).
 pub const TEXT_SCALE_RANGE: std::ops::RangeInclusive<u32> = 90..=130;
+/// Paso del tamaño del texto (el del deslizador de Ajustes).
+pub const TEXT_SCALE_STEP: u32 = 5;
 
 impl Prefs {
     /// Tamaño del texto acotado a [`TEXT_SCALE_RANGE`], como factor (1.0 = 100 %).
@@ -360,6 +362,19 @@ impl Prefs {
     /// Zoom del cuerpo acotado, como factor (1.0 = 100 %).
     pub fn reading_zoom(&self) -> f32 {
         self.reading_zoom_pct.clamp(*READING_ZOOM_RANGE.start(), *READING_ZOOM_RANGE.end()) as f32 / 100.0
+    }
+
+    /// R4.1: sube (`+1`), baja (`-1`) o restablece (`0`) el tamaño del texto de toda la app en
+    /// pasos de [`TEXT_SCALE_STEP`]; devuelve el nuevo %.
+    pub fn step_text_scale(&mut self, dir: i32) -> u32 {
+        let cur = self.text_scale_pct.clamp(*TEXT_SCALE_RANGE.start(), *TEXT_SCALE_RANGE.end());
+        let next = match dir.signum() {
+            0 => default_text_scale(),
+            1 => cur.saturating_add(TEXT_SCALE_STEP),
+            _ => cur.saturating_sub(TEXT_SCALE_STEP),
+        };
+        self.text_scale_pct = next.clamp(*TEXT_SCALE_RANGE.start(), *TEXT_SCALE_RANGE.end());
+        self.text_scale_pct
     }
 
     /// Sube (`+1`), baja (`-1`) o restablece (`0`) el zoom del cuerpo; devuelve el nuevo %.
@@ -541,6 +556,14 @@ mod tests {
             (100, false, ContextLayout::Auto)
         );
         let mut z = Prefs { reading_zoom_pct: 290, ..Default::default() };
+        let mut t = Prefs::default();
+        assert_eq!(t.step_text_scale(1), 105);
+        for _ in 0..20 {
+            t.step_text_scale(1);
+        }
+        assert_eq!(t.text_scale_pct, 130, "tope");
+        assert_eq!(t.step_text_scale(-1), 125);
+        assert_eq!(t.step_text_scale(0), 100);
         assert_eq!(z.step_reading_zoom(1), 300);
         assert_eq!(z.step_reading_zoom(1), 300, "tope");
         assert_eq!(z.step_reading_zoom(0), 100);

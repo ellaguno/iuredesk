@@ -25,6 +25,8 @@ Generado a partir de los comandos de IureDesk; no se edita a mano. El esquema se
 |---|---|---|---|
 | Lectura enfocada | `F11` | `F11` | `F11` |
 | Mostrar / ocultar el panel contextual | `Ctrl+Shift+I` | `Ctrl+Shift+I` | `Ctrl+Shift+I` |
+| Panel siguiente | `F6` | `F6` | `F6` |
+| Panel anterior | `Shift+F6` | `Shift+F6` | `Shift+F6` |
 | Acercar el mensaje | `Ctrl++` | `Ctrl++` | `Ctrl++` |
 | Alejar el mensaje | `Ctrl+-` | `Ctrl+-` | `Ctrl+-` |
 | Restablecer el zoom del mensaje | `Ctrl+0` | `Ctrl+0` | `Ctrl+0` |

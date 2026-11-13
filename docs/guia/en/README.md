@@ -38,6 +38,9 @@ not need Iurefficient; if you use it, IureDesk connects it to your mail.
   "archive", "new event", "dark theme"… The palette shows each action's shortcut.
 - **Always undo.** Archive, delete, move, flag or complete can be undone with `Ctrl+Z` (`Z` with
   Gmail shortcuts) or the "Undo" button in the notice.
+- **Keyboard.** `F6` moves focus to the next pane (search, list, message) and `Shift+F6` to the
+  previous one. `Ctrl` + `+`/`-`/`0` changes the text size of the whole app (in mail, the message's);
+  also in Settings → Appearance.
 - **Offline.** Everything already downloaded can be read without internet. What you do offline is
   queued and sent when you're back.
 

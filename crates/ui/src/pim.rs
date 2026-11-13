@@ -190,6 +190,7 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
                     let _ = selected;
                 },
             );
+        app.pane(out.response.id);
         if out.selection_changed
             && let Some(i) = app.pim.contact_list.selection.cursor()
             && let Some(ct) = shown.get(i).and_then(|&k| all.get(k))

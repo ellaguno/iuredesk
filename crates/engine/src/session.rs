@@ -1307,7 +1307,19 @@ impl Session {
                 }
                 Ok(Outcome::Done)
             }
-            "mail.open_window" | "view.reading_focus" | "view.context_panel" => Ok(Outcome::View(base.to_string())),
+            "mail.open_window" | "view.reading_focus" | "view.context_panel" | "view.next_pane" | "view.prev_pane" => {
+                Ok(Outcome::View(base.to_string()))
+            }
+            "view.text_bigger" | "view.text_smaller" | "view.text_reset" => {
+                let dir = match base {
+                    "view.text_bigger" => 1,
+                    "view.text_smaller" => -1,
+                    _ => 0,
+                };
+                let pct = self.prefs.step_text_scale(dir);
+                self.save_prefs();
+                Ok(Outcome::Notice(Notice::info(format!("Text size: {pct} %"), format!("Tamaño del texto: {pct} %"))))
+            }
             "view.zoom_in" | "view.zoom_out" | "view.zoom_reset" => {
                 let dir = match base {
                     "view.zoom_in" => 1,

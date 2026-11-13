@@ -370,6 +370,7 @@ fn search(app: &mut DeskApp, ui: &mut Ui, width: f32) {
     let name =
         if contacts { pick("Find a person", "Buscar una persona") } else { pick("Search mail", "Buscar en el correo") };
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, name));
+    app.pane(resp.id);
     if resp.changed() && !contacts {
         let q = app.mail.search.clone();
         if app.session.module != Module::Mail && !q.is_empty() {

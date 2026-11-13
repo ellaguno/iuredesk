@@ -109,6 +109,10 @@ pub struct DeskApp {
     pub(crate) crash: Vec<iuredesk_engine::crash::CrashReport>,
     /// R3.2: versión nueva.
     pub(crate) update: crate::update_ui::UpdateState,
+    /// R4.1: puntos de foco de cada panel en el orden de la pantalla (F6 / Mayús+F6). Los del
+    /// cuadro anterior: los atajos se leen antes de dibujar.
+    pub(crate) panes: Vec<egui::Id>,
+    panes_prev: Vec<egui::Id>,
     pub(crate) composers: Vec<ComposeWindow>,
     next_composer: u64,
     pub settings_open: bool,
@@ -165,6 +169,8 @@ impl DeskApp {
             last_sync_error: None,
             crash: Vec::new(),
             update: Default::default(),
+            panes: Vec::new(),
+            panes_prev: Vec::new(),
             composers: Vec::new(),
             next_composer: 0,
             settings_open: false,
@@ -270,6 +276,7 @@ impl DeskApp {
 
     fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        self.panes_prev = std::mem::take(&mut self.panes);
         self.start(&ctx);
         theme::refresh(&ctx);
         self.apply_style(&ctx, false);
@@ -658,6 +665,8 @@ impl DeskApp {
             iuredesk_engine::JobOutput::Custom(Box::new(()))
         });
         self.apply_style(ctx, true);
+        // R4.1: Ctrl +/−/0 es el tamaño del texto de IureDesk (guardado), no el zoom de egui.
+        ctx.options_mut(|o| o.zoom_with_keyboard = false);
         if let Some(dir) = &self.options.crash_dir {
             self.crash = iuredesk_engine::crash::pending(dir);
         }
@@ -850,6 +859,37 @@ impl DeskApp {
     }
 
     /// Muestra un aviso (con «Deshacer» si corresponde).
+    /// R4.1: registra el punto de foco de un panel (en el orden en que se ven).
+    pub(crate) fn pane(&mut self, id: egui::Id) {
+        if !self.panes.contains(&id) && self.panes.len() < 16 {
+            self.panes.push(id);
+        }
+    }
+
+    /// R4.1: F6 / Mayús+F6 lleva el foco del teclado al panel siguiente o anterior.
+    fn cycle_pane(&mut self, ctx: &Context, forward: bool) {
+        let panes = if self.panes_prev.is_empty() { &self.panes } else { &self.panes_prev };
+        let n = panes.len();
+        if n == 0 {
+            return;
+        }
+        let cur = ctx.memory(|m| m.focused()).and_then(|f| panes.iter().position(|p| *p == f));
+        let next = match (cur, forward) {
+            (Some(i), true) => (i + 1) % n,
+            (Some(i), false) => (i + n - 1) % n,
+            (None, true) => 0,
+            (None, false) => n - 1,
+        };
+        if let Some(id) = panes.get(next).copied() {
+            ctx.memory_mut(|m| m.request_focus(id));
+        }
+    }
+
+    /// Paneles registrados en el último cuadro (pruebas).
+    pub fn pane_count(&self) -> usize {
+        self.panes.len().max(self.panes_prev.len())
+    }
+
     /// R3.2: aviso de versión nueva con «Ver».
     pub(crate) fn push_update_toast(&mut self, sev: Severity, text: String) {
         let id = self.toasts.push(sev, text, Some(pick("See", "Ver")), 20.0);
@@ -919,6 +959,8 @@ impl DeskApp {
             Outcome::Assist(id) => crate::assistant::command(self, ctx, &id),
             Outcome::Confirm { text, yes, command } => self.confirm = Some((text, yes, command)),
             Outcome::Rules(id) => crate::rules_ui::command(self, ctx, &id),
+            Outcome::View(id) if id == "view.next_pane" => self.cycle_pane(ctx, true),
+            Outcome::View(id) if id == "view.prev_pane" => self.cycle_pane(ctx, false),
             Outcome::View(id) => crate::mail::view_command(self, ctx, &id),
         }
     }
@@ -943,15 +985,21 @@ impl DeskApp {
                 let key = if *key == Key::Equals { Key::Plus } else { *key };
                 for (cmd, chord) in command::bindings(scheme) {
                     if cmd == "app.palette"
-                        || (typing && !chord.has_modifier())
+                        // Las teclas de función (F1, F6, F11) valen también escribiendo.
+                        || (typing && !chord.has_modifier() && !is_function_key(chord.key))
                         || (cmd.starts_with("cal.") && !in_calendar)
-                        // El zoom del mensaje solo en el correo (en lo demás, el de egui).
-                        || (cmd.starts_with("view.zoom") && !in_mail)
                         || ((cmd == "mail.open_window" || cmd == "view.reading_focus") && !in_mail)
                     {
                         continue;
                     }
                     if chord_matches(&chord, key, *modifiers) {
+                        // El zoom del mensaje solo en el correo; en lo demás, el tamaño del texto.
+                        let cmd = match cmd {
+                            "view.zoom_in" if !in_mail => "view.text_bigger",
+                            "view.zoom_out" if !in_mail => "view.text_smaller",
+                            "view.zoom_reset" if !in_mail => "view.text_reset",
+                            c => c,
+                        };
                         fire = Some(cmd);
                         consumed = Some(idx);
                         break;
@@ -1241,6 +1289,11 @@ impl DeskApp {
             self.run(ctx, &id);
         }
     }
+}
+
+/// `F1`…`F12`: no escriben nada, así que sus atajos no estorban en un campo de texto.
+fn is_function_key(key: &str) -> bool {
+    key.strip_prefix('F').is_some_and(|n| !n.is_empty() && n.len() <= 2 && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Cambia el idioma del ui-kit y del motor a la vez.

@@ -799,7 +799,7 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
     let list_label = format!("{} {}", pick("Messages in", "Mensajes de"), app.session.folder_title());
     let hover = ctx.pointer_hover_pos();
     let mut badge_tip: Option<String> = None;
-    let DeskApp { session, mail, .. } = app;
+    let DeskApp { session, mail, panes, .. } = app;
     let rows_for_key = std::sync::Arc::clone(&rows);
     let key_of = move |i: usize| rows_for_key.get(i).map_or(u64::MAX - i as u64, |r| r.id.get());
     let mut lv = ListView::new("mail-list", &mut mail.columns, rows.len()).label(list_label);
@@ -975,6 +975,10 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
     });
     if let Some(tip) = badge_tip {
         out.response.clone().on_hover_text_at_pointer(tip);
+    }
+    // R4.1: la lista es un panel de F6.
+    if !panes.contains(&out.response.id) {
+        panes.push(out.response.id);
     }
     if out.selection_changed {
         let ids: Vec<MessageId> = mail.list.selection.keys().map(MessageId).collect();
@@ -1165,6 +1169,16 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCar
     else {
         return;
     };
+    // R4.1: el panel de lectura es un punto de F6 con nombre para el lector de pantalla y anillo
+    // de foco (los controles de dentro siguen recibiendo los clics: este área no los toma).
+    let pane_id = ui.scope_id().with("reading-pane");
+    let pane = ui.interact(ui.max_rect(), pane_id, egui::Sense::focusable_noninteractive());
+    let pane_name = format!("{} {subject}", pick("Message:", "Mensaje:"));
+    pane.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Document, true, pane_name.clone()));
+    if pane.has_focus() {
+        ui.painter().rect_stroke(pane.rect.shrink(1.0), 4.0, egui::Stroke::new(2.0, c.focus), egui::StrokeKind::Inside);
+    }
+    app.pane(pane_id);
     let (base, _) = iuredesk_model::normalize_subject(&subject);
     let mut view_cmd: Option<&'static str> = None;
     ui.horizontal_top(|ui| {
