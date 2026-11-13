@@ -132,9 +132,9 @@ artefactos de la ejecución.
 **Por qué no es borrador ni preliminar**: iureapps busca la versión con
 `GET /repos/ellaguno/iuredesk/releases/latest`, y GitHub excluye de ahí los borradores y los
 marcados como *prerelease*; con cualquiera de los dos iureapps diría «sin versiones publicadas». Por
-eso el release sale normal y marcado como `--latest`; que es alfa lo dicen la versión
-(`0.1.0-alpha.N`), el título «(alfa)» y el catálogo de iureapps (sección experimental, nota
-«Versión alfa.»). `latest.json` (formato del actualizador de Tauri) es la alternativa que usa
+eso el release sale normal y marcado como `--latest`; la fase la dicen la versión
+(`0.1.0-alpha.N`, `0.1.0-beta.N`, `-rc.N`), el título que `release.yml` arma con ella («(alfa)»,
+«(beta)», «(candidata)») y el catálogo de iureapps (sección y nota de la fase, en su repositorio). `latest.json` (formato del actualizador de Tauri) es la alternativa que usa
 iureapps cuando la API limita las consultas anónimas.
 
 1. Subir `version` en `[workspace.package]` de `Cargo.toml` (y la `<release>` del metainfo) y pasar

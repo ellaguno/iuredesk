@@ -340,15 +340,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # La fase sale de la etiqueta: v0.1.0-alpha.N → alfa, -beta.N → beta, -rc.N → candidata.
+          case "$GITHUB_REF_NAME" in
+            *-alpha*) FASE="alfa"; TITULO=" (alfa)" ;;
+            *-beta*) FASE="beta"; TITULO=" (beta)" ;;
+            *-rc*) FASE="candidata"; TITULO=" (candidata)" ;;
+            *) FASE="estable"; TITULO="" ;;
+          esac
           NOTES="docs/notas/$GITHUB_REF_NAME.md"
           if [ ! -f "$NOTES" ]; then
             NOTES="$RUNNER_TEMP/notas.md"
-            printf 'IureDesk %s: versión alfa para Linux, Windows y macOS.\n\nSe instala y actualiza desde iureapps (verifica las firmas minisign `.sig` con la clave de `docs/minisign.pub`). Verifica una descarga manual con `sha256sum -c SHA256SUMS`.\n' "${GITHUB_REF_NAME#v}" > "$NOTES"
+            printf 'IureDesk %s: versión %s para Linux, Windows y macOS.\n\nSe instala y actualiza desde iureapps (verifica las firmas minisign `.sig` con la clave de `docs/minisign.pub`). Verifica una descarga manual con `sha256sum -c SHA256SUMS`.\n' "${GITHUB_REF_NAME#v}" "$FASE" > "$NOTES"
           fi
           # Ni --draft ni --prerelease: /releases/latest (lo que consulta iureapps) los ignora.
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" --latest \
-            --title "IureDesk ${GITHUB_REF_NAME#v} (alfa)" --notes-file "$NOTES"
+            --title "IureDesk ${GITHUB_REF_NAME#v}$TITULO" --notes-file "$NOTES"
       - uses: actions/upload-artifact@v4
         if: github.ref_type != 'tag'
         with:
