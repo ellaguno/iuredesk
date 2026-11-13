@@ -1251,7 +1251,9 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCar
         let n = conv.len();
         for (k, env) in conv.iter().enumerate() {
             let expanded = env.id == id || Some(env.id) == last || app.mail.expanded.contains(&env.id) || n == 1;
-            message_card(app, ui, env, expanded);
+            if message_card(app, ui, env, expanded) && !app.mail.expanded.remove(&env.id) {
+                app.mail.expanded.insert(env.id);
+            }
             if k + 1 < n {
                 ui.add_space(6.0);
                 hairline(ui);
@@ -1343,7 +1345,9 @@ fn action_bar(app: &mut DeskApp, ui: &mut Ui) {
     }
 }
 
-pub(crate) fn message_card(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope, expanded: bool) {
+/// Un mensaje de la conversación (plegado: cabecera y extracto). Devuelve `true` si se pulsó la
+/// cabecera: quien llama lo despliega o pliega en su propio estado (panel o ventana de lectura).
+pub(crate) fn message_card(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope, expanded: bool) -> bool {
     let ctx = ui.ctx().clone();
     let c = theme::colors(ui);
     let zone = app.session.zone();
@@ -1397,18 +1401,13 @@ pub(crate) fn message_card(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope
             if from_name.is_empty() { &from_addr } else { &from_name }
         ),
     );
-    if header.clicked() {
-        if app.mail.expanded.contains(&env.id) {
-            app.mail.expanded.remove(&env.id);
-        } else {
-            app.mail.expanded.insert(env.id);
-        }
-    }
+    let clicked = header.clicked();
     if !expanded {
-        return;
+        return clicked;
     }
     ui.add_space(10.0);
     message_body(app, ui, env);
+    clicked
 }
 
 fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {

@@ -31,6 +31,8 @@ pub(crate) struct ReaderWindow {
     raise: bool,
     /// Conversación (generación de la lista, mensaje, mensajes).
     conv: Option<(u64, MessageId, Vec<MessageEnvelope>)>,
+    /// Mensajes anteriores que el usuario desplegó en esta ventana.
+    expanded: std::collections::HashSet<MessageId>,
 }
 
 /// Abre `msg` en una ventana (o trae al frente la que ya lo muestra).
@@ -58,6 +60,7 @@ pub(crate) fn open(app: &mut DeskApp, msg: MessageId) {
         close: false,
         raise: false,
         conv: None,
+        expanded: Default::default(),
     });
     app.session.request_body(msg);
 }
@@ -217,6 +220,7 @@ fn act(app: &mut DeskApp, ctx: &Context, id: u64, a: Act) {
                 Some(m) => {
                     w.msg = m;
                     w.conv = None;
+                    w.expanded.clear();
                     app.session.request_body(m);
                 }
                 None => w.close = true,
@@ -367,8 +371,18 @@ fn body(app: &mut DeskApp, ui: &mut Ui, id: u64) {
     egui::ScrollArea::both().auto_shrink([false, false]).id_salt(("reader-scroll", id)).show(ui, |ui| {
         ui.set_max_width(ui.available_width());
         for (k, env) in conv.iter().enumerate() {
-            let expanded = env.id == msg || Some(env.id) == last || n == 1;
-            crate::mail::message_card(app, ui, env, expanded);
+            // Regresión (dueño 2026-11-13): la ventana no miraba los clics y un mensaje anterior de
+            // la conversación no se abría.
+            let open = |app: &DeskApp| {
+                app.mail.readers.iter().find(|w| w.id == id).is_some_and(|w| w.expanded.contains(&env.id))
+            };
+            let expanded = env.id == msg || Some(env.id) == last || n == 1 || open(app);
+            if crate::mail::message_card(app, ui, env, expanded)
+                && let Some(w) = app.mail.readers.iter_mut().find(|w| w.id == id)
+                && !w.expanded.remove(&env.id)
+            {
+                w.expanded.insert(env.id);
+            }
             if k + 1 < n {
                 ui.add_space(6.0);
                 hairline(ui);

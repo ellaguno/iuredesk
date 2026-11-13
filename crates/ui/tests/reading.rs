@@ -284,3 +284,65 @@ fn attachments_open_with_the_system_and_executables_ask_first() {
     assert_eq!(opened.len(), 2, "{opened:?}");
     assert!(opened[1].starts_with("open:") && opened[1].ends_with("setup.exe"));
 }
+
+/// Regresión (dueño 2026-11-13): en una conversación, pulsar un mensaje anterior debe abrirlo
+/// para leerlo (y volver a pulsarlo lo pliega).
+#[test]
+fn earlier_message_in_a_conversation_opens_on_click() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app_on(sample_store(dir.path())), vec2(1440.0, 900.0));
+    h.state_mut().session.set_conversations(true);
+    settle(&mut h);
+    let ids: Vec<MessageId> = h.state().session.rows().iter().take(400).map(|r| r.id).collect();
+    let (id, first) = ids
+        .into_iter()
+        .find_map(|id| {
+            let conv = h.state_mut().session.conversation(id);
+            (conv.len() >= 3).then(|| (conv.last().unwrap().id, conv[0].clone()))
+        })
+        .expect("una conversación de tres o más");
+    focus(&mut h, id);
+    let addr = first.from[0].addr.clone();
+    let opened = |h: &Harness<'_, DeskApp>| h.query_all_by_label_contains(&format!("{addr}  ·")).next().is_some();
+    assert!(!opened(&h), "empieza plegado");
+    let name = first.from[0].name.clone().filter(|n| !n.is_empty()).unwrap_or(addr.clone());
+    let label = format!("Mensaje de {name}");
+    let headers: Vec<_> = h.query_all_by_label(&label).collect();
+    assert!(!headers.is_empty(), "cabecera del mensaje anterior");
+    // Clic de ratón de verdad sobre el nombre del remitente (texto de la cabecera).
+    let header_rect = headers[0].rect();
+    let name_rect = h
+        .query_all_by_label(&name)
+        .map(|n| n.rect())
+        .find(|r| header_rect.contains_rect(*r))
+        .expect("el nombre dentro de la cabecera");
+    let at = name_rect.center();
+    h.event(egui::Event::PointerMoved(at));
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(1);
+    }
+    settle(&mut h);
+    assert!(opened(&h), "al pulsarlo se abre");
+    // Volver a pulsarlo lo pliega.
+    h.query_all_by_label(&label).next().unwrap().click();
+    settle(&mut h);
+    assert!(!opened(&h), "y se pliega");
+
+    // En la ventana de lectura propia también (antes no miraba el clic y no se abría).
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "mail.open_window");
+    settle(&mut h);
+    assert_eq!(h.state().reader_windows(), vec![id]);
+    assert!(!opened(&h));
+    h.query_all_by_label(&label).last().expect("cabecera en la ventana").click();
+    settle(&mut h);
+    assert!(opened(&h), "se abre en la ventana");
+}
