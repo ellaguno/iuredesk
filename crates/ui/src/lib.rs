@@ -18,6 +18,7 @@ mod attach_ui;
 mod calendar;
 mod compose;
 mod contact_editor;
+mod crash_ui;
 mod diagnostics;
 mod event_editor;
 mod header;
@@ -45,6 +46,7 @@ mod task_editor;
 mod today;
 mod today_bg;
 mod today_weather;
+mod update_ui;
 mod widgets;
 
 pub use app::{DeskApp, Incoming, Notifier, Options};

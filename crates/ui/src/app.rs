@@ -45,6 +45,8 @@ pub struct Options {
     pub open: Vec<String>,
     /// R1.2: lo que llega después (ver [`Incoming`]).
     pub incoming: Option<Incoming>,
+    /// R3.3: carpeta de los informes de fallos (al arrancar se ofrecen los que no se han visto).
+    pub crash_dir: Option<std::path::PathBuf>,
 }
 
 impl std::fmt::Debug for Options {
@@ -56,6 +58,7 @@ impl std::fmt::Debug for Options {
             .field("notifier", &self.notifier.is_some())
             .field("chrome", &self.chrome)
             .field("open", &self.open)
+            .field("crash_dir", &self.crash_dir)
             .finish_non_exhaustive()
     }
 }
@@ -64,6 +67,8 @@ impl std::fmt::Debug for Options {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ToastAction {
     Retry,
+    /// R3.2: ver la versión nueva.
+    OpenUpdate,
 }
 
 /// Qué lista la paleta.
@@ -76,7 +81,7 @@ enum PaletteMode {
 /// La aplicación de escritorio.
 pub struct DeskApp {
     pub session: Session,
-    options: Options,
+    pub(crate) options: Options,
     started: bool,
     pub(crate) mail: MailState,
     pub(crate) calendar: CalendarState,
@@ -98,6 +103,10 @@ pub struct DeskApp {
     pub sync_open: bool,
     /// Último error de sincronización avisado (para no repetirlo en cada cuadro).
     last_sync_error: Option<String>,
+    /// R3.3: informes de fallos sin ver (se ofrecen una vez al arrancar).
+    pub(crate) crash: Vec<iuredesk_engine::crash::CrashReport>,
+    /// R3.2: versión nueva.
+    pub(crate) update: crate::update_ui::UpdateState,
     pub(crate) composers: Vec<ComposeWindow>,
     next_composer: u64,
     pub settings_open: bool,
@@ -152,6 +161,8 @@ impl DeskApp {
             toast_actions: Vec::new(),
             sync_open: false,
             last_sync_error: None,
+            crash: Vec::new(),
+            update: Default::default(),
             composers: Vec::new(),
             next_composer: 0,
             settings_open: false,
@@ -285,7 +296,8 @@ impl DeskApp {
             || self.import.modal()
             || self.rules.modal()
             || self.attach.modal()
-            || self.today.weather.setup_open;
+            || self.today.weather.setup_open
+            || !self.crash.is_empty();
         // Escribiendo en el redactor, los atajos de la aplicación no se disparan.
         let composing = !self.composers.is_empty() && ctx.egui_wants_keyboard_input();
         if !modal && !composing {
@@ -303,6 +315,7 @@ impl DeskApp {
                 self.session.set_notes_available(yes);
             }
         }
+        crate::update_ui::tick(self);
         crate::header::show(self, ui, true);
         self.rail(ui);
         // El panel del asistente encoge el módulo en vez de taparlo.
@@ -345,6 +358,7 @@ impl DeskApp {
             crate::onboarding::modal(self, &ctx);
         }
         self.show_palette(&ctx);
+        crate::crash_ui::frame(self, &ctx);
         self.show_toasts(&ctx);
         if let Some(d) = self.session.next_deadline() {
             ctx.request_repaint_after(d.max(std::time::Duration::from_millis(16)));
@@ -424,6 +438,7 @@ impl DeskApp {
             let (_, act) = self.toast_actions.remove(pos);
             match act {
                 ToastAction::Retry => self.session.sync_now(),
+                ToastAction::OpenUpdate => crate::update_ui::open_release(self),
             }
         }
     }
@@ -641,6 +656,9 @@ impl DeskApp {
             iuredesk_engine::JobOutput::Custom(Box::new(()))
         });
         self.apply_style(ctx, true);
+        if let Some(dir) = &self.options.crash_dir {
+            self.crash = iuredesk_engine::crash::pending(dir);
+        }
     }
 
     /// Aplica la tipografía (familia, tamaño del texto y nitidez) si cambió en las preferencias.
@@ -797,6 +815,10 @@ impl DeskApp {
                         if let Ok(f) = value.downcast::<iuredesk_engine::session::FileOpened>() {
                             crate::opened::on_loaded(self, id, *f);
                         }
+                    } else if value.is::<iuredesk_engine::update::UpdateResult>() {
+                        if let Ok(r) = value.downcast::<iuredesk_engine::update::UpdateResult>() {
+                            crate::update_ui::on_result(self, *r);
+                        }
                     } else if value.is::<iuredesk_engine::weather::WeatherResult>() {
                         if let Ok(r) = value.downcast::<iuredesk_engine::weather::WeatherResult>() {
                             crate::today_weather::on_weather(self, *r);
@@ -826,6 +848,12 @@ impl DeskApp {
     }
 
     /// Muestra un aviso (con «Deshacer» si corresponde).
+    /// R3.2: aviso de versión nueva con «Ver».
+    pub(crate) fn push_update_toast(&mut self, sev: Severity, text: String) {
+        let id = self.toasts.push(sev, text, Some(pick("See", "Ver")), 20.0);
+        self.toast_actions.push((id, ToastAction::OpenUpdate));
+    }
+
     pub(crate) fn notice(&mut self, n: Notice) {
         let sev = match n.kind {
             NoticeKind::Info => Severity::Info,
@@ -873,6 +901,15 @@ impl DeskApp {
             Outcome::FocusSearch => self.mail.focus_search = true,
             Outcome::Restyle => self.apply_style(ctx, false),
             Outcome::EditEvent(d) => crate::event_editor::open(self, *d),
+            Outcome::Assist(id) if id == "app.check_updates" => crate::update_ui::check_now(self),
+            Outcome::Assist(id) if id == "help.guide" => {
+                if !crate::open_url(&iuredesk_engine::update::guide_url(lang::lang() == lang::Lang::Es)) {
+                    self.notice(Notice::error(iuredesk_engine::Text::new(
+                        "Couldn't open the guide in your browser.",
+                        "No se pudo abrir la guía en el navegador.",
+                    )));
+                }
+            }
             Outcome::Assist(id) if id.starts_with("print.") || id.starts_with("security.") => {
                 crate::security_ui::command(self, ctx, &id)
             }

@@ -357,6 +357,16 @@ fn provider(app: &mut DeskApp, ui: &mut Ui) {
                     {
                         ui.ctx().copy_text(link.clone());
                     }
+                    // R4.4: mientras Google tenga la app en modo de pruebas, la guía explica qué hacer.
+                    if issue == iuredesk_engine::onboarding::OAuthIssue::TestUser
+                        && ui.link(pick("What does this mean?", "¿Qué significa esto?")).clicked()
+                    {
+                        crate::open_url(&iuredesk_engine::update::guide_section_url(
+                            iurefficient_ui::lang::lang() == iurefficient_ui::lang::Lang::Es,
+                            "gmail-y-google-workspace",
+                            "gmail-and-google-workspace",
+                        ));
+                    }
                 });
             } else if oauth_ready {
                 if primary_button(ui, &format!("{} {who}", pick("Continue with", "Continuar con"))).clicked() {

@@ -19,6 +19,7 @@ pub mod calendar;
 pub mod command;
 pub mod compose;
 pub mod context;
+pub mod crash;
 pub mod iure;
 pub mod lang;
 pub mod migrate;
@@ -34,6 +35,7 @@ pub mod time;
 pub mod today;
 pub mod today_bg;
 pub mod today_layout;
+pub mod update;
 pub mod weather;
 
 pub use background::{JobId, JobOutput};

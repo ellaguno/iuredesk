@@ -197,6 +197,7 @@ pub(crate) fn settings_section(app: &mut DeskApp, ui: &mut Ui) {
                 .hint_text(pick("name@example.com or example.com", "nombre@ejemplo.com o ejemplo.com"))
                 .desired_width(260.0),
         );
+        crate::widgets::text_label(&r, pick("Sender or domain to allow", "Remitente o dominio a permitir"));
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button(pick("Add", "Agregar")).clicked() || enter) && !draft.trim().is_empty() {
             let v = draft.trim().to_string();

@@ -744,6 +744,8 @@ fn general(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
         app.session.save_prefs();
     }
     ui.add_space(14.0);
+    crate::update_ui::settings(app, ui);
+    ui.add_space(14.0);
     notes_folder(app, ui);
     ui.add_space(14.0);
     section_label(ui, pick("Keyboard shortcuts", "Atajos de teclado"));
@@ -1012,7 +1014,7 @@ fn typography(app: &mut DeskApp, ui: &mut Ui) {
     let mut chosen = current.clone();
     egui::Grid::new("typography").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
         ui.label(pick("Font", "Fuente"));
-        egui::ComboBox::from_id_salt("font-choice")
+        let combo = egui::ComboBox::from_id_salt("font-choice")
             .width(280.0)
             .selected_text(font_label(&current, desktop.as_deref()))
             .show_ui(ui, |ui| {
@@ -1020,6 +1022,7 @@ fn typography(app: &mut DeskApp, ui: &mut Ui) {
                     ui.selectable_value(&mut chosen, ch.clone(), font_label(ch, desktop.as_deref()));
                 }
             });
+        crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Font", "Fuente"));
         ui.end_row();
         ui.label(pick("Text size", "Tamaño del texto"));
         // Se aplica al soltar: cambiar el zoom mientras se arrastra movería el control.
@@ -1027,7 +1030,16 @@ fn typography(app: &mut DeskApp, ui: &mut Ui) {
         let saved = app.session.prefs.text_scale_pct.clamp(90, 130);
         let mut pct = ui.ctx().data(|d| d.get_temp::<u32>(drag_id)).unwrap_or(saved);
         ui.spacing_mut().slider_width = 200.0;
-        let r = ui.add(egui::Slider::new(&mut pct, 90..=130).step_by(5.0).suffix(" %"));
+        // R4.1: sin el cuadro numérico del deslizador (no tiene nombre propio); el valor va en el
+        // nombre del control y en una etiqueta.
+        let r = ui
+            .horizontal(|ui| {
+                let r = ui.add(egui::Slider::new(&mut pct, 90..=130).step_by(5.0).show_value(false));
+                ui.label(format!("{pct} %"));
+                r
+            })
+            .inner;
+        crate::widgets::named(&r, egui::Role::Slider, pick("Text size", "Tamaño del texto"));
         if r.dragged() {
             ui.ctx().data_mut(|d| d.insert_temp(drag_id, pct));
         } else if pct != saved || r.drag_stopped() {
@@ -1080,6 +1092,11 @@ fn mail(app: &mut DeskApp, ui: &mut Ui) {
             mr,
             egui::DragValue::new(&mut secs).range(0.0..=10.0).speed(0.1).fixed_decimals(1).suffix(" s"),
         );
+        crate::widgets::named(
+            &r,
+            egui::Role::SpinButton,
+            pick("Seconds before marking as read", "Segundos antes de marcar como leído"),
+        );
         if r.changed() {
             app.session.prefs.mark_read_delay_ms = (secs * 1000.0).round().clamp(0.0, 10_000.0) as u32;
             app.session.save_prefs();
@@ -1088,7 +1105,13 @@ fn mail(app: &mut DeskApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(pick("Undo send for", "Deshacer el envío durante")).color(c.text));
         let mut secs = app.session.prefs.send_undo_secs;
-        if ui.add(egui::DragValue::new(&mut secs).range(0..=30).suffix(" s")).changed() {
+        let r = ui.add(egui::DragValue::new(&mut secs).range(0..=30).suffix(" s"));
+        crate::widgets::named(
+            &r,
+            egui::Role::SpinButton,
+            pick("Seconds to undo send", "Segundos para deshacer el envío"),
+        );
+        if r.changed() {
             app.session.prefs.send_undo_secs = secs;
             send_prefs = true;
         }
@@ -1110,7 +1133,7 @@ fn mail(app: &mut DeskApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(pick("Context panel", "Panel contextual")).color(c.text));
         let cur = app.session.prefs.context_layout;
-        egui::ComboBox::from_id_salt("context-layout").selected_text(cur.label()).show_ui(ui, |ui| {
+        let combo = egui::ComboBox::from_id_salt("context-layout").selected_text(cur.label()).show_ui(ui, |ui| {
             for l in iuredesk_engine::ContextLayout::ALL {
                 if ui.selectable_label(cur == l, l.label()).clicked() && cur != l {
                     app.session.prefs.context_layout = l;
@@ -1118,6 +1141,7 @@ fn mail(app: &mut DeskApp, ui: &mut Ui) {
                 }
             }
         });
+        crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Context panel", "Panel contextual"));
     });
     muted(
         ui,

@@ -1322,6 +1322,8 @@ impl Session {
                 )))
             }
             "app.palette" => Ok(Outcome::OpenPalette),
+            // R3.2 y R4.2: los atiende la UI (consulta en segundo plano, abrir la guía).
+            "app.check_updates" | "help.guide" => Ok(Outcome::Assist(id.to_string())),
             "app.add_account" => {
                 self.wizard_begin();
                 Ok(Outcome::AddAccount)
@@ -1663,6 +1665,19 @@ impl Session {
         Some(self.bg.spawn(async move {
             let result = crate::weather::fetch_today(crate::weather::MET_API, &place, tz, now).await;
             JobOutput::Custom(Box::new(crate::weather::WeatherResult { for_place: place, result }))
+        }))
+    }
+
+    /// R3.2: busca una versión nueva de IureDesk. Responde con [`Event::Custom`] y un
+    /// [`crate::update::UpdateResult`]. `None` si está apagado en Ajustes (salvo que lo pida el
+    /// usuario) o en el buzón de ejemplo (sin red).
+    pub fn request_update_check(&mut self, manual: bool) -> Option<JobId> {
+        if self.sample || !(manual || self.prefs.update_check) {
+            return None;
+        }
+        Some(self.bg.spawn(async move {
+            let result = crate::update::check(crate::update::RELEASES_API, crate::update::CURRENT).await;
+            JobOutput::Custom(Box::new(crate::update::UpdateResult { result, manual }))
         }))
     }
 

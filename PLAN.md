@@ -296,7 +296,7 @@ Estado al 2026-10-29. El detalle de cada tarea (qué incluye, qué falta) vive e
 | **R1 · Alpha 0.1** | Licencia Apache-2.0 y repos públicos (hecho), CI verde en Linux/Windows/macOS, etiqueta `v0.1.0-alpha.1`, instaladores firmados (minisign) publicados como último release | Instalable y actualizable en los 3 SO desde iureapps |
 | **R2 · Endurecer con cuentas reales** | Ronda de pruebas del dueño (Gmail/Workspace, Outlook.com/M365, IMAP genérico, Iurefficient), rendimiento con buzones grandes, corrección de lo que aparezca | Una semana de uso diario sin bloqueos |
 | **R3 · Firma y verificación** | Firma de código macOS/Windows, verificación de la app en Google (CASA) y de editor en Microsoft, actualizaciones automáticas | Instalar sin avisos de «app no verificada» |
-| **R4 · Beta 0.x** | Accesibilidad completa, documentación de usuario, sitio de descargas | Beta pública |
+| **R4 · Beta 0.x** | Accesibilidad completa, documentación de usuario, sitio de descargas, beta cerrada mientras Google/Microsoft verifican, huecos funcionales (R4.1–R4.6 en `gaps.md`) | Beta pública |
 
 ---
 

@@ -1718,8 +1718,8 @@ pub fn settings_section(app: &mut DeskApp, ui: &mut Ui) {
         .checkbox(
             &mut bubble,
             pick(
-                "Show the floating ✦ button (the panel also opens from the header)",
-                "Mostrar el botón flotante ✦ (el panel también se abre desde la cabecera)",
+                "Show the floating assistant button (the panel also opens from the header)",
+                "Mostrar el botón flotante del asistente (el panel también se abre desde la cabecera)",
             ),
         )
         .changed()

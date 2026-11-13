@@ -287,6 +287,9 @@ pub struct Prefs {
     /// UX-15: el clima de hoy en la cabecera de «Mi día».
     #[serde(default)]
     pub weather: crate::weather::WeatherPref,
+    /// R3.2: buscar versiones nuevas de IureDesk al arrancar y cada día.
+    #[serde(default = "yes")]
+    pub update_check: bool,
 }
 
 /// UX-3: dónde se muestra el panel contextual.
@@ -415,6 +418,7 @@ impl Default for Prefs {
             microsoft_org: MicrosoftOrg::default(),
             today_layout: Default::default(),
             weather: Default::default(),
+            update_check: true,
             notes_dir: None,
             reading_width: None,
             reading_zoom_pct: default_reading_zoom(),

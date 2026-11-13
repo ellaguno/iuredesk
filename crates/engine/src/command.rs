@@ -45,8 +45,13 @@ impl Chord {
 
     /// Texto para mostrar: `Ctrl+Shift+R` (o `⌘⇧R` en macOS).
     pub fn label(&self, mac: bool) -> String {
-        let key = key_label(self.key, self.shift);
-        let shift_in_key = self.shift && key != key_label(self.key, false);
+        self.label_in(mac, crate::lang::spanish())
+    }
+
+    /// [`Chord::label`] en un idioma dado (la guía de uso se genera en los dos).
+    pub fn label_in(&self, mac: bool, spanish: bool) -> String {
+        let key = key_label(self.key, self.shift, spanish);
+        let shift_in_key = self.shift && key != key_label(self.key, false, spanish);
         if mac {
             let mut s = String::new();
             if self.ctrl {
@@ -81,7 +86,8 @@ impl Chord {
 }
 
 /// Nombre visible de una tecla de egui.
-fn key_label(key: &str, shift: bool) -> String {
+fn key_label(key: &str, shift: bool, spanish: bool) -> String {
+    let pick = |en: &'static str, es: &'static str| if spanish { es } else { en };
     match key {
         "Num0" | "Num1" | "Num2" | "Num3" | "Num4" | "Num5" | "Num6" | "Num7" | "Num8" | "Num9" => {
             let d = key.trim_start_matches("Num");
@@ -90,9 +96,9 @@ fn key_label(key: &str, shift: bool) -> String {
             }
             d.to_string()
         }
-        "Delete" => crate::lang::pick("Del", "Supr").into(),
-        "Backspace" => crate::lang::pick("Backspace", "Retroceso").into(),
-        "Insert" => crate::lang::pick("Ins", "Insert").into(),
+        "Delete" => pick("Del", "Supr").into(),
+        "Backspace" => pick("Backspace", "Retroceso").into(),
+        "Insert" => pick("Ins", "Insert").into(),
         "Enter" => "Enter".into(),
         "Escape" => "Esc".into(),
         "Slash" => "/".into(),
@@ -465,6 +471,16 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("app.palette", "Command palette", "Paleta de comandos", "search", Group::App, "commands comandos"),
     c("app.add_account", "Add account…", "Agregar cuenta…", "plus", Group::App, "account cuenta new nueva"),
     c("undo", "Undo", "Deshacer", "undo", Group::App, "undo revert deshacer"),
+    // R3.2 y R4.2 (los atiende la UI).
+    c(
+        "app.check_updates",
+        "Check for updates",
+        "Buscar actualizaciones",
+        "sync",
+        Group::App,
+        "update version actualizar versión nueva",
+    ),
+    c("help.guide", "User guide", "Guía de uso", "info", Group::App, "help manual guide ayuda guía"),
     // F4.2: asistente ✦, suite e importación (los atiende la UI: `Outcome::Assist`).
     c(
         "ai.summarize",
@@ -576,6 +592,7 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
     // Comunes a todos los esquemas.
     let common = match id {
         "app.palette" => Some(Chord::cmd("K")),
+        "help.guide" => Some(Chord::key("F1")),
         "ai.compose" => Some(Chord::cmd("J")),
         // «A» de asistente; Ctrl+Mayús+I ya es el panel de contexto del correo.
         "ai.panel" => Some(Chord::cmd_shift("A")),
@@ -671,6 +688,49 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
 /// Todos los atajos de un esquema (comando, combinación).
 pub fn bindings(scheme: ShortcutScheme) -> Vec<(&'static str, Chord)> {
     COMMANDS.iter().filter_map(|c| shortcut(c.id, scheme).map(|k| (c.id, k))).collect()
+}
+
+/// R4.2: tabla Markdown de los atajos de los tres esquemas (la guía de uso la incluye en
+/// `docs/guia/<idioma>/` y una prueba comprueba que esté al día).
+pub fn shortcuts_markdown(spanish: bool) -> String {
+    let pick = |en: &'static str, es: &'static str| if spanish { es } else { en };
+    let mut s = String::new();
+    s.push_str(pick("# Keyboard shortcuts\n\n", "# Atajos de teclado\n\n"));
+    s.push_str(pick(
+        "Generated from IureDesk's commands; don't edit by hand. Choose the scheme in Settings → \
+         General → Keyboard shortcuts. On macOS, Ctrl is ⌘. Every command is also in the command \
+         palette (Ctrl+K), which shows its shortcut.\n\n",
+        "Generado a partir de los comandos de IureDesk; no se edita a mano. El esquema se elige en \
+         Ajustes → General → Atajos de teclado. En macOS, Ctrl es ⌘. Todos los comandos están \
+         también en la paleta (Ctrl+K), que muestra su atajo.\n\n",
+    ));
+    let mut current: Option<Group> = None;
+    for c in COMMANDS {
+        let keys: Vec<Option<Chord>> = ShortcutScheme::ALL.iter().map(|sc| shortcut(c.id, *sc)).collect();
+        if keys.iter().all(Option::is_none) {
+            continue;
+        }
+        if current != Some(c.group) {
+            current = Some(c.group);
+            let title = match c.group {
+                Group::Mail => pick("Mail", "Correo"),
+                Group::Calendar => pick("Calendar", "Calendario"),
+                Group::Navigate => pick("Go to", "Ir a"),
+                Group::View => pick("View", "Vista"),
+                Group::Assistant => pick("Assistant", "Asistente"),
+                Group::App => pick("App", "Aplicación"),
+            };
+            s.push_str(&format!(
+                "\n## {title}\n\n| {} | Outlook | Gmail | Apple Mail |\n|---|---|---|---|\n",
+                pick("Command", "Comando")
+            ));
+        }
+        let cell = |k: &Option<Chord>| k.map(|k| format!("`{}`", k.label_in(false, spanish))).unwrap_or_default();
+        let name = if spanish { c.es } else { c.en };
+        let cells: Vec<String> = keys.iter().map(cell).collect();
+        s.push_str(&format!("| {} | {} |\n", name.replace('|', "\\|"), cells.join(" | ")));
+    }
+    s
 }
 
 /// El comando que dispara una combinación en un esquema.

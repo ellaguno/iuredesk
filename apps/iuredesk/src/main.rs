@@ -70,6 +70,11 @@ fn data_override() -> Option<PathBuf> {
     std::env::var_os("IUREDESK_DATA_DIR").filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
+/// R3.3: informes de fallos.
+fn crash_dir() -> PathBuf {
+    data_dir().join("crash")
+}
+
 fn data_dir() -> PathBuf {
     data_override().unwrap_or_else(|| dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("iuredesk"))
 }
@@ -271,6 +276,8 @@ fn pick_renderer() -> eframe::Renderer {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // R3.3: un pánico (de una dependencia) deja su informe para ofrecerlo al volver a abrir.
+    iuredesk_engine::crash::install(crash_dir());
     // Antes de cualquier salida: en modo MCP, stdout es solo del protocolo.
     if args.first().map(String::as_str) == Some("--mcp") {
         let sample = args.iter().any(|a| a == "--sample");
@@ -342,6 +349,7 @@ fn main() -> ExitCode {
             chrome,
             open: cli.targets,
             incoming: Some(Arc::clone(&wake.incoming)),
+            crash_dir: Some(crash_dir()),
         },
     );
 

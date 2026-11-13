@@ -366,6 +366,10 @@ fn search(app: &mut DeskApp, ui: &mut Ui, width: f32) {
         field = field.shortcut(s);
     }
     let resp = field.show(ui);
+    // R4.1: la pista no le da nombre al campo en AccessKit; sin esto el lector dice «texto».
+    let name =
+        if contacts { pick("Find a person", "Buscar una persona") } else { pick("Search mail", "Buscar en el correo") };
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, name));
     if resp.changed() && !contacts {
         let q = app.mail.search.clone();
         if app.session.module != Module::Mail && !q.is_empty() {
