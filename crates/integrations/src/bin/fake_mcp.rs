@@ -23,6 +23,8 @@ use serde_json::{Value, json};
 
 struct Fake {
     status_calls: Mutex<u32>,
+    /// Plan abierto con `file_open` (como IureProject).
+    plan: Mutex<String>,
 }
 
 fn s<'a>(a: &'a Value, k: &str) -> &'a str {
@@ -46,6 +48,8 @@ impl Handler for Fake {
             "decir",
             "preguntar_si_no",
             "dictar",
+            "file_open",
+            "project_overview",
         ];
         Value::Array(
             names
@@ -101,6 +105,29 @@ impl Handler for Fake {
             "decir" | "preguntar_si_no" | "dictar" => {
                 Err(CallError::Tool(anyhow::anyhow!("IureVoz no está abierto: ábrelo para poder hablar y escuchar")))
             }
+            // Como IureProject: abrir un plan y su resumen.
+            "file_open" => {
+                let path = s(a, "path");
+                if path.contains("roto") {
+                    return Err(CallError::Tool(anyhow::anyhow!("no es un plan válido")));
+                }
+                *self.plan.lock().unwrap_or_else(|e| e.into_inner()) = path.to_string();
+                Ok(Reply::Data(json!({"ok": true})))
+            }
+            "project_overview" => {
+                let plan = self.plan.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let name = std::path::Path::new(&plan)
+                    .file_stem()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                Ok(Reply::Data(json!({
+                    "name": name, "as_of": "2026-11-17", "finish": "2027-01-29T17:00:00", "percent_complete": 42.5,
+                    "tasks": 12, "done": 4, "in_progress": 3, "not_started": 5, "late": 1, "critical": 2,
+                    "late_tasks": [{"uid": 7, "name": "Peritaje", "finish": "2026-11-10T17:00:00", "percent_complete": 30, "critical": true}],
+                    "upcoming_milestones": [{"uid": 9, "name": "Audiencia", "finish": "2026-11-30T17:00:00", "percent_complete": 0, "critical": true}],
+                    "resources": []
+                })))
+            }
             other => Err(CallError::Params(format!("herramienta desconocida: {other}"))),
         }
     }
@@ -130,5 +157,5 @@ fn main() {
         }
         _ => {}
     }
-    std::process::exit(serve(Fake { status_calls: Mutex::new(0) }));
+    std::process::exit(serve(Fake { status_calls: Mutex::new(0), plan: Mutex::new(String::new()) }));
 }

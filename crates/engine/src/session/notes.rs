@@ -97,6 +97,19 @@ impl Session {
         self.notes_available
     }
 
+    /// S1.5: hay IureDav (lo fija la UI). Sin él, se sale de Archivos.
+    pub fn set_files_available(&mut self, yes: bool) {
+        self.files_available = yes;
+        if !yes && self.module == super::Module::Files {
+            self.module = super::Module::Today;
+        }
+    }
+
+    /// S1.5: ¿se muestra Archivos?
+    pub fn files_available(&self) -> bool {
+        self.files_available
+    }
+
     /// Nota nueva vacía (con deshacer) y enfocada.
     pub fn new_note(&mut self) -> Result<Outcome> {
         let now = self.now();

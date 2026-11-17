@@ -293,6 +293,9 @@ pub struct Prefs {
     /// S1.19: distribución de los mapas mentales que no piden una en su metadato.
     #[serde(default)]
     pub mindmap_layout: MindmapLayout,
+    /// S1.6: planes de IureProject que se siguen en «Hoy» (rutas absolutas).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<String>,
 }
 
 /// S1.19: cómo se dibujan los mapas mentales de las notas (la UI lo traduce a
@@ -468,6 +471,7 @@ impl Default for Prefs {
             weather: Default::default(),
             update_check: true,
             mindmap_layout: MindmapLayout::Right,
+            projects: Vec::new(),
             notes_dir: None,
             reading_width: None,
             reading_zoom_pct: default_reading_zoom(),

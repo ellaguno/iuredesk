@@ -73,6 +73,28 @@ fn fake_suite(app: SisterApp) -> Suite {
     Suite::empty().with_app(app, FAKE).with_mcp_options(opts(None))
 }
 
+/// S1.6: el estado de varios planes con un solo proceso; uno roto no detiene a los demás.
+#[test]
+fn resumen_de_planes_de_iureproject() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("Caso Ramírez.iurp");
+    let b = dir.path().join("roto.iurp");
+    std::fs::write(&a, b"plan").unwrap();
+    std::fs::write(&b, b"plan").unwrap();
+    let missing = dir.path().join("no-existe.iurp");
+    let s = fake_suite(SisterApp::Project);
+    let r = s.project_overviews(&[a.clone(), b, missing]).unwrap().ready().unwrap();
+    assert_eq!(r.len(), 3);
+    let o = r[0].overview.as_ref().unwrap();
+    assert_eq!((o.name.as_str(), o.percent_complete, o.late), ("Caso Ramírez", 42.5, 1));
+    assert_eq!(o.late_tasks[0].name, "Peritaje");
+    assert_eq!(o.upcoming_milestones[0].name, "Audiencia");
+    assert!(r[1].overview.as_ref().unwrap_err().es.contains("no pudo leer"), "{:?}", r[1].overview);
+    assert!(r[2].overview.as_ref().unwrap_err().es.contains("ya no está"), "{:?}", r[2].overview);
+    // Sin IureProject: invitación, no error.
+    assert!(matches!(Suite::empty().project_overviews(&[a]).unwrap(), Outcome::NotInstalled(_)));
+}
+
 #[test]
 fn transcribir_con_trabajo_en_curso() {
     let dir = tempfile::tempdir().unwrap();

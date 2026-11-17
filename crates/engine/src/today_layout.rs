@@ -16,6 +16,8 @@ pub enum TodayCard {
     Mail,
     Iurefficient,
     Reminders,
+    /// S1.6: planes de IureProject que se siguen (solo con IureProject instalado).
+    Projects,
     /// De una versión más nueva: se descarta al normalizar.
     #[serde(other)]
     Unknown,
@@ -23,8 +25,14 @@ pub enum TodayCard {
 
 impl TodayCard {
     /// Todas, en el orden por omisión.
-    pub const ALL: [TodayCard; 5] =
-        [TodayCard::Agenda, TodayCard::Tasks, TodayCard::Mail, TodayCard::Iurefficient, TodayCard::Reminders];
+    pub const ALL: [TodayCard; 6] = [
+        TodayCard::Agenda,
+        TodayCard::Tasks,
+        TodayCard::Mail,
+        TodayCard::Iurefficient,
+        TodayCard::Reminders,
+        TodayCard::Projects,
+    ];
 
     /// Nombre visible.
     pub fn label(self) -> &'static str {
@@ -34,6 +42,7 @@ impl TodayCard {
             TodayCard::Mail => pick("Mail", "Correo"),
             TodayCard::Iurefficient => "Iurefficient",
             TodayCard::Reminders => pick("Reminders", "Recordatorios"),
+            TodayCard::Projects => pick("Projects", "Proyectos"),
             TodayCard::Unknown => "",
         }
     }
@@ -62,7 +71,7 @@ impl Default for TodayLayout {
     fn default() -> Self {
         TodayLayout {
             left: vec![TodayCard::Agenda, TodayCard::Mail],
-            right: vec![TodayCard::Tasks, TodayCard::Iurefficient, TodayCard::Reminders],
+            right: vec![TodayCard::Tasks, TodayCard::Projects, TodayCard::Iurefficient, TodayCard::Reminders],
             hidden: Vec::new(),
         }
     }
@@ -178,7 +187,8 @@ mod tests {
     fn default_matches_the_original_screen() {
         let l = TodayLayout::default().normalized();
         assert_eq!(l.left, vec![TodayCard::Agenda, TodayCard::Mail]);
-        assert_eq!(l.right, vec![TodayCard::Tasks, TodayCard::Iurefficient, TodayCard::Reminders]);
+        // S1.6: «Proyectos» bajo las tareas (sin IureProject no se dibuja).
+        assert_eq!(l.right, vec![TodayCard::Tasks, TodayCard::Projects, TodayCard::Iurefficient, TodayCard::Reminders]);
         assert!(l.hidden.is_empty());
     }
 
@@ -208,11 +218,21 @@ mod tests {
         let n = l.normalized();
         assert_eq!(n.left, vec![TodayCard::Mail]);
         assert_eq!(n.hidden, vec![TodayCard::Agenda]);
-        assert_eq!(n.right, vec![TodayCard::Tasks, TodayCard::Iurefficient, TodayCard::Reminders]);
+        assert_eq!(n.right, vec![TodayCard::Tasks, TodayCard::Iurefficient, TodayCard::Reminders, TodayCard::Projects]);
+    }
+
+    #[test]
+    fn a_saved_layout_gets_the_new_projects_card_at_the_end() {
+        // S1.6: quien ya acomodó sus tarjetas ve «Proyectos» al final de la derecha.
+        let json = r#"{"left":["agenda","mail"],"right":["tasks","iurefficient","reminders"],"hidden":[]}"#;
+        let n = serde_json::from_str::<TodayLayout>(json).unwrap().normalized();
+        assert_eq!(n.right.last(), Some(&TodayCard::Projects));
+        assert_eq!(serde_json::to_string(&TodayCard::Projects).unwrap(), "\"projects\"");
     }
 
     fn card() -> impl Strategy<Value = TodayCard> {
         prop::sample::select(vec![
+            TodayCard::Projects,
             TodayCard::Agenda,
             TodayCard::Tasks,
             TodayCard::Mail,

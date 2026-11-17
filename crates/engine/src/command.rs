@@ -465,6 +465,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("nav.notes", "Go to Notes", "Ir a Notas", "notes", Group::Navigate, "notes apuntes"),
     c("nav.tasks", "Go to Tasks", "Ir a Tareas", "tasks", Group::Navigate, "todo pendientes"),
     c("nav.assistant", "Go to Assistant", "Ir al Asistente", "sparkle", Group::Navigate, "ai ia assistant"),
+    c("nav.files", "Go to Files", "Ir a Archivos", "folder", Group::Navigate, "files archivos iuredav drive unidad"),
     c("view.density.comfortable", "Density: comfortable", "Densidad: cómoda", "list", Group::View, "density"),
     c("view.density.compact", "Density: compact", "Densidad: compacta", "list", Group::View, "density"),
     c("view.density.dense", "Density: dense", "Densidad: densa", "list", Group::View, "density"),
@@ -632,6 +633,7 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
         "nav.tasks" => Some(Chord::cmd("Num4")),
         "nav.notes" => Some(Chord::cmd("Num5")),
         "nav.assistant" => Some(Chord::cmd("Num6")),
+        "nav.files" => Some(Chord::cmd("Num7")),
         // UX-3: como Outlook, Mayús+Intro abre el mensaje en su ventana; Ctrl +/−/0 es el zoom del
         // cuerpo (solo en el correo: en lo demás queda el zoom de egui).
         "mail.open_window" => Some(Chord::shift("Enter")),

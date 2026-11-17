@@ -48,6 +48,10 @@ pub enum SuiteAction {
     OpenFile(PathBuf),
     /// Abrir una app.
     Launch(SisterApp),
+    /// S1.6: estado de los planes de IureProject que se siguen (para «Hoy»).
+    ProjectOverviews(Vec<PathBuf>),
+    /// S1.6: abrir un plan en IureProject.
+    OpenProject(PathBuf),
     /// «Usar IureDesk desde Claude / Copilot».
     RegisterAgents,
     /// «Desconectar».
@@ -73,6 +77,8 @@ pub enum SuiteEvent {
     Transcript { title: String, text: String },
     /// Texto reconocido por OCR.
     OcrText { name: String, text: String },
+    /// S1.6: estado de los planes seguidos.
+    Projects(Vec<iuredesk_integrations::ProjectStatus>),
 }
 
 /// Transcripción en curso.
@@ -232,6 +238,7 @@ impl SuiteHub {
             SuiteAction::Speak(_) | SuiteAction::Dictate { .. } => Some(SisterApp::Voz),
             SuiteAction::Transcribe { file, .. } if !is_text_transcript(file) => Some(SisterApp::Transcribe),
             SuiteAction::Launch(a) => Some(*a),
+            SuiteAction::ProjectOverviews(_) | SuiteAction::OpenProject(_) => Some(SisterApp::Project),
             _ => None,
         };
         if let Some(app) = needs
@@ -293,6 +300,10 @@ impl SuiteHub {
                         "Opened in IureEditor. Changes you save there come back here.",
                         "Abierta en IureEditor. Lo que guardes allá vuelve aquí.",
                     ))
+                }),
+                SuiteAction::ProjectOverviews(files) => outcome(suite.project_overviews(&files), SuiteEvent::Projects),
+                SuiteAction::OpenProject(file) => outcome(suite.open_in_iureproject(&file), |_| {
+                    SuiteEvent::Done(Text::new("Opening the plan in IureProject", "Abriendo el plan en IureProject"))
                 }),
                 SuiteAction::Launch(app) => outcome(suite.launch(app), |_| {
                     SuiteEvent::Done(Text::new(format!("Opening {}", app.name()), format!("Abriendo {}", app.name())))

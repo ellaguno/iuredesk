@@ -124,6 +124,8 @@ pub struct DeskApp {
     pub(crate) import: crate::import_ui::ImportUi,
     /// F6.1: «Mi día».
     pub(crate) today: crate::today::TodayState,
+    /// S1.5: Archivos (unidades de IureDav).
+    pub(crate) files: crate::files::FilesState,
     /// Último lugar recordado (módulo y carpeta) para «Donde lo dejé».
     place: Option<(Module, iuredesk_engine::FolderSel)>,
     /// F5.3: reglas, posponer, seguimiento, baja de listas.
@@ -180,6 +182,7 @@ impl DeskApp {
             suite,
             import,
             today: Default::default(),
+            files: Default::default(),
             place: None,
             rules: Default::default(),
             applied: None,
@@ -282,6 +285,21 @@ impl DeskApp {
         }
     }
 
+    /// S1.6: sigue estos planes y usa este estado como si hubiera llegado de IureProject (pruebas).
+    pub fn set_projects_for_tests(
+        &mut self,
+        files: Vec<String>,
+        statuses: Vec<iuredesk_engine::iuredesk_integrations::ProjectStatus>,
+    ) {
+        self.session.prefs.projects = files;
+        crate::today_projects::set_for_tests(self, statuses);
+    }
+
+    /// S1.5: entrar a la carpeta `name` en Archivos (pruebas).
+    pub fn files_enter(&mut self, name: &str) {
+        crate::files::enter_for_tests(self, name);
+    }
+
     /// S1.24: lo mismo que pulsar un nodo con enlace de un diagrama (pruebas).
     pub fn click_note_node_link(&mut self, href: &str) {
         if let Some(id) = self.session.note_focus() {
@@ -370,6 +388,11 @@ impl DeskApp {
             if yes != self.session.notes_available() {
                 self.session.set_notes_available(yes);
             }
+            // S1.5: Archivos solo con IureDav.
+            let dav = self.suite.hub.installed(iuredesk_engine::iuredesk_integrations::SisterApp::Dav);
+            if dav != self.session.files_available() {
+                self.session.set_files_available(dav);
+            }
         }
         crate::update_ui::tick(self);
         crate::header::show(self, ui, true);
@@ -388,6 +411,7 @@ impl DeskApp {
             Module::Notes => crate::pim::notes(self, ui),
             Module::Tasks => crate::pim::tasks(self, ui),
             Module::Assistant => crate::assistant::page(self, ui),
+            Module::Files => crate::files::show(self, ui),
         }
 
         crate::event_editor::show(self, &ctx);
@@ -1079,9 +1103,11 @@ impl DeskApp {
             ("notes", sc("nav.notes")),
             ("tasks", sc("nav.tasks")),
             ("assistant", sc("nav.assistant")),
+            ("files", sc("nav.files")),
         ];
         let short = |k: &str| labels.iter().find(|(id, _)| *id == k).and_then(|(_, s)| s.clone()).unwrap_or_default();
         let s_today = short("today");
+        let s_files = short("files");
         let (s_mail, s_cal, s_con, s_not, s_tas, s_ai) =
             (short("mail"), short("calendar"), short("contacts"), short("notes"), short("tasks"), short("assistant"));
         let status = self.session.sync_status();
@@ -1108,6 +1134,7 @@ impl DeskApp {
                 .badge(u32::try_from(due).unwrap_or(u32::MAX))
                 .shortcut(&s_tas),
             NavItem::new("assistant", iurefficient_ui::Icon::Sparkle, Module::Assistant.label()).shortcut(&s_ai),
+            NavItem::new("files", iurefficient_ui::Icon::Folder, Module::Files.label()).shortcut(&s_files),
             NavItem::new("settings", iurefficient_ui::Icon::Settings, pick("Settings", "Ajustes")).bottom(),
             NavItem::new("sync", sync_icon, &sync_label).bottom(),
         ];
@@ -1118,6 +1145,10 @@ impl DeskApp {
         // UX-15: sin asistente configurado no hay módulo de IA.
         if !self.session.ai_available() {
             items.retain(|it| it.id != "assistant");
+        }
+        // S1.5: sin IureDav no hay Archivos.
+        if !self.session.files_available() {
+            items.retain(|it| it.id != "files");
         }
         // La campana de Iurefficient está en la barra de título (UI-HEADER).
         let w = rail_width(ui.ctx());

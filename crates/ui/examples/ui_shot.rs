@@ -573,6 +573,71 @@ fn main() -> Result<(), String> {
     if let Some(q) = args.iter().find_map(|a| a.strip_prefix("--palette")) {
         app.palette.open_with(q.strip_prefix('=').unwrap_or(""));
     }
+    // S1.5: `--files` muestra Archivos con una unidad de IureDav de ejemplo.
+    if args.iter().any(|a| a == "--files") {
+        use iuredesk_engine::iuredesk_integrations::{DavMount, SisterApp, Suite};
+        let root = std::env::temp_dir().join(format!("iuredesk-files-shot-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(root.join("Casos 2026"));
+        let _ = std::fs::create_dir_all(root.join("Plantillas"));
+        for (name, size) in
+            [("Contrato de prestación.pdf", 182_000), ("Minuta 21-10.md", 4_200), ("Honorarios.xlsx", 23_000)]
+        {
+            let _ = std::fs::write(root.join(name), vec![b'x'; size]);
+        }
+        let m = DavMount {
+            id: "despacho".into(),
+            name: "Despacho".into(),
+            url: "https://dav.example.com/".into(),
+            user: "ana".into(),
+            mount_point: root.to_string_lossy().into_owned(),
+            mounted: true,
+            writable: true,
+        };
+        let m2 = DavMount { id: "archivo".into(), name: "Archivo histórico".into(), mounted: false, ..m.clone() };
+        app.set_suite(
+            Suite::empty()
+                .with_app(SisterApp::Dav, "/opt/iuredav/iuredav-app")
+                .with_mounts(move || vec![m.clone(), m2.clone()]),
+        );
+        app.session.module = Module::Files;
+    }
+    // S1.6: `--projects` muestra la tarjeta «Proyectos» de Mi día con dos planes de ejemplo.
+    if args.iter().any(|a| a == "--projects") {
+        use iuredesk_engine::iuredesk_integrations::{ProjectOverview, ProjectStatus, ProjectTask, SisterApp, Suite};
+        app.set_suite(Suite::empty().with_app(SisterApp::Project, "/opt/iureproject/iureproject"));
+        let t = |name: &str, finish: &str| ProjectTask {
+            uid: 1,
+            name: name.into(),
+            finish: Some(finish.into()),
+            percent_complete: 30,
+            critical: true,
+        };
+        let a = ProjectOverview {
+            name: "Caso Altamira".into(),
+            percent_complete: 42.0,
+            late: 2,
+            late_tasks: vec![
+                t("Peritaje contable", "2026-10-14T17:00:00"),
+                t("Pruebas documentales", "2026-10-18T17:00:00"),
+            ],
+            upcoming_milestones: vec![t("Audiencia", "2026-11-30T10:00:00")],
+            ..Default::default()
+        };
+        let b = ProjectOverview {
+            name: "Migración de expedientes".into(),
+            percent_complete: 78.0,
+            upcoming_milestones: vec![t("Entrega final", "2026-11-05T17:00:00")],
+            ..Default::default()
+        };
+        app.set_projects_for_tests(
+            vec!["/casos/altamira.iurp".into(), "/proyectos/migracion.iurp".into()],
+            vec![
+                ProjectStatus { file: "/casos/altamira.iurp".into(), overview: Ok(a) },
+                ProjectStatus { file: "/proyectos/migracion.iurp".into(), overview: Ok(b) },
+            ],
+        );
+        app.session.module = Module::Today;
+    }
     // UX-3
     if args.iter().any(|a| a == "--context-collapsed") {
         app.session.prefs.context_collapsed = true;

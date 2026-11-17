@@ -92,10 +92,12 @@ pub enum Module {
     Notes,
     Tasks,
     Assistant,
+    /// S1.5: archivos de las unidades de IureDav (solo con IureDav).
+    Files,
 }
 
 impl Module {
-    pub const ALL: [Module; 7] = [
+    pub const ALL: [Module; 8] = [
         Module::Today,
         Module::Mail,
         Module::Calendar,
@@ -103,6 +105,7 @@ impl Module {
         Module::Notes,
         Module::Tasks,
         Module::Assistant,
+        Module::Files,
     ];
 
     pub fn key(self) -> &'static str {
@@ -114,6 +117,7 @@ impl Module {
             Module::Notes => "notes",
             Module::Tasks => "tasks",
             Module::Assistant => "assistant",
+            Module::Files => "files",
         }
     }
 
@@ -130,6 +134,7 @@ impl Module {
             Module::Notes => crate::lang::pick("Notes", "Notas"),
             Module::Tasks => crate::lang::pick("Tasks", "Tareas"),
             Module::Assistant => crate::lang::pick("Assistant", "Asistente"),
+            Module::Files => crate::lang::pick("Files", "Archivos"),
         }
     }
 }
@@ -420,6 +425,8 @@ pub struct Session {
     note_focus: Option<iuredesk_model::NoteId>,
     /// UX-12: las notas se escriben en IureEditor; sin él, Notas no aparece (lo fija la UI).
     notes_available: bool,
+    /// S1.5: hay IureDav (unidades de archivos); sin él, Archivos no aparece (lo fija la UI).
+    files_available: bool,
     /// UX-15: hay un asistente configurado (Iurefficient con sesión u otro proveedor); sin él,
     /// `nav.assistant` y `ai.*` quedan apagados y la IA no se muestra (lo fija la UI).
     ai_available: bool,
@@ -510,6 +517,7 @@ impl Session {
             contact_selection: Vec::new(),
             note_focus: None,
             notes_available: true,
+            files_available: false,
             ai_available: true,
             notes_fs: notes_files::NotesFs::default(),
             connection_test: None,
@@ -1173,6 +1181,7 @@ impl Session {
             }
             "mail.edit_draft" => self.focused.is_some_and(|m| self.is_draft(m)),
             b if (b == "nav.notes" || b.starts_with("notes.")) && !self.notes_available => false,
+            "nav.files" if !self.files_available => false,
             b if (b == "nav.assistant" || b.starts_with("ai.")) && !self.ai_available => false,
             "notes.delete" | "notes.open_editor" => self.note_focus.is_some(),
             "tasks.edit" => self.module == Module::Tasks || self.module == Module::Today,
@@ -1207,6 +1216,10 @@ impl Session {
                 b if (b == "nav.notes" || b.starts_with("notes.")) && !self.notes_available => Notice::info(
                     "Notes are written in IureEditor: install it to use them here.",
                     "Las notas se escriben en IureEditor: instálalo para usarlas aquí.",
+                ),
+                "nav.files" => Notice::info(
+                    "Files come from your IureDav drives: install IureDav to see them here.",
+                    "Los archivos vienen de tus unidades de IureDav: instálalo para verlos aquí.",
                 ),
                 b if (b == "nav.assistant" || b.starts_with("ai.")) && !self.ai_available => Notice::info(
                     "Connect Iurefficient or choose an AI provider in Settings → Assistant.",
@@ -1276,7 +1289,7 @@ impl Session {
                 Ok(Outcome::Done)
             }
             "nav.today" | "nav.mail" | "nav.calendar" | "nav.contacts" | "nav.notes" | "nav.tasks"
-            | "nav.assistant" => {
+            | "nav.assistant" | "nav.files" => {
                 if let Some(m) = Module::from_key(base.trim_start_matches("nav.")) {
                     self.module = m;
                 }

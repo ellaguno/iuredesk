@@ -62,6 +62,7 @@ Generated from IureDesk's commands; don't edit by hand. Choose the scheme in Set
 | Go to Notes | `Ctrl+5` | `Ctrl+5` | `Ctrl+5` |
 | Go to Tasks | `Ctrl+4` | `Ctrl+4` | `Ctrl+4` |
 | Go to Assistant | `Ctrl+6` | `Ctrl+6` | `Ctrl+6` |
+| Go to Files | `Ctrl+7` | `Ctrl+7` | `Ctrl+7` |
 
 ## App
 

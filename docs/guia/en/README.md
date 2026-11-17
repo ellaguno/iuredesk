@@ -117,6 +117,12 @@ Not available in the beta yet. If your company uses Microsoft 365, use "Sign in 
 
 ## Contacts, tasks and notes
 
+- **Files** (if you have IureDav): your Iurefficient drives inside IureDesk. Browse folders,
+  filter by name, open a file, show it in its folder or email it as an attachment. If the drive
+  isn't mounted, IureDesk takes you to IureDav.
+- **Projects in My day** (if you have IureProject): follow your plans to see their progress, late
+  tasks and next milestone without opening IureProject; click a plan to open it there.
+
 - **Contacts:** double-click or `Enter` to edit; "+" for a new one. They sync with your account
   (Google, Microsoft, iCloud or CardDAV).
 - **Tasks:** with due date, priority, reminder and lists; they sync with Google Tasks, Microsoft

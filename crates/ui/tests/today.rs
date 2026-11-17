@@ -160,3 +160,98 @@ fn join_button_opens_only_the_meeting() {
     assert_eq!(h.state().session.module, Module::Calendar);
     assert_eq!(iuredesk_ui::opened_urls().len(), 1, "sin abrir la reunión otra vez");
 }
+
+/// Anota lo que se lanzaría (S1.6).
+#[derive(Default)]
+struct Launches(Mutex<Vec<String>>);
+
+impl iuredesk_engine::iuredesk_integrations::Opener for Launches {
+    fn open_url(&self, url: &str) -> std::io::Result<()> {
+        self.0.lock().unwrap().push(url.to_string());
+        Ok(())
+    }
+    fn launch(&self, program: &std::path::Path, args: &[String]) -> std::io::Result<()> {
+        self.0.lock().unwrap().push(format!("{} {}", program.display(), args.join(" ")));
+        Ok(())
+    }
+}
+
+/// S1.6: la tarjeta «Proyectos» muestra avance, lo atrasado y el próximo hito de cada plan; un
+/// plan que no se pudo leer dice por qué; pulsar un plan lo abre en IureProject. Sin IureProject
+/// no hay tarjeta.
+#[test]
+fn projects_card_shows_plans_and_opens_them() {
+    use iuredesk_engine::iuredesk_integrations::{ProjectOverview, ProjectStatus, ProjectTask, SisterApp, Suite, Text};
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let plans = tempfile::tempdir().unwrap();
+    let plan = plans.path().join("Caso Ramírez.iurp");
+    std::fs::write(&plan, b"plan").unwrap();
+    let broken = plans.path().join("Otro.iurp");
+    let launches = Arc::new(Launches::default());
+    let mut a = app(dir.path());
+    a.set_suite(
+        Suite::empty().with_app(SisterApp::Project, "/opt/iureproject/iureproject").with_opener(launches.clone()),
+    );
+    let task = |name: &str, finish: &str| ProjectTask {
+        uid: 1,
+        name: name.into(),
+        finish: Some(finish.into()),
+        percent_complete: 30,
+        critical: true,
+    };
+    let ok = ProjectOverview {
+        name: "Caso Ramírez".into(),
+        as_of: "2026-10-21".into(),
+        percent_complete: 42.5,
+        tasks: 12,
+        done: 4,
+        late: 1,
+        late_tasks: vec![task("Peritaje", "2026-10-10T17:00:00")],
+        upcoming_milestones: vec![task("Audiencia", "2026-11-30T17:00:00")],
+        ..Default::default()
+    };
+    a.set_projects_for_tests(
+        vec![plan.to_string_lossy().into_owned(), broken.to_string_lossy().into_owned()],
+        vec![
+            ProjectStatus { file: plan.clone(), overview: Ok(ok) },
+            ProjectStatus { file: broken.clone(), overview: Err(Text::new("gone", "El archivo ya no está.")) },
+        ],
+    );
+    let mut h = harness(a);
+    settle(&mut h);
+    assert!(h.query_by_label("Caso Ramírez").is_some(), "el plan");
+    assert!(h.query_by_label("43 %").is_some() || h.query_by_label("42 %").is_some(), "el avance");
+    assert!(h.query_by_label("Peritaje — vencía 10 oct").is_some(), "lo atrasado");
+    assert!(h.query_by_label("Audiencia — 30 nov").is_some(), "el próximo hito");
+    assert!(h.query_by_label("1 atrasadas").is_some(), "la cifra");
+    assert!(h.query_by_label("El archivo ya no está.").is_some(), "el que no se pudo leer");
+    h.get_by_label("Caso Ramírez").click();
+    settle(&mut h);
+    let start = Instant::now();
+    while launches.0.lock().unwrap().is_empty() && start.elapsed() < Duration::from_secs(10) {
+        h.run_steps(1);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let l = launches.0.lock().unwrap().join("\n");
+    assert!(l.contains("/opt/iureproject/iureproject") && l.contains("Caso Ramírez.iurp"), "{l}");
+}
+
+/// S1.6: sin IureProject no hay tarjeta de proyectos; con IureProject y sin planes, invita a seguir uno.
+#[test]
+fn projects_card_only_with_iureproject() {
+    use iuredesk_engine::iuredesk_integrations::{SisterApp, Suite};
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    a.set_suite(Suite::empty());
+    let mut h = harness(a);
+    settle(&mut h);
+    assert!(h.query_by_label("Seguir un plan…").is_none());
+    let dir2 = tempfile::tempdir().unwrap();
+    let mut a = app(dir2.path());
+    a.set_suite(Suite::empty().with_app(SisterApp::Project, "/opt/iureproject/iureproject"));
+    let mut h = harness(a);
+    settle(&mut h);
+    assert!(h.query_by_label("Seguir un plan…").is_some(), "invita a seguir un plan");
+}

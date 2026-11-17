@@ -62,6 +62,7 @@ Generado a partir de los comandos de IureDesk; no se edita a mano. El esquema se
 | Ir a Notas | `Ctrl+5` | `Ctrl+5` | `Ctrl+5` |
 | Ir a Tareas | `Ctrl+4` | `Ctrl+4` | `Ctrl+4` |
 | Ir al Asistente | `Ctrl+6` | `Ctrl+6` | `Ctrl+6` |
+| Ir a Archivos | `Ctrl+7` | `Ctrl+7` | `Ctrl+7` |
 
 ## Aplicación
 

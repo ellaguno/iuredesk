@@ -45,6 +45,8 @@ pub struct TodayState {
     pub(crate) editing: bool,
     /// UX-15: el clima de hoy.
     pub(crate) weather: crate::today_weather::WeatherUi,
+    /// S1.6: planes de IureProject que se siguen.
+    pub(crate) projects: crate::today_projects::ProjectsUi,
 }
 
 /// Qué se pulsó.
@@ -318,6 +320,7 @@ fn card_icon(card: TodayCard) -> Icon {
         TodayCard::Tasks => Icon::Tasks,
         TodayCard::Mail => Icon::Mail,
         TodayCard::Iurefficient => Icon::Bell,
+        TodayCard::Projects => Icon::Gantt,
         TodayCard::Reminders | TodayCard::Unknown => Icon::Gift,
     }
 }
@@ -342,6 +345,7 @@ fn slot(
             TodayCard::Mail => mail_card(app, ui, s, now, acts),
             TodayCard::Iurefficient => iure_card(ui, s, now, acts),
             TodayCard::Reminders => reminders_card(ui, s, acts),
+            TodayCard::Projects => crate::today_projects::card(app, ui),
             TodayCard::Unknown => {}
         })
         .response
@@ -477,7 +481,14 @@ fn edit_bar(app: &mut DeskApp, ui: &mut Ui) {
 
 /// Tarjeta con cabecera (icono, título, cifra) y una acción a la derecha. Devuelve si se pulsó la
 /// acción.
-fn card(ui: &mut Ui, ic: Icon, title: &str, detail: &str, action: Option<&str>, add: impl FnOnce(&mut Ui)) -> bool {
+pub(crate) fn card(
+    ui: &mut Ui,
+    ic: Icon,
+    title: &str,
+    detail: &str,
+    action: Option<&str>,
+    add: impl FnOnce(&mut Ui),
+) -> bool {
     let c = theme::colors(ui);
     let ctx = ui.ctx().clone();
     let mut clicked = false;
@@ -543,7 +554,7 @@ fn sub_label(ui: &mut Ui, text: &str, count: usize, ink: Color32) {
     ui.add_space(2.0);
 }
 
-fn muted(ui: &mut Ui, text: &str) {
+pub(crate) fn muted(ui: &mut Ui, text: &str) {
     let c = theme::colors(ui);
     ui.add(egui::Label::new(RichText::new(text).color(c.text_muted)).wrap());
 }

@@ -105,6 +105,7 @@ pub fn frame(app: &mut DeskApp, ctx: &Context) {
                 ));
             }
             SuiteEvent::OcrText { name, text } => app.suite.ocr = Some((name, text)),
+            SuiteEvent::Projects(v) => crate::today_projects::on_projects(app, v),
         }
     }
     hint_dialog(app, ctx);
@@ -274,6 +275,8 @@ pub fn settings_section(app: &mut DeskApp, ui: &mut Ui) {
             }
         }
     }
+    // S1.6: planes de IureProject en «Hoy».
+    crate::today_projects::settings(app, ui);
     ui.add_space(8.0);
     ui.label(
         RichText::new(pick("AI assistants on this computer", "Asistentes de IA de este equipo")).strong().color(c.text),

@@ -123,6 +123,12 @@ Microsoft».
 
 ## Contactos, tareas y notas
 
+- **Archivos** (si tienes IureDav): tus unidades de Iurefficient dentro de IureDesk. Navega las
+  carpetas, filtra por nombre, abre un archivo, muéstralo en su carpeta o envíalo por correo
+  como adjunto. Si la unidad no está montada, IureDesk te lleva a IureDav.
+- **Proyectos en Mi día** (si tienes IureProject): sigue tus planes y verás su avance, las tareas
+  atrasadas y el próximo hito sin abrir IureProject; al pulsar un plan se abre allí.
+
 - **Contactos:** doble clic o `Intro` para editar; «+» para uno nuevo. Se sincronizan con tu
   cuenta (Google, Microsoft, iCloud o CardDAV).
 - **Tareas:** con vencimiento, prioridad, recordatorio y listas; se sincronizan con Google Tasks,
