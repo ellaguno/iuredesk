@@ -158,7 +158,7 @@ de documentos en la suite.
 | Edición enriquecida por bloques | TipTap/ProseMirror | **No existe en egui**: se construye (`DocEditor`) |
 | Modelo de documento | ProseMirror | `compose::rich::RichBody` ampliado (ya hay ida y vuelta Markdown/HTML) |
 | Mermaid | `mermaid.js` | `mermaid-svg` (ya en `html-view`) |
-| LaTeX | KaTeX | Opciones inmaduras: **hueco mayor**; evaluar crates y, si no, render propio limitado o fórmula como imagen vía Typst |
+| LaTeX | KaTeX | Opciones inmaduras (prioridad P2, §4.7); evaluar crates y, si no, render propio limitado o fórmula como imagen vía Typst |
 | PDF | `pagedjs` | **Typst** (crates `typst`/`typst-pdf`) |
 | DOCX | `docx` (npm) | `docx-rs` |
 | Resaltado de código | highlight.js | `syntect` con `fancy-regex` (verificar pureza); `tree-sitter` no (C) |
@@ -226,6 +226,107 @@ editan igual en todas.
   estructurados), con pruebas de propiedades de ida y vuelta y lectura tolerante de archivos
   editados a mano en otro editor.
 
+### 4.7 Calidad exigida: edición enriquecida y diagramas
+
+Principio: **lo que un usuario usa a diario debe funcionar «muy bien»**, al nivel de TipTap/Notion o
+mejor; lo raro puede ser sencillo, pero nunca rompe el documento. LaTeX es prioridad baja.
+
+#### Prioridades por uso
+
+| Nivel | Qué | Exigencia |
+|---|---|---|
+| **P0 — diario** | Párrafos, títulos 1–3, negrita, cursiva, tachado, código en línea, enlaces, listas con viñetas / numeradas / de tareas con anidado, citas, bloques de código con lenguaje, separador, imágenes, tablas sencillas, deshacer/rehacer, copiar/pegar, buscar y reemplazar, IME y acentos, guardado automático | Impecable. Sin saltos de cursor, sin pérdidas, < 8 ms por cuadro |
+| **P1 — frecuente** | Avisos (`> [!NOTE]`…), Mermaid, mapas mentales, resaltado, color de texto, alineación, notas al pie, títulos 4–6, comandos `/` | Muy bien, con opciones de dibujo (abajo) |
+| **P2 — ocasional** | Fórmulas LaTeX, subíndice/superíndice, tablas complejas (celdas combinadas) | Funcional; lo no soportado se muestra como código con formato, nunca como error que rompa la nota |
+
+#### Markdown al teclear (reglas de entrada)
+
+Al escribir al inicio de un bloque o al cerrar una marca, el texto se convierte al momento:
+
+| Se teclea | Resultado |
+|---|---|
+| `# ` … `###### ` | Título 1–6 |
+| `- ` `* ` `+ ` | Lista con viñetas |
+| `1. ` `1) ` | Lista numerada (respeta el número inicial) |
+| `[ ] ` `[x] ` (también dentro de una lista) | Lista de tareas |
+| `> ` | Cita |
+| `> [!NOTE] ` `[!TIP]` `[!WARNING]` `[!MINDMAP]`… | Aviso / mapa mental |
+| ```` ``` ```` + lenguaje + Enter | Bloque de código (```` ```mermaid ```` → diagrama) |
+| `---` `***` + Enter | Separador |
+| `**texto**` `__texto__` | Negrita |
+| `*texto*` `_texto_` | Cursiva (sin falsos positivos en `snake_case` ni en `2*3*4`) |
+| `~~texto~~` | Tachado |
+| `` `texto` `` | Código en línea |
+| `==texto==` | Resaltado |
+| `[texto](url)` | Enlace |
+| URL o correo seguido de espacio | Enlace automático |
+| `\| a \| b \|` + Enter | Tabla con encabezado |
+| `$…$` | Fórmula (P2) |
+
+Comportamientos que distinguen un editor bueno de uno excelente:
+
+- **Retroceso justo después de una conversión la deshace** y deja el texto literal (`# ` vuelve a
+  ser `# `). `Ctrl+Z` hace lo mismo. Es la salida natural cuando el usuario no quería formato.
+- Nada se convierte dentro de código (bloque o en línea) ni en un enlace.
+- **Enter inteligente**: en un elemento de lista vacío sale de la lista; en un título continúa con
+  párrafo; en una tarea crea otra tarea sin marcar; en código inserta salto (dos Enter vacíos al
+  final salen del bloque).
+- `Tab` / `Shift+Tab` sangran y desangran elementos de lista; en tabla, celda siguiente/anterior
+  (Tab en la última celda agrega fila).
+- Los atajos `Ctrl+B/I/U/K`, `Ctrl+Shift+7/8/9` (listas), `Ctrl+Alt+1…3` (títulos) funcionan y se
+  ven en la paleta.
+- **Pegar**: Markdown pegado se convierte; HTML de web, Word, LibreOffice, Google Docs y correos se
+  limpia a lo que el modelo soporta (sin estilos basura); `Ctrl+Shift+V` pega como texto plano.
+- Tipografía opcional (preferencia): `--` → —, `...` → …, comillas tipográficas según idioma.
+- Comandos `/` (título, lista, tabla, diagrama, mapa mental, aviso, imagen, fecha) y vista de código
+  fuente (`Ctrl+/`) que alterna sin perder la posición del cursor.
+
+**Fidelidad del archivo**: un bloque que el usuario no tocó se escribe **byte por byte igual** que se
+leyó (sin reformatear `*` por `-`, sangrías ni saltos). Así los diffs de git son limpios, IureEditor
+actual y otros editores conviven, y los metadatos ajenos sobreviven.
+
+#### Diagramas: opciones de dibujo
+
+`mermaid-svg` 0.7 ya dibuja 23 tipos (flujo, secuencia, Gantt, clase, ER, estado, mapa mental
+radial, línea de tiempo, pastel, kanban, C4, arquitectura, treemap…) y respeta el `config:` de
+Mermaid (frontmatter y `%%{init}%%`), `themeVariables`, `accTitle`/`accDescr`. Se aprovecha todo y
+se enriquece:
+
+- **Mapas mentales con distribución a elegir**: *radial* (como IureEditor hoy; es el dibujo nativo
+  de `mermaid-svg`), *a la derecha* (como IureDesk hoy), *equilibrado a ambos lados* y *de arriba
+  abajo* (organigrama). Además las **formas de nodo** que IureEditor ya guarda (`default`, `square`,
+  `rounded`, `circle`, `cloud`, `bang`, `hexagon`), que IureDesk hoy ignora.
+- **Dónde se guarda la opción**, compatible con lo que ya existe:
+  - mapas `> [!MINDMAP|…]`: nuevos elementos del metadato (p. ej. `|map radial cloud`), sin romper
+    `map`, `right`, `links` ni la forma; lo desconocido se preserva;
+  - bloques ```` ```mermaid ````: el `config:` estándar de Mermaid (frontmatter), para que
+    `mermaid.js` y cualquier otro visor lo entiendan; las opciones propias van bajo una clave
+    `iure:` que los demás ignoran.
+- **Valor por omisión** en preferencias (por tipo de diagrama) y **cambio rápido por diagrama** con
+  una barra flotante al pasar el ratón: distribución ▾, forma ▾, tema ▾, editar código.
+- **Tema** que sigue al de la app (claro/oscuro, colores de `iurefficient-ui` traducidos a un
+  `Theme`), con opción de los temas de Mermaid (`default`, `forest`, `neutral`…).
+- **Editar el código con vista previa en vivo** y, si hay error, la línea marcada con mensaje en
+  lenguaje humano; el último dibujo válido se mantiene mientras se corrige.
+- **Zoom y desplazamiento** para diagramas grandes; **exportar** a SVG y PNG; nodos con `click`
+  despachan acciones del anfitrión (§4.6), nunca abren URLs sin confirmar.
+- **Corpus de fidelidad**: los tipos más usados (flujo, secuencia, Gantt, mapa mental, pastel, clase,
+  ER, línea de tiempo) se comparan con capturas de referencia de `mermaid.js`; las diferencias que
+  importan se corrigen.
+- **Enriquecer `mermaid-svg`** (MIT): las mejoras generales (distribuciones de mapa mental, ganchos
+  de `click`, métricas de texto con la fuente real) se proponen **aguas arriba** como PR; solo si no
+  se aceptan, se mantiene una capa propia en `iure-doc`. Se fija la versión exacta y se actualiza
+  con el corpus como red.
+
+#### Aceptación
+
+- Corpus de documentos reales de IureEditor: abrir y guardar sin tocar → archivo idéntico.
+- Guion de pruebas `egui_kittest` por cada regla de entrada y cada comportamiento de arriba
+  (incluido «retroceso deshace la conversión»).
+- Pruebas de propiedades: Markdown → modelo → Markdown estable; texto hostil acotado sin pánico.
+- Prueba de rendimiento: documento de 100 páginas con 20 diagramas, < 8 ms por cuadro al teclear.
+- Lista de paridad frente a IureEditor actual (TipTap) firmada antes de S1.15.
+
 ## 5. Seguridad
 
 - **Mismo proceso = mismo destino.** Lo que contiene C/C++ o webview se queda en otro proceso (además
@@ -273,6 +374,8 @@ editan igual en todas.
 | iureproject | Notas enriquecidas por tarea/hito/proyecto con `DocEditor` | 4 |
 | iuredesk | Transcripción editable (bloques de segmento, reproducir en el punto) | 3 |
 | iuretranscribe | Interfaz egui + `DocEditor`; whisper.cpp como proceso aparte | 5 |
+| iuredesk (`html-view`) | Opciones de mapa mental (distribución y formas) ya en la vista de notas actual | 2 |
+| `iure-doc` / mermaid-svg | Barra de diagrama, tema de la app, vista previa en vivo, zoom, exportar, corpus de fidelidad; PR aguas arriba | 3 |
 
 ## 8. Decisiones pendientes del dueño
 
