@@ -238,6 +238,98 @@ fn mindmap_menu_rewrites_the_meta_with_undo() {
     assert_eq!(body(&h), md);
 }
 
+/// S1.20: el menú de un bloque Mermaid cambia el tema en su cabecera, con deshacer.
+#[test]
+fn mermaid_menu_changes_the_theme_with_undo() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    let id = a.session.note_focus().unwrap();
+    let md = "Plan\n\n```mermaid\nflowchart LR\n  A[Inicio] --> B[Fin]\n```\n";
+    a.session.save_note(id, "Diagrama", md).unwrap();
+    let mut h = harness(a);
+    settle(&mut h);
+    h.state_mut().click_note_mermaid(0);
+    settle(&mut h);
+    h.get_by_label("Bosque").click();
+    settle(&mut h);
+    assert_eq!(body(&h), md.replace("```mermaid\n", "```mermaid\n---\nconfig:\n  theme: forest\n---\n"));
+    assert!(h.query_by_label("Bosque").is_none(), "el menú se cerró");
+    h.state_mut().click_note_mermaid(0);
+    settle(&mut h);
+    h.get_by_label("Como la app").click();
+    settle(&mut h);
+    assert_eq!(body(&h), md, "volver al tema de la app quita la cabecera");
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "undo");
+    settle(&mut h);
+    assert!(body(&h).contains("theme: forest"));
+    h.state_mut().run(&ctx, "undo");
+    settle(&mut h);
+    assert_eq!(body(&h), md);
+}
+
+/// S1.20: el editor dibuja en vivo; con un error lo explica, conserva el último dibujo válido y
+/// al guardar reescribe solo el bloque.
+#[test]
+fn mermaid_editor_live_preview_and_save() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    let id = a.session.note_focus().unwrap();
+    let md = "Antes\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\nDespués\n";
+    a.session.save_note(id, "Diagrama", md).unwrap();
+    let mut h = harness(a);
+    settle(&mut h);
+    h.state_mut().click_note_mermaid(0);
+    settle(&mut h);
+    h.get_by_label("Editar código…").click();
+    settle(&mut h);
+    assert_eq!(h.state().diagram_editor_state(), (None, true), "dibuja el código actual");
+    h.state_mut().set_diagram_code("flowchart LR\n  A --> B\n  C -->");
+    settle(&mut h);
+    let (err, drawing) = h.state().diagram_editor_state();
+    let err = err.expect("explica el error");
+    assert!(err.contains("línea 3"), "{err}");
+    assert!(drawing, "se sigue viendo el último dibujo válido");
+    assert!(h.query_all_by_label_contains("línea 3").next().is_some(), "el error se ve");
+    h.state_mut().set_diagram_code("flowchart TD\n  A --> B\n  B --> C");
+    settle(&mut h);
+    assert_eq!(h.state().diagram_editor_state(), (None, true));
+    h.get_by_label("Guardar").click();
+    settle(&mut h);
+    assert_eq!(body(&h), md.replace("flowchart LR\n  A --> B\n", "flowchart TD\n  A --> B\n  B --> C\n"));
+    assert!(h.query_by_label("Guardar").is_none(), "el editor se cerró");
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "undo");
+    settle(&mut h);
+    assert_eq!(body(&h), md);
+}
+
+/// S1.20: «Ver en grande» abre el visor con zoom.
+#[test]
+fn diagram_viewer_zooms() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    let id = a.session.note_focus().unwrap();
+    a.session.save_note(id, "Mapa", "> [!MINDMAP] Centro\n> - Uno\n> - Dos\n").unwrap();
+    let mut h = harness(a);
+    settle(&mut h);
+    h.state_mut().click_note_mindmap(0);
+    settle(&mut h);
+    h.get_by_label("Ver en grande").click();
+    settle(&mut h);
+    assert!(h.query_by_label("100 %").is_some());
+    h.get_by_label("+").click();
+    settle(&mut h);
+    assert!(h.query_by_label("125 %").is_some(), "acercó");
+    h.get_by_label("−").click();
+    h.get_by_label("−").click();
+    settle(&mut h);
+    assert!(h.query_by_label("80 %").is_some(), "alejó");
+}
+
 /// Lo guardado en IureEditor (el archivo) regenera la vista sin bloquear.
 #[test]
 fn preview_follows_the_file() {

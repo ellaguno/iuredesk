@@ -125,7 +125,9 @@ Not available in the beta yet. If your company uses Microsoft 365, use "Sign in 
   Notes module isn't shown. Each note is a Markdown file in the folder you choose (Settings →
   General → Notes folder). Mind maps can be drawn to the right, radial (as in IureEditor), on both
   sides or top to bottom: pick the default in Settings → General → Mind maps, or click a map to
-  change only that one and its node shape (undo with Ctrl+Z).
+  change only that one and its node shape (undo with Ctrl+Z). Click a Mermaid diagram to pick its
+  theme (the app's or a Mermaid one), view it larger with zoom, edit its code with a live preview
+  (if something is wrong it tells you what and on which line) and export it as SVG or PNG.
 
 ## My day
 

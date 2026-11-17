@@ -32,7 +32,7 @@ fn dark(style: &NoteStyle) -> bool {
 }
 
 /// Tema de Mermaid con el claro u oscuro y la letra de la nota.
-fn theme_for(style: &NoteStyle) -> Option<mermaid_svg::Theme> {
+pub(crate) fn theme_for(style: &NoteStyle) -> Option<mermaid_svg::Theme> {
     let mut theme =
         if dark(style) { mermaid_svg::Theme::by_name("dark")? } else { mermaid_svg::Theme::by_name("default")? };
     theme.font_size = f64::from(style.font_px.clamp(10.0, 24.0));
@@ -51,6 +51,12 @@ pub fn to_svg(code: &str, style: &NoteStyle) -> Option<String> {
 /// centro en el color de acento.
 pub fn mindmap_svg(root: &crate::mindmap::Node, shape: crate::mindmap::Shape, style: &NoteStyle) -> Option<String> {
     let mut theme = theme_for(style)?;
+    branch_palette(&mut theme, style);
+    render(&mindmap_code(root, shape), theme)
+}
+
+/// Colores de rama propios en un tema de Mermaid (mapas mentales) y el centro en el acento.
+pub(crate) fn branch_palette(theme: &mut mermaid_svg::Theme, style: &NoteStyle) {
     let hex = |c: [u8; 3]| format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]);
     // `mermaid-svg` pinta la rama `k` con el color `k + 1` de la escala: se corre un lugar para que
     // la primera rama tenga el mismo color que en las demás distribuciones.
@@ -61,11 +67,10 @@ pub fn mindmap_svg(root: &crate::mindmap::Node, shape: crate::mindmap::Shape, st
         .collect::<Vec<_>>()
         .into();
     theme.git_palette = vec![hex(style.accent).into()].into();
-    render(&mindmap_code(root, shape), theme)
 }
 
 /// Dibuja con `mermaid-svg`, acotado: código, hilo propio con `catch_unwind`, tiempo y SVG.
-fn render(code: &str, theme: mermaid_svg::Theme) -> Option<String> {
+pub(crate) fn render(code: &str, theme: mermaid_svg::Theme) -> Option<String> {
     let code = code.trim();
     if code.is_empty() || code.len() > MAX_SOURCE || code.lines().count() > MAX_LINES {
         return None;

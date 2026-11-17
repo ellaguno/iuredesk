@@ -22,6 +22,7 @@
     clippy::indexing_slicing
 )]
 
+pub mod diagram;
 mod engine;
 mod fonts;
 pub mod markdown;

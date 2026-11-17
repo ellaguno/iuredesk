@@ -23,7 +23,7 @@ use std::sync::Arc;
 use egui::{Color32, Context, Rect, RichText, Sense, TextureHandle, TextureOptions, Ui, pos2, vec2};
 use iuredesk_engine::{Fetched, JobOutput, Text};
 use iuredesk_html_view::markdown::{self, NoteLink, NoteOptions, NoteStyle};
-use iuredesk_html_view::mindmap::{self, Layout, Shape};
+use iuredesk_html_view::mindmap::Layout;
 use iuredesk_html_view::{Bytes, LinkRect, RenderOptions};
 use iuredesk_model::NoteId;
 use iurefficient_ui::{Banner, Severity, pick, theme};
@@ -107,20 +107,8 @@ pub struct NotePreviewCache {
     allowed: HashSet<NoteId>,
     /// Renders guardados como mucho (0: [`MAX_ENTRIES`]).
     cap: usize,
-    /// S1.19: menú abierto de un mapa mental.
-    menu: Option<MindmapMenu>,
-}
-
-/// S1.19: el menú de un mapa mental (nota, orden del mapa, dónde se pulsó y lo que pide ahora).
-#[derive(Clone, Copy, Debug)]
-struct MindmapMenu {
-    note: NoteId,
-    n: usize,
-    pos: egui::Pos2,
-    layout: Option<Layout>,
-    shape: Shape,
-    /// Recién abierto: el clic que lo abrió no lo cierra.
-    fresh: bool,
+    /// S1.19–S1.20: menú, visor, editor y exportaciones de los diagramas.
+    pub diagrams: crate::diagram_ui::DiagramUi,
 }
 
 fn tex_bytes(size: [usize; 2]) -> usize {
@@ -223,7 +211,7 @@ impl NotePreviewCache {
 }
 
 /// Estilo de la nota con los colores del tema y la densidad actuales.
-fn style(ui: &Ui) -> NoteStyle {
+pub(crate) fn style(ui: &Ui) -> NoteStyle {
     let c = theme::colors(ui);
     NoteStyle {
         text: rgb(c.text),
@@ -245,36 +233,16 @@ pub fn layout_of(pref: iuredesk_engine::MindmapLayout) -> Layout {
     }
 }
 
-fn layout_label(l: Layout) -> &'static str {
-    match l {
-        Layout::Right => pick("To the right", "Hacia la derecha"),
-        Layout::Radial => pick("Radial (as in IureEditor)", "Radial (como IureEditor)"),
-        Layout::Balanced => pick("Both sides", "A ambos lados"),
-        Layout::Down => pick("Top to bottom", "De arriba abajo"),
-    }
-}
-
-fn shape_label(s: Shape) -> &'static str {
-    match s {
-        Shape::Default => pick("Pill (default)", "Píldora (omisión)"),
-        Shape::Square => pick("Square", "Cuadrado"),
-        Shape::Rounded => pick("Rounded", "Redondeado"),
-        Shape::Circle => pick("Circle", "Círculo"),
-        Shape::Cloud => pick("Cloud", "Nube"),
-        Shape::Bang => pick("Burst", "Explosión"),
-        Shape::Hexagon => pick("Hexagon", "Hexágono"),
-    }
-}
-
 fn options(ui: &Ui, mindmap_layout: Layout) -> NoteOptions {
     NoteOptions {
         style: style(ui),
         mindmap_layout,
+        spanish: iurefficient_ui::lang::lang() == iurefficient_ui::lang::Lang::Es,
         mindmap_label: pick("Mind map", "Mapa mental").to_string(),
         mermaid_alt: pick("Diagram", "Diagrama").to_string(),
         mermaid_label: pick(
-            "Mermaid diagram that couldn't be drawn here — open it in IureEditor",
-            "Diagrama Mermaid que no se pudo dibujar aquí — ábrelo en IureEditor",
+            "Mermaid diagram that couldn't be drawn (click to edit it)",
+            "Diagrama Mermaid que no se pudo dibujar (púlsalo para editarlo)",
         )
         .to_string(),
         math_label: pick(
@@ -293,6 +261,8 @@ pub enum PreviewAct {
     Open(String),
     /// S1.19: el mapa mental `n`, pulsado en ese punto de la pantalla.
     Mindmap(usize, egui::Pos2),
+    /// S1.20: el bloque Mermaid `n`, pulsado en ese punto de la pantalla.
+    Mermaid(usize, egui::Pos2),
 }
 
 /// Pinta la vista previa de la nota `id` con el texto `body`. Devuelve lo que se pulsó.
@@ -483,6 +453,9 @@ fn render(app: &mut DeskApp, ui: &mut Ui, owner: Owner, id: NoteId, body: &str) 
                 NoteLink::Mindmap(_) => {
                     Some(pick("Change how this map is drawn", "Cambiar cómo se dibuja este mapa").to_string())
                 }
+                NoteLink::Mermaid(_) => Some(
+                    pick("Theme, view larger, edit or export", "Tema, ver en grande, editar o exportar").to_string(),
+                ),
                 NoteLink::Open(u) => Some(u.clone()),
                 NoteLink::None => None,
             };
@@ -500,6 +473,7 @@ fn render(app: &mut DeskApp, ui: &mut Ui, owner: Owner, id: NoteId, body: &str) 
                 act = match link {
                     NoteLink::Task(n) => Some(PreviewAct::Task(n)),
                     NoteLink::Mindmap(n) => Some(PreviewAct::Mindmap(n, p)),
+                    NoteLink::Mermaid(n) => Some(PreviewAct::Mermaid(n, p)),
                     NoteLink::Open(u) => Some(PreviewAct::Open(u)),
                     NoteLink::None => None,
                 };
@@ -515,86 +489,12 @@ pub fn handle(app: &mut DeskApp, id: NoteId, act: PreviewAct) {
         PreviewAct::Task(n) => toggle_task(app, id, n),
         PreviewAct::Open(url) => open_link(app, &url),
         PreviewAct::Mindmap(n, pos) => {
-            let Some(note) = app.session.notes().into_iter().find(|x| x.id == id) else { return };
-            let Some(b) = mindmap::find(&note.body).into_iter().nth(n) else { return };
-            app.note_preview.menu =
-                Some(MindmapMenu { note: id, n, pos, layout: b.layout, shape: b.shape, fresh: true });
+            crate::diagram_ui::open_menu(app, id, crate::diagram_ui::Target::Mindmap(n), pos);
+        }
+        PreviewAct::Mermaid(n, pos) => {
+            crate::diagram_ui::open_menu(app, id, crate::diagram_ui::Target::Mermaid(n), pos);
         }
     }
-}
-
-/// S1.19: cambia la distribución y la forma del mapa `n` de la nota, con deshacer.
-pub(crate) fn set_mindmap(app: &mut DeskApp, id: NoteId, n: usize, layout: Option<Layout>, shape: Shape) {
-    crate::pim::flush_note(app);
-    let Some(note) = app.session.notes().into_iter().find(|x| x.id == id) else { return };
-    let Some(new_body) = mindmap::set_options(&note.body, n, layout, shape) else { return };
-    let text = Text::new("Mind map changed", "Mapa mental cambiado");
-    match app.session.set_note_body(id, &new_body, text) {
-        Ok(iuredesk_engine::Outcome::Notice(notice)) => app.notice(notice),
-        Ok(_) => {}
-        Err(e) => app.notice(iuredesk_engine::Notice::error(Text::new(
-            format!("Could not save the note: {e}"),
-            format!("No se pudo guardar la nota: {e}"),
-        ))),
-    }
-}
-
-/// S1.19: el menú del mapa mental pulsado (si hay uno abierto para la nota `id`). Se cierra con
-/// Esc, al pulsar fuera o al elegir.
-pub fn mindmap_menu(app: &mut DeskApp, ctx: &Context, id: NoteId) {
-    let Some(mut m) = app.note_preview.menu.take() else { return };
-    if m.note != id || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        return;
-    }
-    let pref = layout_of(app.session.prefs.mindmap_layout);
-    let screen = ctx.content_rect();
-    let w = 240.0;
-    let pos = pos2(
-        (m.pos.x + 8.0).min(screen.right() - w - 12.0).max(screen.left() + 8.0),
-        m.pos.y.clamp(screen.top() + 40.0, (screen.bottom() - 420.0).max(screen.top() + 40.0)),
-    );
-    let mut pick_opts: Option<(Option<Layout>, Shape)> = None;
-    let area = egui::Area::new(egui::Id::unique("s1-19-mindmap-menu"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(pos)
-        .show(ctx, |ui| {
-            let c = theme::colors(ui);
-            egui::Frame::popup(ui.style()).corner_radius(10.0).inner_margin(10.0).show(ui, |ui| {
-                ui.set_width(w);
-                ui.label(
-                    RichText::new(pick("Layout", "Distribución")).font(theme::bold_font(ui.ctx(), 13.0)).color(c.text),
-                );
-                let default = format!("{} — {}", pick("As in Settings", "La de Preferencias"), layout_label(pref));
-                if ui.selectable_label(m.layout.is_none(), default).clicked() {
-                    pick_opts = Some((None, m.shape));
-                }
-                for l in Layout::ALL {
-                    if ui.selectable_label(m.layout == Some(l), layout_label(l)).clicked() {
-                        pick_opts = Some((Some(l), m.shape));
-                    }
-                }
-                ui.separator();
-                ui.label(
-                    RichText::new(pick("Node shape", "Forma de los nodos"))
-                        .font(theme::bold_font(ui.ctx(), 13.0))
-                        .color(c.text),
-                );
-                for s in Shape::ALL {
-                    if ui.selectable_label(m.shape == s, shape_label(s)).clicked() {
-                        pick_opts = Some((m.layout, s));
-                    }
-                }
-            });
-        });
-    if let Some((layout, shape)) = pick_opts {
-        set_mindmap(app, m.note, m.n, layout, shape);
-        return;
-    }
-    if !m.fresh && area.response.clicked_elsewhere() {
-        return;
-    }
-    m.fresh = false;
-    app.note_preview.menu = Some(m);
 }
 
 /// Marca o desmarca la casilla `n` de la nota, con deshacer.

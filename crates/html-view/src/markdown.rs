@@ -19,9 +19,11 @@
 //!   `#iuredesk-mindmap-N` para que la UI ofrezca cambiar su distribución y forma
 //!   ([`crate::mindmap::set_options`]).
 //! - Mermaid (UX-12): se dibuja con `mermaid-svg` (Rust puro) como imagen `cid:note-diagram-N`,
-//!   con el tema claro u oscuro de la nota, en [`crate::mermaid`] (acotado, en su hilo, con
-//!   tiempo máximo y sin pánicos que salgan). Si no se puede (sintaxis que no entiende, muy
-//!   grande), queda el bloque de código con la etiqueta que invita a abrirlo en IureEditor.
+//!   con sus opciones (S1.20, [`crate::diagram`]: tema de la app o de Mermaid, distribución de
+//!   los mapas mentales), acotado, en su hilo, con tiempo máximo y sin pánicos que salgan. Cada
+//!   diagrama es un enlace `#iuredesk-mermaid-N` (menú: tema, ver en grande, editar, exportar).
+//!   Si no se puede dibujar, queda el bloque de código con la etiqueta (también enlace, para
+//!   editarlo) y el porqué en lenguaje humano.
 //! - Fórmulas: Blitz no pinta MathML, así que salen como bloque de código con su etiqueta.
 //! - El HTML crudo de la nota pasa tal cual: lo neutraliza el saneador de `render`.
 //! - Anidamiento acotado ([`MAX_DEPTH`]): una nota con 10 000 `>` no produce un árbol que agote la
@@ -39,6 +41,9 @@ pub const MAX_LOCAL_IMAGES: usize = 64;
 pub const TASK_HREF: &str = "#iuredesk-task-";
 /// S1.19: prefijo de los enlaces de mapa mental (N = orden de [`crate::mindmap::find`]).
 pub const MINDMAP_HREF: &str = "#iuredesk-mindmap-";
+/// S1.20: prefijo de los enlaces de los bloques Mermaid (N = orden de
+/// [`crate::diagram::mermaid_blocks`]).
+pub const MERMAID_HREF: &str = "#iuredesk-mermaid-";
 /// Prefijo de los enlaces a IureEditor reescritos.
 pub const DEEP_HREF: &str = "#iuredesk-link-";
 
@@ -83,6 +88,8 @@ pub struct NoteOptions {
     pub mermaid_alt: String,
     /// S1.19: distribución de los mapas mentales que no piden una.
     pub mindmap_layout: crate::mindmap::Layout,
+    /// S1.20: idioma de los mensajes de error de los diagramas.
+    pub spanish: bool,
 }
 
 /// Resultado de la conversión.
@@ -108,6 +115,8 @@ pub enum NoteLink {
     Task(usize),
     /// S1.19: el mapa mental `n` (cambiar su distribución o su forma).
     Mindmap(usize),
+    /// S1.20: el bloque Mermaid `n` (tema, ver en grande, editar, exportar).
+    Mermaid(usize),
     /// Abrir fuera: `http`, `https`, `mailto` o un deep link `iureditor:`.
     Open(String),
     /// Nada (ancla interna, nota al pie…).
@@ -126,6 +135,9 @@ pub fn classify(href: &str, deep_links: &[String]) -> NoteLink {
     let h = href.trim();
     if let Some(n) = h.strip_prefix(TASK_HREF) {
         return n.parse().map_or(NoteLink::None, NoteLink::Task);
+    }
+    if let Some(n) = h.strip_prefix(MERMAID_HREF) {
+        return n.parse::<usize>().ok().filter(|n| *n < 256).map_or(NoteLink::None, NoteLink::Mermaid);
     }
     if let Some(n) = h.strip_prefix(MINDMAP_HREF) {
         return n
@@ -192,7 +204,7 @@ pub fn image_cid(i: usize) -> String {
     format!("note-img-{i}@iuredesk")
 }
 
-fn parser_options() -> Options {
+pub(crate) fn parser_options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
@@ -378,6 +390,8 @@ enum Frame {
 /// por el saneador, cosa que hace [`crate::render`].
 pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
     let (md, mut diagrams) = with_diagrams(md, opts);
+    // S1.20: bloques Mermaid vistos, en el orden de `diagram::mermaid_blocks`.
+    let mut mermaid_seen = 0usize;
     let md = md.as_str();
     let events: Vec<Event<'_>> = Parser::new_ext(md, parser_options()).collect();
     let mut out: Vec<Event<'_>> = Vec::with_capacity(events.len());
@@ -463,23 +477,26 @@ pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
                             }
                         }
                         depth = depth.saturating_sub(1);
-                        match crate::mermaid::to_svg(&code, &opts.style) {
-                            Some(svg) => {
+                        let k = mermaid_seen;
+                        mermaid_seen += 1;
+                        match crate::diagram::render(&code, &opts.style) {
+                            Ok(svg) => {
                                 let i = diagrams.len();
                                 diagrams.push((diagram_cid(i), svg.into_bytes()));
                                 out.push(Event::Html(
                                     format!(
-                                        "<p class=\"diagram\"><img alt=\"{}\" src=\"cid:{}\"></p>\n",
+                                        "<p class=\"diagram\"><a href=\"{MERMAID_HREF}{k}\"><img alt=\"{}\" src=\"cid:{}\"></a></p>\n",
                                         escape(&opts.mermaid_alt),
                                         diagram_cid(i)
                                     )
                                     .into(),
                                 ));
                             }
-                            None => out.push(Event::Html(
+                            Err(e) => out.push(Event::Html(
                                 format!(
-                                    "<div class=\"special\"><div class=\"label\">{}</div><pre><code>{}</code></pre></div>\n",
+                                    "<div class=\"special\"><div class=\"label\"><a href=\"{MERMAID_HREF}{k}\">{}</a> — {}</div><pre><code>{}</code></pre></div>\n",
                                     escape(&opts.mermaid_label),
+                                    escape(if opts.spanish { &e.es } else { &e.en }),
                                     escape(&code)
                                 )
                                 .into(),
@@ -778,6 +795,24 @@ mod tests {
         assert_eq!(toggle_task(md, 0).unwrap(), md.replace("[ ] uno", "[x] uno"));
         // Un `iuredesk-diagram:` escrito a mano que no existe no apunta a nada.
         assert!(!conv("![x](iuredesk-diagram:7)").html.contains("cid:note-diagram"));
+    }
+
+    #[test]
+    fn mermaid_blocks_are_links_and_errors_are_human() {
+        // S1.20: cada bloque es un enlace en el orden de `diagram::mermaid_blocks`, dibujado o no.
+        let md = "```mermaid\nflowchart LR\n  A-->B\n```\n\n```mermaid\nflowchart TD\n  C -->\n```\n";
+        let h = to_html(md, &NoteOptions { mermaid_label: "No se pudo".into(), spanish: true, ..Default::default() });
+        assert!(h.html.contains("href=\"#iuredesk-mermaid-0\"><img"), "{}", h.html);
+        assert!(h.html.contains("href=\"#iuredesk-mermaid-1\">No se pudo</a> — La línea 2 («C --&gt;»)"), "{}", h.html);
+        assert_eq!(classify("#iuredesk-mermaid-1", &[]), NoteLink::Mermaid(1));
+        assert_eq!(classify("#iuredesk-mermaid-9999", &[]), NoteLink::None);
+        assert_eq!(crate::diagram::mermaid_blocks(md).len(), 2);
+        // El tema del bloque se respeta (y sigue siendo de tamaño fijo).
+        let forest = md.replacen("```mermaid\n", "```mermaid\n---\nconfig:\n  theme: forest\n---\n", 1);
+        let a = to_html(md, &NoteOptions::default());
+        let b = to_html(&forest, &NoteOptions::default());
+        assert_ne!(a.diagrams[0].1, b.diagrams[0].1);
+        assert!(!String::from_utf8_lossy(&b.diagrams[0].1).contains("width=\"100%\""));
     }
 
     #[test]

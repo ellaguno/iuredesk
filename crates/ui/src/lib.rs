@@ -20,6 +20,7 @@ mod compose;
 mod contact_editor;
 mod crash_ui;
 mod diagnostics;
+mod diagram_ui;
 mod event_editor;
 mod header;
 mod html;

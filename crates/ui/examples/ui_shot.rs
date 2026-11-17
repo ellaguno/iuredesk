@@ -8,6 +8,9 @@
 //!  [--reader] [--focus] [--context-collapsed] [--strip] [--attachments [--attachments-menu]] [--emoji]
 //!  [--note] [--contact-editor[=new]] [--meeting[=email]] [--google-description] [--today-bg color|gradient|image|commons-demo|commons]`
 //!
+//! S1.20: con `--note`, `--diagram-menu` abre el menú del primer diagrama Mermaid,
+//! `--diagram-editor` su editor de código (con un error a la vista) y `--diagram-viewer` el visor.
+//!
 //! UX-8: `--note` agrega una nota con tablas, casillas, código, cita, Mermaid, fórmula, nota al
 //! pie y una imagen local (en una carpeta de notas temporal si no hay `--notes-dir`) y la muestra
 //! en la vista previa nativa (UX-12: con IureEditor de mentira, para que se vea Notas).
@@ -645,6 +648,30 @@ fn main() -> Result<(), String> {
         }
         later(&mut harness);
     }
+    // S1.20: menú, editor y visor de diagramas.
+    let diagram_flag = |f: &str| args.iter().any(|a| a == f);
+    if diagram_flag("--diagram-menu") || diagram_flag("--diagram-editor") || diagram_flag("--diagram-viewer") {
+        use egui_kittest::kittest::Queryable;
+        harness.state_mut().click_note_mermaid(0);
+        later(&mut harness);
+        let item = if diagram_flag("--diagram-editor") {
+            Some(pick_label("Edit code…", "Editar código…"))
+        } else if diagram_flag("--diagram-viewer") {
+            Some(pick_label("View larger", "Ver en grande"))
+        } else {
+            None
+        };
+        if let Some(label) = item
+            && let Some(n) = harness.query_by_label(label)
+        {
+            n.click();
+            later(&mut harness);
+        }
+        if diagram_flag("--diagram-editor") {
+            harness.state_mut().set_diagram_code("graph LR; Propuesta --> Firma --> Audiencia\n  Firma -->");
+            later(&mut harness);
+        }
+    }
     let mut image = harness.render()?;
     if let Some(ch) = flag("--crop-height").and_then(|v| v.parse::<u32>().ok()) {
         let (iw, ih) = image.dimensions();
@@ -752,4 +779,9 @@ fn demo_image() -> image::RgbaImage {
             image::Rgba([0x1a + t, 0x5f + t / 2, 0xb4, 255])
         }
     })
+}
+
+/// Texto de la interfaz en el idioma activo (para buscar botones en las capturas).
+fn pick_label(en: &'static str, es: &'static str) -> &'static str {
+    iuredesk_ui::iurefficient_ui::pick(en, es)
 }

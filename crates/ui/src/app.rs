@@ -261,6 +261,24 @@ impl DeskApp {
         }
     }
 
+    /// S1.20: lo mismo que pulsar el bloque Mermaid `k` de la vista previa (pruebas).
+    pub fn click_note_mermaid(&mut self, k: usize) {
+        if let Some(id) = self.session.note_focus() {
+            let act = crate::note_preview::PreviewAct::Mermaid(k, egui::pos2(300.0, 200.0));
+            crate::note_preview::handle(self, id, act);
+        }
+    }
+
+    /// S1.20: escribe en el editor de diagramas abierto (pruebas).
+    pub fn set_diagram_code(&mut self, code: &str) {
+        crate::diagram_ui::set_editor_code(self, code);
+    }
+
+    /// S1.20: el error que muestra el editor de diagramas y si tiene un dibujo válido (pruebas).
+    pub fn diagram_editor_state(&self) -> (Option<String>, bool) {
+        (crate::diagram_ui::editor_error(self), crate::diagram_ui::editor_has_drawing(self))
+    }
+
     /// Ventanas de redacción abiertas (pruebas).
     pub fn composer_count(&self) -> usize {
         self.composers.len()
@@ -510,6 +528,7 @@ impl DeskApp {
             && self.session.is_idle()
             && !self.html.pending()
             && !self.note_preview.pending()
+            && !self.note_preview.diagrams.busy()
             && !self.chat_preview.pending()
             && self.ai.hub.is_idle()
             && self.import.hub.is_idle()

@@ -132,7 +132,9 @@ Microsoft».
   elijas (Ajustes → General → Carpeta de notas). Los mapas mentales se dibujan hacia la derecha,
   radiales (como en IureEditor), a ambos lados o de arriba abajo: elige la forma de omisión en
   Ajustes → General → Mapas mentales, o pulsa un mapa para cambiar solo ese y la forma de sus
-  nodos (se deshace con Ctrl+Z).
+  nodos (se deshace con Ctrl+Z). Al pulsar un diagrama Mermaid puedes elegir su tema (el de la
+  app o uno de Mermaid), verlo en grande con zoom, editar su código con vista previa en vivo (si
+  algo está mal, te dice qué y en qué línea) y exportarlo como SVG o PNG.
 
 ## Mi día
 

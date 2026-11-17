@@ -32,8 +32,9 @@ flate2 = { workspace = true }
 pulldown-cmark = { workspace = true, features = ["html"] }
 mermaid-svg = { workspace = true }
 
-[dev-dependencies]
 png = { workspace = true }
+
+[dev-dependencies]
 proptest = { workspace = true }
 
 [lints]
