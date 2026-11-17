@@ -283,11 +283,18 @@ fn calendar_today_and_tasks() {
     assert_eq!(s.contacts().len(), 50);
 }
 
-fn wait_for(s: &mut Session, what: &str, mut f: impl FnMut(&mut Session) -> bool) {
+/// Espera a que se cumpla `f`. Es el único sitio que llama a `poll()`: la condición recibe los
+/// eventos de cada vuelta, así ninguno se pierde entre dos `poll()` (regresión: el aviso
+/// «Mensaje enviado» lo consumía un `poll()` ajeno a la condición y la espera se agotaba bajo
+/// carga). El plazo es generoso porque solo cuenta cuando algo falla.
+fn wait_for(s: &mut Session, what: &str, mut f: impl FnMut(&mut Session, &[Event]) -> bool) {
     let start = Instant::now();
-    while !f(s) {
-        assert!(start.elapsed() < Duration::from_secs(20), "tiempo agotado: {what}");
-        s.poll();
+    loop {
+        let events = s.poll();
+        if f(s, &events) {
+            return;
+        }
+        assert!(start.elapsed() < Duration::from_secs(60), "tiempo agotado: {what}");
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -302,7 +309,7 @@ fn mark_read_waits_for_the_delay() {
     select(&mut s, id);
     assert!(!s.store().get_envelope(id).unwrap().unwrap().flags.seen, "aún no");
     assert!(s.next_deadline().is_some(), "la UI sabe cuándo volver");
-    wait_for(&mut s, "leído tras el retraso", |s| s.store().get_envelope(id).unwrap().unwrap().flags.seen);
+    wait_for(&mut s, "leído tras el retraso", |s, _| s.store().get_envelope(id).unwrap().unwrap().flags.seen);
     // Pasar de largo no marca nada. Retraso largo: en Windows de la CI, ir y volver entre dos
     // correos podía tardar más de 150 ms y marcarlo «de verdad».
     s.prefs.mark_read_delay_ms = 3_000;
@@ -365,11 +372,8 @@ fn send_goes_through_the_outbox_with_undo() {
     s.prefs.send_undo_secs = 0;
     s.apply_send_prefs();
     s.send(&d).unwrap();
-    let mut sent = false;
-    wait_for(&mut s, "enviado", |s| {
-        let evs = s.poll();
-        sent |= evs.iter().any(|e| matches!(e, Event::Notice(n) if n.text.es == "Mensaje enviado"));
-        sent
+    wait_for(&mut s, "enviado", |_, evs| {
+        evs.iter().any(|e| matches!(e, Event::Notice(n) if n.text.es == "Mensaje enviado"))
     });
     assert!(s.outbox_entries().is_empty());
     let hits = s.store().search("asunto:prueba", 50).unwrap();
@@ -443,7 +447,7 @@ fn sync_events_update_status_and_announce_new_mail() {
     let id = s.rows()[0].id;
     select(&mut s, id);
     s.feed_sync_event(SyncEvent::FolderUpdated { account: acct, folder: iuredesk_model::FolderId(1) });
-    wait_for(&mut s, "refresco", |s| s.next_deadline().is_none());
+    wait_for(&mut s, "refresco", |s, _| s.next_deadline().is_none());
     settle(&mut s);
     assert_eq!(s.focused(), Some(id));
 }
