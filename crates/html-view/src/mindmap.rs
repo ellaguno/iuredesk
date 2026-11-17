@@ -127,6 +127,166 @@ impl Shape {
     }
 }
 
+/// Tamaño del nodo central. Un centro con mucho texto se parte en varias líneas en lugar de
+/// volverse una píldora (o un disco) enorme.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum RootSize {
+    /// Una línea si cabe; si es largo, partido en varias.
+    #[default]
+    Auto,
+    Small,
+    Medium,
+    Large,
+}
+
+impl RootSize {
+    pub const ALL: [RootSize; 4] = [RootSize::Auto, RootSize::Small, RootSize::Medium, RootSize::Large];
+
+    /// Palabra del metadato (`None`: automático, sin palabra).
+    pub fn token(self) -> Option<&'static str> {
+        match self {
+            RootSize::Auto => None,
+            RootSize::Small => Some("root-s"),
+            RootSize::Medium => Some("root-m"),
+            RootSize::Large => Some("root-l"),
+        }
+    }
+
+    pub fn from_token(t: &str) -> Option<RootSize> {
+        RootSize::ALL.into_iter().find(|r| r.token().is_some_and(|k| t.eq_ignore_ascii_case(k)))
+    }
+
+    /// Escala de la letra del centro, caracteres por línea y líneas como mucho (el chico es
+    /// angosto pero alto: no corta lo que cabe en una etiqueta de [`MAX_LABEL`]).
+    fn metrics(self, chars: usize) -> (f32, usize, usize) {
+        match self {
+            RootSize::Auto if chars <= 30 => (1.0, 30, 1),
+            RootSize::Auto => (1.0, 22, 4),
+            RootSize::Small => (0.95, 16, 6),
+            RootSize::Medium => (1.12, 20, 4),
+            RootSize::Large => (1.3, 28, 3),
+        }
+    }
+}
+
+/// Colores de las ramas.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Palette {
+    /// Los de la app: intensos, texto blanco con contraste AA.
+    #[default]
+    Iure,
+    /// Suaves, texto oscuro (líneas en un tono más oscuro para que se vean).
+    Pastel,
+    Warm,
+    Cool,
+    /// Grises.
+    Mono,
+}
+
+impl Palette {
+    pub const ALL: [Palette; 5] = [Palette::Iure, Palette::Pastel, Palette::Warm, Palette::Cool, Palette::Mono];
+
+    /// Palabra del metadato (`None`: la de la app, sin palabra).
+    pub fn token(self) -> Option<&'static str> {
+        match self {
+            Palette::Iure => None,
+            Palette::Pastel => Some("palette-pastel"),
+            Palette::Warm => Some("palette-warm"),
+            Palette::Cool => Some("palette-cool"),
+            Palette::Mono => Some("palette-mono"),
+        }
+    }
+
+    pub fn from_token(t: &str) -> Option<Palette> {
+        Palette::ALL.into_iter().find(|p| p.token().is_some_and(|k| t.eq_ignore_ascii_case(k)))
+    }
+
+    /// Valor en `iure.palette` de los bloques Mermaid.
+    pub fn value(self) -> &'static str {
+        match self {
+            Palette::Iure => "app",
+            Palette::Pastel => "pastel",
+            Palette::Warm => "warm",
+            Palette::Cool => "cool",
+            Palette::Mono => "mono",
+        }
+    }
+
+    pub fn from_value(v: &str) -> Option<Palette> {
+        Palette::ALL.into_iter().find(|p| v.eq_ignore_ascii_case(p.value()))
+    }
+
+    /// Los seis colores, en orden de rama.
+    pub fn colors(self) -> &'static [[u8; 3]; 6] {
+        match self {
+            Palette::Iure => &BRANCH,
+            Palette::Pastel => &[
+                [0xbf, 0xdb, 0xfe],
+                [0xbb, 0xf7, 0xd0],
+                [0xfe, 0xd7, 0xaa],
+                [0xe9, 0xd5, 0xff],
+                [0xfe, 0xca, 0xca],
+                [0xa5, 0xf3, 0xfc],
+            ],
+            Palette::Warm => &[
+                [0xb4, 0x53, 0x09],
+                [0xb9, 0x1c, 0x1c],
+                [0xbe, 0x18, 0x5d],
+                [0xc2, 0x41, 0x0c],
+                [0x92, 0x40, 0x0e],
+                [0x9d, 0x17, 0x4d],
+            ],
+            Palette::Cool => &[
+                [0x1d, 0x4e, 0xd8],
+                [0x0f, 0x76, 0x6e],
+                [0x43, 0x38, 0xca],
+                [0x03, 0x69, 0xa1],
+                [0x15, 0x80, 0x3d],
+                [0x6d, 0x28, 0xd9],
+            ],
+            Palette::Mono => &[
+                [0x1f, 0x29, 0x37],
+                [0x47, 0x55, 0x69],
+                [0x37, 0x41, 0x51],
+                [0x52, 0x52, 0x5b],
+                [0x33, 0x41, 0x55],
+                [0x4b, 0x55, 0x63],
+            ],
+        }
+    }
+}
+
+/// Opciones de dibujo que un mapa guarda en su metadato.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct MapOptions {
+    /// `None`: la de Preferencias.
+    pub layout: Option<Layout>,
+    pub shape: Shape,
+    pub root: RootSize,
+    pub palette: Palette,
+}
+
+impl MapOptions {
+    /// Cómo se dibuja, con `default_layout` si el mapa no pide una.
+    pub fn look(&self, default_layout: Layout) -> Look {
+        Look {
+            layout: self.layout.unwrap_or(default_layout),
+            shape: self.shape,
+            root: self.root,
+            palette: self.palette,
+        }
+    }
+}
+
+/// Todo lo que decide el dibujo de un mapa.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Look {
+    pub layout: Layout,
+    pub shape: Shape,
+    pub root: RootSize,
+    pub palette: Palette,
+}
+
 /// Un nodo del árbol.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Node {
@@ -140,9 +300,8 @@ pub struct Block {
     /// Bytes de la nota que ocupa (todas sus líneas, con el salto final).
     pub range: Range<usize>,
     pub view: View,
-    /// Distribución pedida en el metadato (`None`: la de Preferencias).
-    pub layout: Option<Layout>,
-    pub shape: Shape,
+    /// Opciones de dibujo del metadato.
+    pub options: MapOptions,
     /// El centro y sus ramas.
     pub root: Node,
     /// Líneas del cuerpo sin el `>` (la lista, para la vista con lista).
@@ -356,10 +515,14 @@ pub fn find(md: &str) -> Vec<Block> {
         let end = lines.get(j).map_or(md.len(), |(p, _)| *p);
         let words: Vec<&str> = meta.split_whitespace().collect();
         let view = if words.contains(&"map") { View::MapOnly } else { View::ListAndMap };
-        let layout = words.iter().find_map(|w| Layout::from_token(w));
-        let shape = words.iter().find_map(|w| Shape::from_token(w)).unwrap_or_default();
+        let options = MapOptions {
+            layout: words.iter().find_map(|w| Layout::from_token(w)),
+            shape: words.iter().find_map(|w| Shape::from_token(w)).unwrap_or_default(),
+            root: words.iter().find_map(|w| RootSize::from_token(w)).unwrap_or_default(),
+            palette: words.iter().find_map(|w| Palette::from_token(w)).unwrap_or_default(),
+        };
         let root = tree(&title, &body);
-        out.push(Block { range: start..end, view, layout, shape, root, body });
+        out.push(Block { range: start..end, view, options, root, body });
         if out.len() >= MAX_MAPS {
             break;
         }
@@ -368,13 +531,12 @@ pub fn find(md: &str) -> Vec<Block> {
     out
 }
 
-/// S1.19: cambia la distribución y la forma del mapa `n` (en el orden de [`find`]) y devuelve el
-/// Markdown nuevo. Solo se reescribe el metadato del marcador: la forma va primero (IureEditor toma
-/// como forma la primera palabra que no sea vista ni `links`), luego lo que ya había (vista,
-/// `links`, palabras desconocidas, tal cual) y al final la distribución. `layout: None` quita la
-/// distribución (vuelve la de Preferencias) y [`Shape::Default`] quita la forma. `None` si no hay
-/// mapa `n` o nada cambia.
-pub fn set_options(md: &str, n: usize, layout: Option<Layout>, shape: Shape) -> Option<String> {
+/// S1.19–S1.20: cambia las opciones de dibujo del mapa `n` (en el orden de [`find`]) y devuelve
+/// el Markdown nuevo. Solo se reescribe el metadato del marcador: la forma va primero (IureEditor
+/// toma como forma la primera palabra que no sea vista ni `links`), luego lo que ya había (vista,
+/// `links`, palabras desconocidas, tal cual) y al final distribución, tamaño del centro y paleta.
+/// Lo que está en su valor de omisión no se escribe. `None` si no hay mapa `n` o nada cambia.
+pub fn set_options(md: &str, n: usize, opts: &MapOptions) -> Option<String> {
     let block = find(md).into_iter().nth(n)?;
     let line_end = md.get(block.range.clone())?.find('\n').map_or(block.range.end, |e| block.range.start + e);
     let line = md.get(block.range.start..line_end)?;
@@ -382,14 +544,20 @@ pub fn set_options(md: &str, n: usize, layout: Option<Layout>, shape: Shape) -> 
     let close = open + line.get(open..)?.find(']')?;
     let inner = line.get(open..close)?;
     let (kind, meta) = inner.split_once('|').unwrap_or((inner, ""));
+    let ours = |w: &str| {
+        Layout::from_token(w).is_some()
+            || Shape::from_token(w).is_some()
+            || RootSize::from_token(w).is_some()
+            || Palette::from_token(w).is_some()
+    };
     let mut words: Vec<&str> = Vec::new();
-    if shape != Shape::Default {
-        words.push(shape.token());
+    if opts.shape != Shape::Default {
+        words.push(opts.shape.token());
     }
-    words.extend(meta.split_whitespace().filter(|w| Layout::from_token(w).is_none() && Shape::from_token(w).is_none()));
-    if let Some(l) = layout {
-        words.push(l.token());
-    }
+    words.extend(meta.split_whitespace().filter(|w| !ours(w)));
+    words.extend(opts.layout.map(Layout::token));
+    words.extend(opts.root.token());
+    words.extend(opts.palette.token());
     let new_inner = if words.is_empty() { kind.to_string() } else { format!("{kind}|{}", words.join(" ")) };
     if new_inner == inner {
         return None;
@@ -420,20 +588,22 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-/// Un nodo ya colocado: centro (`x`, `y`) y ancho.
+/// Un nodo ya colocado: centro (`x`, `y`), ancho y alto, líneas de texto y su letra.
 struct Placed {
     depth: usize,
     x: f32,
     y: f32,
     w: f32,
-    label: String,
+    h: f32,
+    lines: Vec<String>,
+    font: f32,
     color: [u8; 3],
     parent: Option<usize>,
     /// -1: rama a la izquierda del centro; 1: a la derecha o abajo.
     side: f32,
 }
 
-/// Medidas del dibujo, según la letra de la nota y la forma.
+/// Medidas del dibujo, según la letra de la nota, la forma y el centro.
 struct Metrics {
     font: f32,
     char_w: f32,
@@ -443,37 +613,170 @@ struct Metrics {
     gap: f32,
     pad: f32,
     shape: Shape,
+    palette: Palette,
+    /// El centro: líneas, letra, ancho y alto.
+    root_lines: Vec<String>,
+    root_font: f32,
+    root_w: f32,
+    root_h: f32,
+}
+
+/// Parte `text` en líneas de `max` caracteres como mucho (por palabras; una palabra más larga se
+/// corta), con `lines` líneas como mucho (la última termina en «…» si sobra texto).
+fn wrap(text: &str, max: usize, lines: usize) -> Vec<String> {
+    let max = max.max(4);
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cut = false;
+    for word in text.split_whitespace() {
+        let mut word: Vec<char> = word.chars().collect();
+        while !word.is_empty() {
+            let len = cur.chars().count();
+            let room = if len == 0 { max } else { max.saturating_sub(len + 1) };
+            if word.len() <= room {
+                if len > 0 {
+                    cur.push(' ');
+                }
+                cur.extend(word.drain(..));
+            } else if len == 0 {
+                cur.extend(word.drain(..max.min(word.len())));
+            } else {
+                out.push(std::mem::take(&mut cur));
+            }
+            if out.len() >= lines {
+                cut = true;
+                break;
+            }
+        }
+        if cut {
+            break;
+        }
+    }
+    if !cur.is_empty() && out.len() < lines {
+        out.push(cur);
+    } else if !cur.is_empty() {
+        cut = true;
+    }
+    if cut && let Some(last) = out.last_mut() {
+        let mut l: String = last.chars().take(max.saturating_sub(1)).collect();
+        l.push('…');
+        *last = l;
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
 }
 
 impl Metrics {
-    fn new(style: &NoteStyle, shape: Shape) -> Self {
+    fn new(style: &NoteStyle, look: &Look, root_label: &str) -> Self {
         let font = style.font_px.clamp(10.0, 24.0);
         let node_h = font * 1.9;
         // Las formas que sobresalen del rectángulo (nube, estrella, elipse) piden más aire entre filas.
         let row = font
-            * match shape {
+            * match look.shape {
                 Shape::Cloud | Shape::Bang => 3.4,
                 Shape::Circle => 3.0,
                 _ => 2.6,
             };
-        Self { font, char_w: font * 0.58, row, node_h, gap: 44.0, pad: 12.0, shape }
+        let (scale, chars, max_lines) = look.root.metrics(root_label.chars().count());
+        let root_lines = wrap(root_label, chars, max_lines);
+        let root_font = font * scale;
+        let longest = root_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+        let mut m = Self {
+            font,
+            char_w: font * 0.58,
+            row,
+            node_h,
+            gap: 44.0,
+            pad: 12.0,
+            shape: look.shape,
+            palette: look.palette,
+            root_lines,
+            root_font,
+            root_w: 0.0,
+            root_h: 0.0,
+        };
+        let line_h = root_font * 1.25;
+        m.root_w = (longest as f32 * root_font * 0.6 + 32.0 + m.extra()).clamp(56.0, 520.0);
+        m.root_h = node_h.max(m.root_lines.len() as f32 * line_h + root_font * 0.9);
+        m
     }
 
-    /// Ancho de un nodo: el texto más el relleno que pide la forma.
-    fn width(&self, label: &str) -> f32 {
-        let extra = match self.shape {
+    /// Relleno horizontal que pide la forma.
+    fn extra(&self) -> f32 {
+        match self.shape {
             Shape::Default | Shape::Square | Shape::Rounded => 0.0,
             Shape::Hexagon => self.node_h * 0.6,
             Shape::Circle | Shape::Cloud => self.node_h * 0.7,
             Shape::Bang => self.node_h * 1.1,
-        };
-        (label.chars().count() as f32 * self.char_w + 28.0 + extra).clamp(48.0, 460.0)
+        }
+    }
+
+    /// Ancho de un nodo (no el centro): el texto más el relleno que pide la forma.
+    fn width(&self, label: &str) -> f32 {
+        (label.chars().count() as f32 * self.char_w + 28.0 + self.extra()).clamp(48.0, 460.0)
+    }
+
+    /// Ancho del nodo a esa profundidad.
+    fn node_w(&self, depth: usize, label: &str) -> f32 {
+        if depth == 0 { self.root_w } else { self.width(label) }
+    }
+
+    /// Color de la rama `k` del centro.
+    fn branch(&self, k: usize) -> [u8; 3] {
+        let c = self.palette.colors();
+        c.get(k % c.len()).copied().unwrap_or([0x47, 0x55, 0x69])
+    }
+
+    /// Un nodo (no el centro) listo para colocar.
+    fn node(&self, n: &Node, depth: usize, color: [u8; 3], parent: Option<usize>, side: f32) -> Placed {
+        if depth == 0 {
+            return self.root(n, color);
+        }
+        Placed {
+            depth,
+            x: 0.0,
+            y: 0.0,
+            w: self.width(&n.label),
+            h: self.node_h,
+            lines: vec![n.label.clone()],
+            font: self.font,
+            color,
+            parent,
+            side,
+        }
+    }
+
+    /// El centro listo para colocar en (0, 0).
+    fn root(&self, _n: &Node, color: [u8; 3]) -> Placed {
+        Placed {
+            depth: 0,
+            x: 0.0,
+            y: 0.0,
+            w: self.root_w,
+            h: self.root_h,
+            lines: self.root_lines.clone(),
+            font: self.root_font,
+            color,
+            parent: None,
+            side: 1.0,
+        }
     }
 }
 
-/// Color de la rama `k` del centro.
-fn branch(k: usize) -> [u8; 3] {
-    BRANCH.get(k % BRANCH.len()).copied().unwrap_or([0x47, 0x55, 0x69])
+/// Color del centro.
+const CENTER: [u8; 3] = [0x64, 0x74, 0x8b];
+
+/// Texto oscuro o blanco según lo claro del fondo.
+fn ink(c: [u8; 3]) -> [u8; 3] {
+    let l = 0.2126 * f32::from(c[0]) + 0.7152 * f32::from(c[1]) + 0.0722 * f32::from(c[2]);
+    if l > 150.0 { [0x1f, 0x23, 0x28] } else { [0xff, 0xff, 0xff] }
+}
+
+/// Color de la línea de una rama: el mismo; si el color es claro, más oscuro (que se vea).
+fn edge_color(c: [u8; 3]) -> [u8; 3] {
+    if ink(c) == [0xff, 0xff, 0xff] { c } else { c.map(|v| (f32::from(v) * 0.55) as u8) }
 }
 
 /// Horizontal: hojas una debajo de otra, cada padre a la altura media de sus hijos. Deja la `y`.
@@ -489,7 +792,7 @@ fn place_rows(
     out: &mut Vec<Placed>,
 ) -> f32 {
     let idx = out.len();
-    out.push(Placed { depth, x: 0.0, y: 0.0, w: m.width(&n.label), label: n.label.clone(), color, parent, side });
+    out.push(m.node(n, depth, color, parent, side));
     let y = if n.children.is_empty() {
         let y = *next_y;
         *next_y += m.row;
@@ -510,18 +813,17 @@ fn place_rows(
     y
 }
 
-/// Hojas del subárbol (para repartir las ramas entre los dos lados).
+/// Hojas del subárbol (para repartir las ramas entre los dos lados o el círculo).
 fn leaves(n: &Node) -> usize {
-    if n.children.is_empty() { 1 } else { n.children.iter().map(leaves).sum() }
+    if n.children.is_empty() { 1 } else { n.children.iter().map(leaves).sum::<usize>().max(1) }
 }
 
 /// Columnas horizontales: la `x` de cada nodo según su nivel y su lado. El centro en `x = 0`.
 fn columns(placed: &mut [Placed], m: &Metrics) {
     let depth = placed.iter().map(|p| p.depth).max().unwrap_or(0);
-    let root_w = placed.first().map_or(0.0, |p| p.w);
     for side in [1.0_f32, -1.0] {
         // Borde interior de cada columna (distancia desde el centro).
-        let mut edge = root_w / 2.0 + m.gap;
+        let mut edge = m.root_w / 2.0 + m.gap;
         for d in 1..=depth {
             let widest = placed.iter().filter(|p| p.depth == d && p.side == side).map(|p| p.w).fold(0.0_f32, f32::max);
             for p in placed.iter_mut().filter(|p| p.depth == d && p.side == side) {
@@ -534,17 +836,7 @@ fn columns(placed: &mut [Placed], m: &Metrics) {
 
 /// Coloca el árbol con la distribución horizontal (`Right` o `Balanced`).
 fn layout_rows(root: &Node, balanced: bool, m: &Metrics) -> Vec<Placed> {
-    let center = [0x64, 0x74, 0x8b];
-    let mut placed = vec![Placed {
-        depth: 0,
-        x: 0.0,
-        y: 0.0,
-        w: m.width(&root.label),
-        label: root.label.clone(),
-        color: center,
-        parent: None,
-        side: 1.0,
-    }];
+    let mut placed = vec![m.root(root, CENTER)];
     // Lado de cada rama: en equilibrado, las primeras a la derecha hasta la mitad de las hojas.
     let total: usize = root.children.iter().map(leaves).sum();
     let mut acc = 0usize;
@@ -563,7 +855,7 @@ fn layout_rows(root: &Node, balanced: bool, m: &Metrics) -> Vec<Placed> {
         let from = placed.len();
         for (k, c) in root.children.iter().enumerate() {
             if sides.get(k).copied() == Some(side) {
-                place_rows(c, 1, branch(k), Some(0), side, m, &mut next_y, &mut placed);
+                place_rows(c, 1, m.branch(k), Some(0), side, m, &mut next_y, &mut placed);
             }
         }
         let Some(span) = spans.get_mut(usize::from(side < 0.0)) else { continue };
@@ -589,13 +881,18 @@ fn layout_rows(root: &Node, balanced: bool, m: &Metrics) -> Vec<Placed> {
 
 /// Ancho del subárbol en la distribución vertical.
 fn extent(n: &Node, m: &Metrics, depth: usize) -> f32 {
-    let own = m.width(&n.label);
+    let own = m.node_w(depth, &n.label);
     if n.children.is_empty() || depth > MAX_DEPTH + 1 {
         return own;
     }
     let kids: f32 = n.children.iter().map(|c| extent(c, m, depth + 1)).sum::<f32>()
         + m.gap / 2.0 * n.children.len().saturating_sub(1) as f32;
     own.max(kids)
+}
+
+/// `y` del nivel `depth` en la distribución vertical (el centro puede ser más alto).
+fn level_y(depth: usize, m: &Metrics) -> f32 {
+    if depth == 0 { 0.0 } else { m.root_h / 2.0 + m.gap + m.node_h / 2.0 + (depth - 1) as f32 * (m.node_h + m.gap) }
 }
 
 /// Vertical: cada subárbol ocupa su ancho; el padre, centrado sobre sus hijos.
@@ -610,9 +907,9 @@ fn place_down(
     out: &mut Vec<Placed>,
 ) -> f32 {
     let idx = out.len();
-    let w = m.width(&n.label);
-    let y = depth as f32 * (m.node_h + m.gap);
-    out.push(Placed { depth, x: 0.0, y, w, label: n.label.clone(), color, parent, side: 1.0 });
+    let mut node = m.node(n, depth, color, parent, 1.0);
+    node.y = level_y(depth, m);
+    out.push(node);
     let ext = extent(n, m, depth);
     let kids: f32 = n.children.iter().map(|c| extent(c, m, depth + 1)).sum::<f32>()
         + m.gap / 2.0 * n.children.len().saturating_sub(1) as f32;
@@ -620,7 +917,7 @@ fn place_down(
     let mut first = None;
     let mut last = 0.0;
     for (k, c) in n.children.iter().enumerate() {
-        let col = if depth == 0 { branch(k) } else { color };
+        let col = if depth == 0 { m.branch(k) } else { color };
         let cx = place_down(c, depth + 1, col, Some(idx), x, m, out);
         first.get_or_insert(cx);
         last = cx;
@@ -636,7 +933,80 @@ fn place_down(
     cx
 }
 
+/// Radial: cada rama recibe un sector del círculo proporcional a sus hojas; cada nivel es un
+/// anillo. Los anillos se alejan hasta que ningún nodo se encima con otro (ni con el centro).
+fn layout_radial(root: &Node, m: &Metrics) -> Vec<Placed> {
+    use std::f32::consts::{FRAC_PI_2, TAU};
+    let mut placed = vec![m.root(root, CENTER)];
+    let mut angles = vec![0.0_f32];
+    #[allow(clippy::too_many_arguments)]
+    fn assign(
+        n: &Node,
+        depth: usize,
+        a0: f32,
+        a1: f32,
+        color: [u8; 3],
+        parent: usize,
+        m: &Metrics,
+        placed: &mut Vec<Placed>,
+        angles: &mut Vec<f32>,
+    ) {
+        let idx = placed.len();
+        placed.push(m.node(n, depth, color, Some(parent), 1.0));
+        angles.push((a0 + a1) / 2.0);
+        let total = leaves(n) as f32;
+        let mut a = a0;
+        for c in &n.children {
+            let span = (a1 - a0) * leaves(c) as f32 / total;
+            assign(c, depth + 1, a, a + span, color, idx, m, placed, angles);
+            a += span;
+        }
+    }
+    let total = leaves(root) as f32;
+    let mut a = -FRAC_PI_2;
+    for (k, c) in root.children.iter().enumerate() {
+        let span = TAU * leaves(c) as f32 / total;
+        assign(c, 1, a, a + span, m.branch(k), 0, m, &mut placed, &mut angles);
+        a += span;
+    }
+    let max_depth = placed.iter().map(|p| p.depth).max().unwrap_or(0);
+    let widest = |d: usize| placed.iter().filter(|p| p.depth == d).map(|p| p.w).fold(0.0_f32, f32::max);
+    let mut radius = vec![0.0_f32; max_depth + 1];
+    for d in 1..=max_depth {
+        let prev = radius.get(d - 1).copied().unwrap_or(0.0);
+        let inner = if d == 1 { m.root_w.max(m.root_h) / 2.0 } else { widest(d - 1) * 0.35 };
+        if let Some(r) = radius.get_mut(d) {
+            *r = prev + inner + widest(d) * 0.35 + m.gap;
+        }
+    }
+    let margin = 8.0;
+    for _ in 0..48 {
+        for (p, ang) in placed.iter_mut().zip(&angles) {
+            let r = radius.get(p.depth).copied().unwrap_or(0.0);
+            p.x = r * ang.cos();
+            p.y = r * ang.sin();
+        }
+        // El primer par que se encima: se alejan los anillos desde el más externo de los dos.
+        let mut hit = None;
+        'outer: for (i, a) in placed.iter().enumerate() {
+            for b in placed.iter().skip(i + 1) {
+                if (a.x - b.x).abs() * 2.0 < a.w + b.w + margin * 2.0 && (a.y - b.y).abs() * 2.0 < a.h + b.h + margin {
+                    hit = Some(a.depth.max(b.depth).max(1));
+                    break 'outer;
+                }
+            }
+        }
+        let Some(d) = hit else { break };
+        let step = (radius.get(d).copied().unwrap_or(0.0) * 0.12).max(m.node_h * 0.6);
+        for r in radius.iter_mut().skip(d) {
+            *r += step;
+        }
+    }
+    placed
+}
+
 /// Figura de un nodo de ancho `w` centrado en (`cx`, `cy`).
+#[allow(clippy::too_many_arguments)]
 fn shape_svg(s: &mut String, shape: Shape, cx: f32, cy: f32, w: f32, h: f32, fill: &str, stroke: &str) {
     let (x, y) = (cx - w / 2.0, cy - h / 2.0);
     let paint = format!("fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"1.5\"");
@@ -644,8 +1014,8 @@ fn shape_svg(s: &mut String, shape: Shape, cx: f32, cy: f32, w: f32, h: f32, fil
         Shape::Default | Shape::Square | Shape::Rounded => {
             let rx = match shape {
                 Shape::Square => 2.0,
-                Shape::Rounded => h * 0.28,
-                _ => h / 2.0,
+                Shape::Rounded => h.min(40.0) * 0.28,
+                _ => h.min(w) / 2.0,
             };
             write!(s, "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{w:.1}\" height=\"{h:.1}\" rx=\"{rx:.1}\" {paint}/>")
         }
@@ -653,7 +1023,7 @@ fn shape_svg(s: &mut String, shape: Shape, cx: f32, cy: f32, w: f32, h: f32, fil
             write!(s, "<ellipse cx=\"{cx:.1}\" cy=\"{cy:.1}\" rx=\"{:.1}\" ry=\"{:.1}\" {paint}/>", w / 2.0, h * 0.62)
         }
         Shape::Hexagon => {
-            let i = h / 2.0;
+            let i = h.min(w / 2.0) / 2.0;
             write!(
                 s,
                 "<polygon points=\"{:.1},{y:.1} {:.1},{y:.1} {:.1},{cy:.1} {:.1},{:.1} {:.1},{:.1} {x:.1},{cy:.1}\" {paint}/>",
@@ -669,10 +1039,10 @@ fn shape_svg(s: &mut String, shape: Shape, cx: f32, cy: f32, w: f32, h: f32, fil
         Shape::Cloud => {
             // Puntos repartidos por igual sobre el contorno de una píldora, unidos por arcos hacia
             // fuera: bultos del mismo tamaño en todo el borde.
-            let a = h * 0.55;
+            let a = (h * 0.55).min(w / 2.0);
             let straight = (w - 2.0 * a).max(0.0);
             let per = 2.0 * straight + std::f32::consts::TAU * a;
-            let n = ((per / (h * 0.75)).round() as usize).clamp(8, 32);
+            let n = ((per / (h.min(48.0) * 0.75)).round() as usize).clamp(8, 40);
             let (left, right) = (cx - straight / 2.0, cx + straight / 2.0);
             let pt = |k: usize| {
                 let mut d = per * (k % n) as f32 / n as f32;
@@ -705,11 +1075,12 @@ fn shape_svg(s: &mut String, shape: Shape, cx: f32, cy: f32, w: f32, h: f32, fil
         }
         Shape::Bang => {
             // Estrella: picos sobre una elipse exterior y valles sobre una interior.
-            let n = ((w / (h * 0.45)).round() as usize).clamp(8, 28);
+            let n = ((w / (h.min(48.0) * 0.45)).round() as usize).clamp(8, 32);
             let mut pts = String::new();
             for k in 0..n * 2 {
                 let a = std::f32::consts::PI * k as f32 / n as f32;
-                let (rx, ry) = if k % 2 == 0 { (w / 2.0, h * 0.75) } else { (w / 2.0 - h * 0.3, h * 0.5) };
+                let dip = h.min(48.0) * 0.3;
+                let (rx, ry) = if k % 2 == 0 { (w / 2.0, h * 0.75) } else { (w / 2.0 - dip, h * 0.75 - dip) };
                 let _ = write!(pts, "{:.1},{:.1} ", cx + rx * a.cos(), cy + ry * a.sin());
             }
             write!(s, "<polygon points=\"{}\" {paint}/>", pts.trim_end())
@@ -717,19 +1088,42 @@ fn shape_svg(s: &mut String, shape: Shape, cx: f32, cy: f32, w: f32, h: f32, fil
     };
 }
 
+/// Cómo se dibujan las líneas.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Edges {
+    /// Curvas de lado a lado (derecha, ambos lados).
+    Horizontal,
+    /// Curvas de abajo hacia arriba (organigrama).
+    Vertical,
+    /// Rectas de borde a borde (radial).
+    Straight,
+}
+
+/// Punto del borde de la caja (`w` × `h`) en dirección (`dx`, `dy`) desde su centro.
+fn border(w: f32, h: f32, dx: f32, dy: f32) -> (f32, f32) {
+    let len = dx.hypot(dy);
+    if len < f32::EPSILON {
+        return (0.0, 0.0);
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let tx = if ux.abs() > f32::EPSILON { (w / 2.0) / ux.abs() } else { f32::MAX };
+    let ty = if uy.abs() > f32::EPSILON { (h / 2.0) / uy.abs() } else { f32::MAX };
+    let t = tx.min(ty);
+    (ux * t, uy * t)
+}
+
 /// SVG de un árbol ya colocado (coordenadas relativas; aquí se encuadran).
-fn paint(placed: &[Placed], m: &Metrics, style: &NoteStyle, vertical: bool) -> String {
-    let h = m.node_h;
-    // Margen vertical extra para las formas que sobresalen (nube, estrella, elipse).
+fn paint(placed: &[Placed], m: &Metrics, style: &NoteStyle, edges: Edges) -> String {
+    // Margen extra para las formas que sobresalen (nube, estrella, elipse).
     let bleed = match m.shape {
-        Shape::Bang => h * 0.3,
-        Shape::Cloud | Shape::Circle => h * 0.25,
+        Shape::Bang => m.node_h * 0.3,
+        Shape::Cloud | Shape::Circle => m.node_h * 0.25,
         _ => 0.0,
     };
     let min_x = placed.iter().map(|p| p.x - p.w / 2.0).fold(f32::MAX, f32::min);
     let max_x = placed.iter().map(|p| p.x + p.w / 2.0).fold(f32::MIN, f32::max);
-    let min_y = placed.iter().map(|p| p.y - h / 2.0).fold(f32::MAX, f32::min);
-    let max_y = placed.iter().map(|p| p.y + h / 2.0).fold(f32::MIN, f32::max);
+    let min_y = placed.iter().map(|p| p.y - p.h / 2.0).fold(f32::MAX, f32::min);
+    let max_y = placed.iter().map(|p| p.y + p.h / 2.0).fold(f32::MIN, f32::max);
     let (ox, oy) = (m.pad + bleed - min_x, m.pad + bleed - min_y);
     let width = (max_x - min_x + 2.0 * (m.pad + bleed)).clamp(1.0, 4_000.0);
     let height = (max_y - min_y + 2.0 * (m.pad + bleed)).clamp(1.0, 8_000.0);
@@ -743,66 +1137,86 @@ fn paint(placed: &[Placed], m: &Metrics, style: &NoteStyle, vertical: bool) -> S
     for p in placed {
         let Some(par) = p.parent.and_then(|i| placed.get(i)) else { continue };
         let stroke = format!(
-            "fill=\"none\" stroke=\"{}\" stroke-width=\"{:.1}\" stroke-opacity=\"0.85\"",
-            hex(p.color),
+            "fill=\"none\" stroke=\"{}\" stroke-width=\"{:.1}\" stroke-opacity=\"0.85\" stroke-linecap=\"round\"",
+            hex(edge_color(p.color)),
             if p.depth == 1 { 3.0 } else { 2.0 }
         );
-        if vertical {
-            let (x1, y1) = (par.x + ox, par.y + oy + h / 2.0);
-            let (x2, y2) = (p.x + ox, p.y + oy - h / 2.0);
-            let my = (y1 + y2) / 2.0;
-            let _ =
-                write!(s, "<path d=\"M{x1:.1} {y1:.1} C{x1:.1} {my:.1} {x2:.1} {my:.1} {x2:.1} {y2:.1}\" {stroke}/>");
-        } else {
-            let x1 = par.x + ox + p.side * par.w / 2.0;
-            let x2 = p.x + ox - p.side * p.w / 2.0;
-            let (y1, y2) = (par.y + oy, p.y + oy);
-            let mx = (x1 + x2) / 2.0;
-            let _ =
-                write!(s, "<path d=\"M{x1:.1} {y1:.1} C{mx:.1} {y1:.1} {mx:.1} {y2:.1} {x2:.1} {y2:.1}\" {stroke}/>");
-        }
+        let _ = match edges {
+            Edges::Vertical => {
+                let (x1, y1) = (par.x + ox, par.y + oy + par.h / 2.0);
+                let (x2, y2) = (p.x + ox, p.y + oy - p.h / 2.0);
+                let my = (y1 + y2) / 2.0;
+                write!(s, "<path d=\"M{x1:.1} {y1:.1} C{x1:.1} {my:.1} {x2:.1} {my:.1} {x2:.1} {y2:.1}\" {stroke}/>")
+            }
+            Edges::Horizontal => {
+                let x1 = par.x + ox + p.side * par.w / 2.0;
+                let x2 = p.x + ox - p.side * p.w / 2.0;
+                let (y1, y2) = (par.y + oy, p.y + oy);
+                let mx = (x1 + x2) / 2.0;
+                write!(s, "<path d=\"M{x1:.1} {y1:.1} C{mx:.1} {y1:.1} {mx:.1} {y2:.1} {x2:.1} {y2:.1}\" {stroke}/>")
+            }
+            Edges::Straight => {
+                let (dx, dy) = (p.x - par.x, p.y - par.y);
+                let (bx, by) = border(par.w, par.h, dx, dy);
+                let (cx, cy) = border(p.w, p.h, -dx, -dy);
+                let (x1, y1) = (par.x + ox + bx, par.y + oy + by);
+                let (x2, y2) = (p.x + ox + cx, p.y + oy + cy);
+                write!(s, "<path d=\"M{x1:.1} {y1:.1} L{x2:.1} {y2:.1}\" {stroke}/>")
+            }
+        };
     }
     for p in placed {
         let (cx, cy) = (p.x + ox, p.y + oy);
-        let (fill, ink) = if p.depth == 0 { (style.code_bg, style.text) } else { (p.color, [0xff, 0xff, 0xff]) };
-        let stroke = if p.depth == 0 { hex(style.border) } else { hex(p.color) };
-        shape_svg(&mut s, m.shape, cx, cy, p.w, h, &hex(fill), &stroke);
-        let _ = write!(
-            s,
-            "<text x=\"{cx:.1}\" y=\"{cy:.1}\" fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\"{}>{}</text>",
-            hex(ink),
-            if p.depth <= 1 { " font-weight=\"600\"" } else { "" },
-            esc(&p.label)
-        );
+        let (fill, text) = if p.depth == 0 { (style.code_bg, style.text) } else { (p.color, ink(p.color)) };
+        let stroke = if p.depth == 0 { hex(style.border) } else { hex(edge_color(p.color)) };
+        shape_svg(&mut s, m.shape, cx, cy, p.w, p.h, &hex(fill), &stroke);
+        let weight = if p.depth <= 1 { " font-weight=\"600\"" } else { "" };
+        let size = if (p.font - font).abs() > 0.05 { format!(" font-size=\"{:.1}\"", p.font) } else { String::new() };
+        if let [line] = p.lines.as_slice() {
+            let _ = write!(
+                s,
+                "<text x=\"{cx:.1}\" y=\"{cy:.1}\" fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\"{weight}{size}>{}</text>",
+                hex(text),
+                esc(line)
+            );
+        } else {
+            let line_h = p.font * 1.25;
+            let top = cy - (p.lines.len().saturating_sub(1)) as f32 * line_h / 2.0;
+            let _ = write!(
+                s,
+                "<text fill=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\"{weight}{size}>",
+                hex(text)
+            );
+            for (i, line) in p.lines.iter().enumerate() {
+                let _ = write!(s, "<tspan x=\"{cx:.1}\" y=\"{:.1}\">{}</tspan>", top + i as f32 * line_h, esc(line));
+            }
+            s.push_str("</text>");
+        }
     }
     s.push_str("</svg>");
     s
 }
 
-/// SVG del mapa con los colores y la letra de la nota, la distribución y la forma pedidas. El
-/// radial lo dibuja `mermaid-svg` (acotado, en su hilo); si no puede, sale a la derecha. Ancho y
-/// alto acotados.
-pub fn draw(root: &Node, style: &NoteStyle, layout: Layout, shape: Shape) -> String {
-    if layout == Layout::Radial
-        && let Some(svg) = crate::mermaid::mindmap_svg(root, shape, style)
-    {
-        return svg;
-    }
-    let m = Metrics::new(style, shape);
-    match layout {
+/// SVG del mapa con los colores y la letra de la nota y el aspecto pedido. Todo dibujo propio
+/// (el radial también: el de `mermaid-svg` tapaba las líneas con un disco central enorme). Ancho
+/// y alto acotados.
+pub fn draw(root: &Node, style: &NoteStyle, look: &Look) -> String {
+    let m = Metrics::new(style, look, &root.label);
+    match look.layout {
         Layout::Down => {
             let mut placed = Vec::new();
-            place_down(root, 0, [0x64, 0x74, 0x8b], None, 0.0, &m, &mut placed);
-            paint(&placed, &m, style, true)
+            place_down(root, 0, CENTER, None, 0.0, &m, &mut placed);
+            paint(&placed, &m, style, Edges::Vertical)
         }
-        Layout::Balanced => paint(&layout_rows(root, true, &m), &m, style, false),
-        Layout::Right | Layout::Radial => paint(&layout_rows(root, false, &m), &m, style, false),
+        Layout::Balanced => paint(&layout_rows(root, true, &m), &m, style, Edges::Horizontal),
+        Layout::Right => paint(&layout_rows(root, false, &m), &m, style, Edges::Horizontal),
+        Layout::Radial => paint(&layout_radial(root, &m), &m, style, Edges::Straight),
     }
 }
 
-/// Como [`draw`] a la derecha y con píldoras (lo de antes de S1.19).
+/// Como [`draw`] a la derecha, con píldoras y lo de omisión (lo de antes de S1.19).
 pub fn svg(root: &Node, style: &NoteStyle) -> String {
-    draw(root, style, Layout::Right, Shape::Default)
+    draw(root, style, &Look::default())
 }
 
 #[cfg(test)]
@@ -880,40 +1294,54 @@ mod tests {
 
     #[test]
     fn meta_words_in_any_order() {
-        // S1.19: forma, vista, `links` y distribución, en cualquier orden y mayúsculas.
-        let b = find("> [!MINDMAP|Layout-Radial map CLOUD links] X\n> - a\n");
-        assert_eq!((b[0].layout, b[0].shape, b[0].view), (Some(Layout::Radial), Shape::Cloud, View::MapOnly));
+        // S1.19–S1.20: forma, vista, `links`, distribución, centro y paleta, en cualquier orden.
+        let b = find("> [!MINDMAP|Layout-Radial map CLOUD links root-s palette-warm] X\n> - a\n");
+        let o = b[0].options;
+        assert_eq!(
+            (o.layout, o.shape, o.root, o.palette),
+            (Some(Layout::Radial), Shape::Cloud, RootSize::Small, Palette::Warm)
+        );
+        assert_eq!(b[0].view, View::MapOnly);
         let b = find("> [!MINDMAP|right] X\n");
-        assert_eq!((b[0].layout, b[0].shape, b[0].view), (None, Shape::Default, View::ListAndMap));
+        assert_eq!((b[0].options, b[0].view), (MapOptions::default(), View::ListAndMap));
         let b = find("> [!MINDMAP|rara layout-both hexagon] X\n");
-        assert_eq!((b[0].layout, b[0].shape), (Some(Layout::Balanced), Shape::Hexagon));
+        assert_eq!((b[0].options.layout, b[0].options.shape), (Some(Layout::Balanced), Shape::Hexagon));
+    }
+
+    fn opts(layout: Option<Layout>, shape: Shape) -> MapOptions {
+        MapOptions { layout, shape, ..Default::default() }
     }
 
     #[test]
     fn set_options_rewrites_only_the_meta() {
         let md = "Antes\n\n> [!MINDMAP|map links rara] Centro\n> - a\n\n> [!mindmap] Otro\n> - b\n";
-        // La forma va primero (IureEditor la toma de ahí), lo demás se conserva y la distribución al final.
-        let out = set_options(md, 0, Some(Layout::Down), Shape::Bang).unwrap();
+        // La forma va primero (IureEditor la toma de ahí), lo demás se conserva y lo nuestro al final.
+        let out = set_options(md, 0, &opts(Some(Layout::Down), Shape::Bang)).unwrap();
         assert_eq!(out, md.replace("[!MINDMAP|map links rara]", "[!MINDMAP|bang map links rara layout-down]"));
-        // Cambiar otra vez reemplaza, no acumula.
-        let again = set_options(&out, 0, Some(Layout::Radial), Shape::Square).unwrap();
-        assert!(again.contains("[!MINDMAP|square map links rara layout-radial] Centro"), "{again}");
+        // Cambiar otra vez reemplaza, no acumula; centro y paleta van al final.
+        let all = MapOptions {
+            layout: Some(Layout::Radial),
+            shape: Shape::Square,
+            root: RootSize::Large,
+            palette: Palette::Mono,
+        };
+        let again = set_options(&out, 0, &all).unwrap();
+        assert!(again.contains("[!MINDMAP|square map links rara layout-radial root-l palette-mono] Centro"), "{again}");
         // Volver a lo de omisión quita las palabras propias.
-        let back = set_options(&again, 0, None, Shape::Default).unwrap();
+        let back = set_options(&again, 0, &MapOptions::default()).unwrap();
         assert_eq!(back, md);
         // El segundo mapa (sin metadato, en minúsculas) gana uno sin tocar el resto.
-        let second = set_options(md, 1, Some(Layout::Balanced), Shape::Default).unwrap();
+        let second = set_options(md, 1, &opts(Some(Layout::Balanced), Shape::Default)).unwrap();
         assert_eq!(second, md.replace("[!mindmap] Otro", "[!mindmap|layout-both] Otro"));
         // Nada que cambiar o mapa inexistente.
-        assert_eq!(set_options(md, 1, None, Shape::Default), None);
-        assert_eq!(set_options(md, 2, Some(Layout::Down), Shape::Default), None);
+        assert_eq!(set_options(md, 1, &MapOptions::default()), None);
+        assert_eq!(set_options(md, 2, &opts(Some(Layout::Down), Shape::Default)), None);
         // Lo que se escribe se vuelve a leer igual.
-        let b = find(&out);
-        assert_eq!((b[0].layout, b[0].shape, b[0].view), (Some(Layout::Down), Shape::Bang, View::MapOnly));
-        assert_eq!(b[0].root, find(md)[0].root);
+        assert_eq!(find(&again)[0].options, all);
+        assert_eq!(find(&out)[0].root, find(md)[0].root);
     }
 
-    /// Cajas de los nodos de un SVG propio: (x, y, ancho) de cada `<text>` con su ancho estimado.
+    /// Centros de los `<text>` de un SVG propio.
     fn text_centers(svg: &str) -> Vec<(f32, f32)> {
         svg.split("<text x=\"")
             .skip(1)
@@ -938,11 +1366,15 @@ mod tests {
         }
     }
 
+    fn look(layout: Layout, shape: Shape) -> Look {
+        Look { layout, shape, ..Default::default() }
+    }
+
     #[test]
     fn layouts_place_branches_where_asked() {
         let st = NoteStyle::default();
         let root = sample();
-        let centers = |l| text_centers(&draw(&root, &st, l, Shape::Default));
+        let centers = |l| text_centers(&draw(&root, &st, &look(l, Shape::Default)));
         // A la derecha: todo a la derecha del centro.
         let r = centers(Layout::Right);
         assert_eq!(r.len(), 10);
@@ -956,45 +1388,145 @@ mod tests {
         let mut leaves: Vec<f32> = d.iter().filter(|(_, y)| *y > d[1].1 + 1.0).map(|(x, _)| *x).collect();
         leaves.sort_by(f32::total_cmp);
         assert!(leaves.windows(2).all(|w| w[1] - w[0] > 20.0), "{leaves:?}");
-        // Radial: lo dibuja Mermaid (otro SVG, con todas las etiquetas).
-        let radial = draw(&root, &st, Layout::Radial, Shape::Default);
-        assert_ne!(radial, draw(&root, &st, Layout::Right, Shape::Default));
-        assert!(["Centro", "Uno", "Cuatro", "e"].iter().all(|l| radial.contains(l)));
-        assert!(crate::net::svg_is_safe(radial.as_bytes()));
+        // Radial: ramas alrededor del centro (arriba, abajo, izquierda y derecha).
+        let rad = centers(Layout::Radial);
+        let (cx, cy) = rad[0];
+        assert!(rad.iter().any(|(x, _)| *x < cx - 20.0) && rad.iter().any(|(x, _)| *x > cx + 20.0), "{rad:?}");
+        assert!(rad.iter().any(|(_, y)| *y < cy - 20.0) && rad.iter().any(|(_, y)| *y > cy + 20.0), "{rad:?}");
+    }
+
+    /// Cajas (x0, y0, x1, y1) de los `<rect>` de un SVG propio con píldoras.
+    fn rects(svg: &str) -> Vec<(f32, f32, f32, f32)> {
+        svg.split("<rect ")
+            .skip(1)
+            .filter_map(|r| {
+                let a =
+                    |n: &str| -> Option<f32> { r.split(&format!("{n}=\"")).nth(1)?.split('"').next()?.parse().ok() };
+                let (x, y, w, h) = (a("x")?, a("y")?, a("width")?, a("height")?);
+                Some((x, y, x + w, y + h))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn radial_nodes_never_overlap_even_with_a_long_center() {
+        // S1.21: el disco central de `mermaid-svg` tapaba las líneas; aquí nada se encima.
+        let mut root = sample();
+        root.label = "Lanzamiento de IureDesk para despachos jurídicos en México y España".into();
+        for c in &mut root.children {
+            c.children.extend((0..4).map(|i| Node { label: format!("Detalle número {i}"), children: vec![] }));
+        }
+        let st = NoteStyle::default();
+        for size in RootSize::ALL {
+            let s = draw(&root, &st, &Look { layout: Layout::Radial, root: size, ..Default::default() });
+            let r = rects(&s);
+            assert_eq!(r.len(), 1 + 4 + 6 + 5 + 6 + 4, "{size:?}");
+            for (i, a) in r.iter().enumerate() {
+                for b in r.iter().skip(i + 1) {
+                    let overlap = a.0 < b.2 && b.0 < a.2 && a.1 < b.3 && b.1 < a.3;
+                    assert!(!overlap, "{size:?}: {a:?} {b:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn root_size_wraps_a_long_center() {
+        let mut root = sample();
+        root.label = "Lanzamiento de IureDesk para despachos jurídicos".into();
+        let st = NoteStyle::default();
+        let one = |size| {
+            let s = draw(&root, &st, &Look { root: size, ..Default::default() });
+            let first = rects(&s)[0];
+            (first.2 - first.0, first.3 - first.1, s.matches("<tspan").count())
+        };
+        let (auto_w, auto_h, auto_lines) = one(RootSize::Auto);
+        let (small_w, small_h, small_lines) = one(RootSize::Small);
+        let (large_w, _, large_lines) = one(RootSize::Large);
+        assert_eq!(auto_lines, 3, "automático: partido en líneas de 22");
+        assert!(small_lines >= 4 && small_w < auto_w && small_h > auto_h, "chico: angosto y alto");
+        // El chico no corta una etiqueta del largo máximo.
+        let max: String = "palabra ".repeat(MAX_LABEL / 8);
+        let s = draw(
+            &Node { label: max.trim().into(), children: vec![] },
+            &st,
+            &Look { root: RootSize::Small, ..Default::default() },
+        );
+        assert!(!s.contains('…'), "{s}");
+        assert!(large_lines == 2 && large_w > auto_w, "grande: líneas largas y letra mayor");
+        // Un centro corto sigue en una línea.
+        let short = draw(&sample(), &st, &Look::default());
+        assert_eq!(short.matches("<tspan").count(), 0);
+        assert_eq!(wrap("palabra", 4, 4), vec!["pala", "bra"]);
+        assert_eq!(wrap("a b c d e f g h", 1, 3).len(), 3);
+        assert!(wrap("uno dos tres cuatro cinco", 8, 2).last().unwrap().ends_with('…'));
+        assert_eq!(wrap("", 10, 2), vec![String::new()]);
+    }
+
+    #[test]
+    fn palettes_color_branches_and_keep_text_readable() {
+        let st = NoteStyle::default();
+        let root = sample();
+        let pastel = draw(&root, &st, &Look { palette: Palette::Pastel, ..Default::default() });
+        assert!(pastel.contains("fill=\"#bfdbfe\""), "primer color pastel");
+        assert!(pastel.contains("fill=\"#1f2328\""), "texto oscuro sobre pastel");
+        let warm = draw(&root, &st, &Look { palette: Palette::Warm, ..Default::default() });
+        assert!(warm.contains("fill=\"#b45309\"") && warm.contains("fill=\"#ffffff\""));
+        for p in Palette::ALL {
+            for c in p.colors() {
+                let text = ink(*c);
+                // Contraste aproximado (luminancia relativa WCAG) ≥ 4.5 entre fondo y texto.
+                let lum = |c: [u8; 3]| {
+                    let f = |v: u8| {
+                        let v = f32::from(v) / 255.0;
+                        if v <= 0.039_28 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+                    };
+                    0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2])
+                };
+                let (a, b) = (lum(*c), lum(text));
+                let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                assert!(ratio >= 4.5, "{p:?} {c:?}: {ratio}");
+            }
+        }
     }
 
     #[test]
     fn every_shape_and_layout_is_safe() {
         let st = NoteStyle::default();
         let mut root = sample();
-        root.label = "<b>&\"x\"".into();
+        root.label = "<b>&\"x\" con un centro largo que se parte".into();
         for l in Layout::ALL {
             for sh in Shape::ALL {
-                let s = draw(&root, &st, l, sh);
-                assert!(s.starts_with("<svg") && s.ends_with("</svg>"), "{l:?} {sh:?}");
-                assert!(!s.contains("<b>") && !s.contains("NaN") && !s.contains("inf"), "{l:?} {sh:?}");
-                assert!(crate::net::svg_is_safe(s.as_bytes()), "{l:?} {sh:?}");
+                for size in RootSize::ALL {
+                    let s = draw(&root, &st, &Look { layout: l, shape: sh, root: size, palette: Palette::Pastel });
+                    assert!(s.starts_with("<svg") && s.ends_with("</svg>"), "{l:?} {sh:?}");
+                    assert!(!s.contains("<b>") && !s.contains("NaN") && !s.contains("inf"), "{l:?} {sh:?}");
+                    assert!(crate::net::svg_is_safe(s.as_bytes()), "{l:?} {sh:?}");
+                }
             }
         }
         // Las formas propias sí cambian el dibujo.
-        let pill = draw(&root, &st, Layout::Right, Shape::Default);
+        let pill = draw(&root, &st, &Look::default());
         for sh in [Shape::Square, Shape::Circle, Shape::Cloud, Shape::Bang, Shape::Hexagon] {
-            assert_ne!(draw(&root, &st, Layout::Right, sh), pill, "{sh:?}");
+            assert_ne!(draw(&root, &st, &look(Layout::Right, sh)), pill, "{sh:?}");
         }
     }
 
     proptest::proptest! {
         #[test]
-        fn never_panics(s in "(\\PC|> |\\[!MINDMAP\\]|\\[!MINDMAP\\|layout-down cloud\\]|\\[!MINDMAP\\|layout-both\\]|- |  |\n|```){0,200}",
+        fn never_panics(s in "(\\PC|> |\\[!MINDMAP\\]|\\[!MINDMAP\\|layout-down cloud root-l\\]|\\[!MINDMAP\\|layout-radial palette-pastel\\]|- |  |\n|```){0,200}",
                         n in 0usize..4, l in proptest::sample::select(Layout::ALL.to_vec()),
-                        sh in proptest::sample::select(Shape::ALL.to_vec())) {
+                        sh in proptest::sample::select(Shape::ALL.to_vec()),
+                        rs in proptest::sample::select(RootSize::ALL.to_vec()),
+                        pal in proptest::sample::select(Palette::ALL.to_vec())) {
             for b in find(&s) {
-                let _ = draw(&b.root, &NoteStyle::default(), b.layout.unwrap_or(l), b.shape);
+                let _ = draw(&b.root, &NoteStyle::default(), &b.options.look(l));
                 proptest::prop_assert!(s.get(b.range.clone()).is_some());
             }
-            if let Some(out) = set_options(&s, n, Some(l), sh) {
+            let want = MapOptions { layout: Some(l), shape: sh, root: rs, palette: pal };
+            if let Some(out) = set_options(&s, n, &want) {
                 let b = find(&out);
-                proptest::prop_assert_eq!(b.get(n).map(|b| (b.layout, b.shape)), Some((Some(l), sh)));
+                proptest::prop_assert_eq!(b.get(n).map(|b| b.options), Some(want));
                 proptest::prop_assert_eq!(b.len(), find(&s).len());
             }
         }

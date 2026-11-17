@@ -274,6 +274,26 @@ impl DeskApp {
         crate::diagram_ui::set_editor_code(self, code);
     }
 
+    /// S1.20: elige un color (por su variable de Mermaid, p. ej. `primaryColor`) en la ventana de
+    /// colores abierta (pruebas).
+    pub fn set_diagram_color(&mut self, key: &str, c: Option<[u8; 3]>) {
+        if let Some(role) = iuredesk_html_view::diagram::ColorRole::ALL.into_iter().find(|r| r.key() == key) {
+            crate::diagram_ui::set_color(self, role, c);
+        }
+    }
+
+    /// S1.24: lo mismo que pulsar un nodo con enlace de un diagrama (pruebas).
+    pub fn click_note_node_link(&mut self, href: &str) {
+        if let Some(id) = self.session.note_focus() {
+            crate::note_preview::handle(self, id, crate::note_preview::PreviewAct::NodeLink(href.to_string()));
+        }
+    }
+
+    /// S1.24: el enlace de nodo que espera confirmación (pruebas).
+    pub fn pending_node_link(&self) -> Option<String> {
+        crate::diagram_ui::pending_link(self)
+    }
+
     /// S1.20: el error que muestra el editor de diagramas y si tiene un dibujo válido (pruebas).
     pub fn diagram_editor_state(&self) -> (Option<String>, bool) {
         (crate::diagram_ui::editor_error(self), crate::diagram_ui::editor_has_drawing(self))

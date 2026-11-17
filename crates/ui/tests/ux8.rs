@@ -198,8 +198,16 @@ fn task_checkbox_rewrites_markdown_with_undo() {
     assert_eq!(body(&h), BODY);
 }
 
-/// S1.19: pulsar un mapa mental abre su menú; elegir distribución y forma reescribe solo el
-/// metadato del mapa, el menú se cierra y todo se deshace.
+/// Abre el submenú cuyo título empieza con `title` y pulsa `item`.
+fn pick_in_submenu(h: &mut Harness<'static, DeskApp>, title: &str, item: &str) {
+    h.get_by_label_contains(title).click();
+    settle(h);
+    h.get_by_label(item).click();
+    settle(h);
+}
+
+/// S1.19–S1.20: pulsar un mapa mental abre su menú; elegir distribución, forma, tamaño del centro
+/// y paleta reescribe solo el metadato del mapa, el menú se cierra y todo se deshace.
 #[test]
 fn mindmap_menu_rewrites_the_meta_with_undo() {
     let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
@@ -212,28 +220,34 @@ fn mindmap_menu_rewrites_the_meta_with_undo() {
     settle(&mut h);
     h.state_mut().click_note_mindmap(0);
     settle(&mut h);
-    h.get_by_label("De arriba abajo").click();
-    settle(&mut h);
+    pick_in_submenu(&mut h, "Distribución:", "De arriba abajo");
     assert_eq!(body(&h), md.replace("[!MINDMAP|map]", "[!MINDMAP|map layout-down]"));
-    assert!(h.query_by_label("De arriba abajo").is_none(), "el menú se cerró");
+    assert!(h.query_by_label_contains("Distribución:").is_none(), "el menú se cerró");
     h.state_mut().click_note_mindmap(0);
     settle(&mut h);
-    h.get_by_label("Nube").click();
-    settle(&mut h);
+    pick_in_submenu(&mut h, "Forma de los nodos:", "Nube");
     assert_eq!(body(&h), md.replace("[!MINDMAP|map]", "[!MINDMAP|cloud map layout-down]"));
+    h.state_mut().click_note_mindmap(0);
+    settle(&mut h);
+    pick_in_submenu(&mut h, "Tamaño del centro:", "Chico");
+    h.state_mut().click_note_mindmap(0);
+    settle(&mut h);
+    pick_in_submenu(&mut h, "Colores de las ramas:", "Cálida");
+    assert_eq!(body(&h), md.replace("[!MINDMAP|map]", "[!MINDMAP|cloud map layout-down root-s palette-warm]"));
     // Esc cierra sin cambiar nada; un mapa que no existe no abre menú.
     h.state_mut().click_note_mindmap(0);
     settle(&mut h);
-    assert!(h.query_by_label("Nube").is_some());
+    assert!(h.query_by_label_contains("Distribución:").is_some());
     h.key_press(egui::Key::Escape);
     settle(&mut h);
-    assert!(h.query_by_label("Nube").is_none());
+    assert!(h.query_by_label_contains("Distribución:").is_none());
     h.state_mut().click_note_mindmap(5);
     settle(&mut h);
-    assert!(h.query_by_label("Nube").is_none());
+    assert!(h.query_by_label_contains("Distribución:").is_none());
     let ctx = h.ctx.clone();
-    h.state_mut().run(&ctx, "undo");
-    h.state_mut().run(&ctx, "undo");
+    for _ in 0..4 {
+        h.state_mut().run(&ctx, "undo");
+    }
     settle(&mut h);
     assert_eq!(body(&h), md);
 }
@@ -251,14 +265,12 @@ fn mermaid_menu_changes_the_theme_with_undo() {
     settle(&mut h);
     h.state_mut().click_note_mermaid(0);
     settle(&mut h);
-    h.get_by_label("Bosque").click();
-    settle(&mut h);
+    pick_in_submenu(&mut h, "Tema:", "Bosque");
     assert_eq!(body(&h), md.replace("```mermaid\n", "```mermaid\n---\nconfig:\n  theme: forest\n---\n"));
-    assert!(h.query_by_label("Bosque").is_none(), "el menú se cerró");
+    assert!(h.query_by_label_contains("Tema:").is_none(), "el menú se cerró");
     h.state_mut().click_note_mermaid(0);
     settle(&mut h);
-    h.get_by_label("Como la app").click();
-    settle(&mut h);
+    pick_in_submenu(&mut h, "Tema:", "Como la app");
     assert_eq!(body(&h), md, "volver al tema de la app quita la cabecera");
     let ctx = h.ctx.clone();
     h.state_mut().run(&ctx, "undo");
@@ -267,6 +279,54 @@ fn mermaid_menu_changes_the_theme_with_undo() {
     h.state_mut().run(&ctx, "undo");
     settle(&mut h);
     assert_eq!(body(&h), md);
+}
+
+/// S1.20: la ventana de colores dibuja en vivo y guarda `themeVariables` estándar, con deshacer.
+#[test]
+fn mermaid_colors_with_live_preview_and_undo() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    let id = a.session.note_focus().unwrap();
+    let md = "```mermaid\nflowchart LR\n  A --> B\n```\n";
+    a.session.save_note(id, "Colores", md).unwrap();
+    let mut h = harness(a);
+    settle(&mut h);
+    h.state_mut().click_note_mermaid(0);
+    settle(&mut h);
+    h.get_by_label("Colores…").click();
+    settle(&mut h);
+    assert!(h.query_by_label("Relleno de los nodos").is_some(), "la ventana de colores");
+    h.state_mut().set_diagram_color("primaryColor", Some([0xdb, 0xea, 0xfe]));
+    h.state_mut().set_diagram_color("lineColor", Some([0x1d, 0x4e, 0xd8]));
+    settle(&mut h);
+    h.get_by_label("Guardar").click();
+    settle(&mut h);
+    assert_eq!(
+        body(&h),
+        "```mermaid\n---\nconfig:\n  themeVariables:\n    primaryColor: \"#dbeafe\"\n    lineColor: \"#1d4ed8\"\n---\nflowchart LR\n  A --> B\n```\n"
+    );
+    assert!(h.query_by_label("Relleno de los nodos").is_none(), "se cerró");
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "undo");
+    settle(&mut h);
+    assert_eq!(body(&h), md);
+}
+
+/// S1.24: el enlace de un nodo pide confirmación; cancelar no abre nada.
+#[test]
+fn node_links_ask_before_opening() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    h.state_mut().click_note_node_link("https://example.com/caso");
+    settle(&mut h);
+    assert!(h.query_by_label("https://example.com/caso").is_some(), "muestra a dónde lleva");
+    assert_eq!(h.state().pending_node_link().as_deref(), Some("https://example.com/caso"));
+    h.get_by_label("Cancelar").click();
+    settle(&mut h);
+    assert_eq!(h.state().pending_node_link(), None);
 }
 
 /// S1.20: el editor dibuja en vivo; con un error lo explica, conserva el último dibujo válido y

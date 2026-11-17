@@ -68,7 +68,7 @@ pub struct NoteKey {
 /// Resultado de un render (vuelve como `JobOutput::Custom`).
 pub struct NoteDone {
     key: NoteKey,
-    result: Result<(HtmlImage, Vec<String>), String>,
+    result: Result<(HtmlImage, Vec<String>, Vec<markdown::MermaidLinks>), String>,
 }
 
 impl NoteDone {
@@ -86,6 +86,8 @@ enum State {
         links: Vec<LinkRect>,
         blocked: Vec<String>,
         deep_links: Vec<String>,
+        /// S1.24: zonas con enlace de cada bloque Mermaid.
+        mermaid: Vec<markdown::MermaidLinks>,
         scale: f32,
     },
     Failed,
@@ -140,7 +142,7 @@ impl NotePreviewCache {
             return;
         }
         let state = match done.result {
-            Ok((img, deep_links)) => {
+            Ok((img, deep_links, mermaid)) => {
                 let size = img.size;
                 let tiles = img
                     .tiles
@@ -170,6 +172,7 @@ impl NotePreviewCache {
                     links: img.links,
                     blocked: img.blocked,
                     deep_links,
+                    mermaid,
                     scale: done.key.ppp_x100 as f32 / 100.0,
                 }
             }
@@ -263,6 +266,8 @@ pub enum PreviewAct {
     Mindmap(usize, egui::Pos2),
     /// S1.20: el bloque Mermaid `n`, pulsado en ese punto de la pantalla.
     Mermaid(usize, egui::Pos2),
+    /// S1.24: un nodo de un diagrama con enlace (se confirma antes de abrir).
+    NodeLink(String),
 }
 
 /// Pinta la vista previa de la nota `id` con el texto `body`. Devuelve lo que se pulsó.
@@ -355,7 +360,7 @@ fn render(app: &mut DeskApp, ui: &mut Ui, owner: Owner, id: NoteId, body: &str) 
             let result = iuredesk_html_view::render(&doc.html, &ro)
                 .map_err(|e| e.to_string())
                 .and_then(|r| crate::html::to_image(r, max_side))
-                .map(|img| (img, doc.deep_links));
+                .map(|img| (img, doc.deep_links, doc.mermaid_links));
             JobOutput::Custom(Box::new(NoteDone { key, result }))
         });
         cache.entries.insert(key, State::Pending);
@@ -368,7 +373,7 @@ fn render(app: &mut DeskApp, ui: &mut Ui, owner: Owner, id: NoteId, body: &str) 
         _ => cache.last_ready.get(&id).copied().filter(|k| matches!(cache.entries.get(k), Some(State::Ready { .. }))),
     };
     let failed = matches!(cache.entries.get(&key), Some(State::Failed));
-    let Some(State::Ready { tiles, size_px, links, blocked, deep_links, scale }) =
+    let Some(State::Ready { tiles, size_px, links, blocked, deep_links, mermaid, scale }) =
         shown.and_then(|k| cache.entries.get(&k))
     else {
         if quiet {
@@ -400,8 +405,8 @@ fn render(app: &mut DeskApp, ui: &mut Ui, owner: Owner, id: NoteId, body: &str) 
         );
         return None;
     };
-    let (tiles, size_px, links, blocked, deep_links, scale) =
-        (tiles.clone(), *size_px, links.clone(), blocked.clone(), deep_links.clone(), *scale);
+    let (tiles, size_px, links, blocked, deep_links, mermaid, scale) =
+        (tiles.clone(), *size_px, links.clone(), blocked.clone(), deep_links.clone(), mermaid.clone(), *scale);
     // Imágenes remotas (UX-5).
     // Solo con el render de este texto (no el anterior que se ve mientras tanto).
     if !quiet && !blocked.is_empty() && !key.remote && shown == Some(key) && !cache.fetching.contains_key(&id) {
@@ -447,7 +452,20 @@ fn render(app: &mut DeskApp, ui: &mut Ui, owner: Owner, id: NoteId, body: &str) 
     if let Some(p) = resp.hover_pos() {
         let px = (p - rect.min) * px_per_pt;
         if let Some(l) = links.iter().rev().find(|l| l.rect.contains(px.x, px.y)) {
-            let link = markdown::classify(&l.href, &deep_links);
+            let mut link = markdown::classify(&l.href, &deep_links);
+            // S1.24: sobre un nodo con enlace de un diagrama, el enlace del nodo.
+            let mut node_link = None;
+            if let NoteLink::Mermaid(k) = link
+                && let Some(m) = mermaid.get(k)
+                && l.rect.width > 0.0
+                && l.rect.height > 0.0
+            {
+                let (fx, fy) = ((px.x - l.rect.x) / l.rect.width, (px.y - l.rect.y) / l.rect.height);
+                node_link = m.hit(fx, fy).map(str::to_string);
+            }
+            if let Some(href) = &node_link {
+                link = NoteLink::Open(href.clone());
+            }
             let tip = match &link {
                 NoteLink::Task(_) => Some(pick("Check / uncheck", "Marcar / desmarcar").to_string()),
                 NoteLink::Mindmap(_) => {
@@ -474,6 +492,7 @@ fn render(app: &mut DeskApp, ui: &mut Ui, owner: Owner, id: NoteId, body: &str) 
                     NoteLink::Task(n) => Some(PreviewAct::Task(n)),
                     NoteLink::Mindmap(n) => Some(PreviewAct::Mindmap(n, p)),
                     NoteLink::Mermaid(n) => Some(PreviewAct::Mermaid(n, p)),
+                    NoteLink::Open(u) if node_link.is_some() => Some(PreviewAct::NodeLink(u)),
                     NoteLink::Open(u) => Some(PreviewAct::Open(u)),
                     NoteLink::None => None,
                 };
@@ -491,6 +510,7 @@ pub fn handle(app: &mut DeskApp, id: NoteId, act: PreviewAct) {
         PreviewAct::Mindmap(n, pos) => {
             crate::diagram_ui::open_menu(app, id, crate::diagram_ui::Target::Mindmap(n), pos);
         }
+        PreviewAct::NodeLink(href) => crate::diagram_ui::open_node_link(app, &href),
         PreviewAct::Mermaid(n, pos) => {
             crate::diagram_ui::open_menu(app, id, crate::diagram_ui::Target::Mermaid(n), pos);
         }

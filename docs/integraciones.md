@@ -16,6 +16,79 @@ Reglas comunes:
   `Outcome::NotAvailable(Text)` = instalada pero no utilizable ahora (IureVoz cerrado, sin unidad
   montada…). `Err(IntegrationError)` queda para fallos reales; `e.human(spanish)` da el texto.
 
+## 0. Contrato común de la suite (S1.1)
+
+Lo que toda iureapp ofrece para que IureDesk (y las demás) la usen **sin abrir su ventana**. Es
+la base del Nivel B de [`suite-integracion.md`](suite-integracion.md). Cada app nueva o
+reescrita lo cumple; las que aún no, figuran como pendiente en `docs/gaps.md`.
+
+### Transportes
+
+| Para qué | Transporte | Ejemplo |
+|---|---|---|
+| Consultar, convertir, procesar un archivo (sin estado) | **MCP por stdio**: `<app> --mcp`, JSON-RPC 2.0, negociación `2025-06-18`, `tools/list` y `tools/call` | `iuretranscribe --mcp` → `transcribe_file` |
+| Estado compartido o hardware (micrófono, grabación en curso, montajes, voz) | **Servicio de instancia única con socket de control**; la app gráfica y los clientes hablan con el mismo proceso | `iurevoz` (socket), IureTranscribe grabando (S1.4) |
+| Mostrar algo en la app completa | **Deep link** `<app>://…`, abierto por el SO | `iureditor://open?path=…` |
+
+Si la app ya corre con su ventana, `--mcp` no debe pelear por un recurso exclusivo: para eso está
+el servicio con socket.
+
+### Herramientas
+
+- Nombres en `snake_case`, **verbo + objeto**: `start_recording`, `list_files`,
+  `render_markdown`, `project_overview`.
+- Mismo nombre en todas las apps para la misma idea (`*_status` para el estado de un trabajo,
+  `list_*` para listados acotados con `limit`).
+- Toda entrada se valida y se acota (tamaños, rutas dentro de carpetas permitidas, listas con
+  `limit` máximo). Lo que se devuelve también es acotado.
+- Las llamadas **nunca abren diálogos**: si hace falta algo del usuario, se devuelve un estado
+  (`needs_user`, con texto) que el cliente muestra.
+
+### Errores
+
+- En el resultado (`isError: true`) con un mensaje **bilingüe** en lenguaje humano:
+  `{ "en": "…", "es": "…" }` y, aparte, un `code` estable para que el cliente decida
+  (`not_found`, `busy`, `invalid_input`, `unavailable`).
+- Nunca trazas internas ni rutas privadas en el texto.
+
+### Deep links
+
+- **Solo abren o muestran.** Nunca borran, envían, graban ni comparten: cualquier programa local
+  puede dispararlos.
+- Parámetros `%`-codificados; rutas absolutas validadas por la app que recibe.
+
+### App no instalada o no disponible
+
+- En IureDesk: `Outcome::NotInstalled(InstallHint)` con texto es/en y enlace de descarga, nunca
+  un error; `Outcome::NotAvailable(Text)` si está instalada pero no se puede usar ahora.
+- La interfaz solo ofrece la acción si la app está (Ajustes → Suite lo explica).
+
+### Versión del contrato
+
+- `initialize` devuelve en `serverInfo` el nombre y la versión de la app y, en
+  `capabilities.experimental.iure`, `{ "contract": 1 }`. Un cliente que no encuentra una
+  herramienta o ve un contrato menor **degrada** (oculta la acción) en lugar de fallar.
+
+### Seguridad
+
+- Sockets locales solo para el usuario dueño (`0600` en Unix, ACL del pipe en Windows) y un
+  **token por sesión** en un archivo privado que el cliente presenta al conectar.
+- Toda respuesta se trata como **dato hostil** en el cliente (tamaños, tiempos de espera, sin
+  `[i]`).
+- Acciones con efecto (grabar, compartir, borrar) siempre visibles en la interfaz de quien las
+  pide, con deshacer cuando se puede.
+
+### Estado por app
+
+| App | `--mcp` | Servicio con socket | Deep links | Cumple el contrato |
+|---|---|---|---|---|
+| IureDesk | sí (`iuredesk --mcp`) | puente IPC con la app abierta | — | parcial: `initialize` lo arma `iurefficient-connect` (ahí va `experimental.iure`); errores aún sin `code` |
+| IureEditor | no (S1.8) | — | sí | parcial |
+| IureTranscribe | sí | no: grabación (S1.4) | — | parcial |
+| IureVoz | sí | sí | — | parcial (falta versión del contrato) |
+| IureDav | no (S1.5; hay `iuredav-cli`) | montajes del SO | — | parcial |
+| IureProject | sí | — | sí | parcial (falta versión del contrato) |
+
 ## 1. `iuredesk-integrations`
 
 ### Detección

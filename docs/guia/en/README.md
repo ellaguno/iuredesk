@@ -127,7 +127,10 @@ Not available in the beta yet. If your company uses Microsoft 365, use "Sign in 
   sides or top to bottom: pick the default in Settings → General → Mind maps, or click a map to
   change only that one and its node shape (undo with Ctrl+Z). Click a Mermaid diagram to pick its
   theme (the app's or a Mermaid one), view it larger with zoom, edit its code with a live preview
-  (if something is wrong it tells you what and on which line) and export it as SVG or PNG.
+  (if something is wrong it tells you what and on which line), change its colors and export it as
+  SVG or PNG. In a mind map you can also pick the node shape, the center size (a long title wraps
+  onto several lines) and the branch colors. If a diagram node has a link, IureDesk asks before
+  opening it.
 
 ## My day
 

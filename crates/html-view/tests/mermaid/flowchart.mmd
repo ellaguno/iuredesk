@@ -1,0 +1,9 @@
+flowchart LR
+  A[Solicitud del cliente] --> B{¿Hay conflicto?}
+  B -- Sí --> C[Rechazar]
+  B -- No --> D[Abrir expediente]
+  D --> E((Asignar abogado))
+  subgraph Despacho
+    D
+    E
+  end

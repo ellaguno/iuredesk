@@ -134,7 +134,10 @@ Microsoft».
   Ajustes → General → Mapas mentales, o pulsa un mapa para cambiar solo ese y la forma de sus
   nodos (se deshace con Ctrl+Z). Al pulsar un diagrama Mermaid puedes elegir su tema (el de la
   app o uno de Mermaid), verlo en grande con zoom, editar su código con vista previa en vivo (si
-  algo está mal, te dice qué y en qué línea) y exportarlo como SVG o PNG.
+  algo está mal, te dice qué y en qué línea), cambiar sus colores y exportarlo como SVG o PNG. En
+  un mapa mental puedes además elegir la forma de los nodos, el tamaño del centro (un título largo
+  se parte en varias líneas) y los colores de las ramas. Si un nodo del diagrama tiene un enlace,
+  al pulsarlo IureDesk te pregunta antes de abrirlo.
 
 ## Mi día
 

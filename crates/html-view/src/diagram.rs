@@ -8,27 +8,36 @@
 //! ```text
 //! ---
 //! config:
-//!   theme: forest        # tema de Mermaid; sin él, el de la app
+//!   theme: forest              # tema de Mermaid; sin él, el de la app
+//!   themeVariables:            # colores elegidos (claves estándar de Mermaid)
+//!     primaryColor: "#dbeafe"  # relleno de los nodos
+//!     lineColor: "#1d4ed8"     # líneas
 //! iure:
-//!   layout: right        # solo `mindmap`: right | radial | both | down
-//!   shape: cloud         # solo `mindmap`: forma de los nodos
+//!   layout: right              # solo `mindmap`: right | radial | both | down
+//!   shape: cloud               # solo `mindmap`: forma de los nodos
+//!   root: small                # solo `mindmap`: tamaño del centro
+//!   palette: warm              # solo `mindmap`: colores de las ramas
 //! ---
 //! mindmap
 //!   …
 //! ```
 //!
-//! Lo propio va bajo `iure:`, que Mermaid ignora. [`set_options`] reescribe solo esas claves y
-//! conserva todo lo demás (título, otras claves de `config`, comentarios).
+//! Lo propio va bajo `iure:`, que Mermaid ignora. [`set_options`] reescribe solo esas claves (en
+//! su sitio si ya estaban) y conserva todo lo demás (título, otras claves, comentarios).
 //!
 //! **Tema**: [`DiagramTheme::App`] (el de omisión) parte del claro u oscuro de Mermaid según la
 //! nota y le pone los colores de la app (texto, acento, bordes; en mapas mentales, los colores de
 //! rama con contraste AA). Los temas de Mermaid se aplican aquí y no dentro de `mermaid-svg`: si
 //! se lo dejara a él, perdería la letra de la nota y el tamaño fijo en píxeles que pinta Blitz.
+//! Los colores elegidos (`themeVariables`) sí los aplica `mermaid-svg` encima del tema.
+//!
+//! **Enlaces de nodos** (S1.24): `click A "https://…"` sale del SVG como zona ([`DiagramLink`]) y
+//! la UI la atiende con confirmación; los `click A callback` (JavaScript) se descartan.
 
 use std::ops::Range;
 
 use crate::markdown::NoteStyle;
-use crate::mindmap::{self, Layout, Node, Shape};
+use crate::mindmap::{self, Layout, Look, Node, Palette, RootSize, Shape};
 
 /// Tema de un diagrama.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -71,14 +80,103 @@ impl DiagramTheme {
     }
 }
 
+/// Un color elegible de un diagrama (variable estándar de Mermaid).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ColorRole {
+    /// Relleno de los nodos (`primaryColor`).
+    NodeFill,
+    /// Borde de los nodos (`primaryBorderColor`).
+    NodeBorder,
+    /// Texto (`primaryTextColor`).
+    Text,
+    /// Líneas y flechas (`lineColor`).
+    Line,
+    /// Fondo de grupos y subgrafos (`secondaryColor`).
+    GroupFill,
+    /// Fondo de las notas (`noteBkgColor`).
+    NoteFill,
+}
+
+impl ColorRole {
+    pub const ALL: [ColorRole; 6] = [
+        ColorRole::NodeFill,
+        ColorRole::NodeBorder,
+        ColorRole::Text,
+        ColorRole::Line,
+        ColorRole::GroupFill,
+        ColorRole::NoteFill,
+    ];
+
+    /// Nombre en `config.themeVariables`.
+    pub fn key(self) -> &'static str {
+        match self {
+            ColorRole::NodeFill => "primaryColor",
+            ColorRole::NodeBorder => "primaryBorderColor",
+            ColorRole::Text => "primaryTextColor",
+            ColorRole::Line => "lineColor",
+            ColorRole::GroupFill => "secondaryColor",
+            ColorRole::NoteFill => "noteBkgColor",
+        }
+    }
+}
+
+/// Colores elegidos (RGB); `None`: el del tema.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct DiagramColors(pub [Option<[u8; 3]>; 6]);
+
+impl DiagramColors {
+    pub fn get(&self, role: ColorRole) -> Option<[u8; 3]> {
+        self.0.get(role as usize).copied().flatten()
+    }
+
+    pub fn set(&mut self, role: ColorRole, c: Option<[u8; 3]>) {
+        if let Some(slot) = self.0.get_mut(role as usize) {
+            *slot = c;
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(Option::is_none)
+    }
+}
+
+/// `#rrggbb` (o `#rgb`) → RGB.
+pub fn parse_hex(v: &str) -> Option<[u8; 3]> {
+    let h = v.trim().strip_prefix('#')?;
+    let h: String = match h.len() {
+        3 => h.chars().flat_map(|c| [c, c]).collect(),
+        6 => h.to_string(),
+        _ => return None,
+    };
+    let n = u32::from_str_radix(&h, 16).ok()?;
+    Some([(n >> 16) as u8, (n >> 8) as u8, n as u8])
+}
+
+fn hex(c: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
 /// Opciones de dibujo de un diagrama.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DiagramOptions {
     pub theme: DiagramTheme,
-    /// Solo mapas mentales: distribución (`None`: la radial de Mermaid).
+    pub colors: DiagramColors,
+    /// Solo mapas mentales: distribución (`None`: la radial).
     pub layout: Option<Layout>,
-    /// Solo mapas mentales con distribución propia: forma de los nodos.
+    /// Solo mapas mentales: forma de los nodos, tamaño del centro y colores de las ramas.
     pub shape: Shape,
+    pub root: RootSize,
+    pub palette: Palette,
+}
+
+impl DiagramOptions {
+    /// ¿Pide algo de lo que solo sabe el dibujo propio de mapas mentales?
+    fn wants_own_mindmap(&self) -> bool {
+        self.layout.is_some()
+            || self.shape != Shape::Default
+            || self.root != RootSize::Auto
+            || self.palette != Palette::Iure
+    }
 }
 
 /// Valor de distribución en `iure.layout`.
@@ -93,6 +191,19 @@ fn layout_value(l: Layout) -> &'static str {
 
 fn layout_from_value(v: &str) -> Option<Layout> {
     Layout::ALL.into_iter().find(|l| v.eq_ignore_ascii_case(layout_value(*l)))
+}
+
+fn root_value(r: RootSize) -> Option<&'static str> {
+    match r {
+        RootSize::Auto => None,
+        RootSize::Small => Some("small"),
+        RootSize::Medium => Some("medium"),
+        RootSize::Large => Some("large"),
+    }
+}
+
+fn root_from_value(v: &str) -> Option<RootSize> {
+    RootSize::ALL.into_iter().find(|r| root_value(*r).is_some_and(|k| v.eq_ignore_ascii_case(k)))
 }
 
 /// Líneas de la cabecera `--- … ---` del código (sin los separadores) y la línea donde empieza el
@@ -111,98 +222,205 @@ fn frontmatter(code: &str) -> Option<(Vec<&str>, usize)> {
 fn yaml_pair(line: &str) -> Option<(usize, &str, &str)> {
     let indent = line.len() - line.trim_start().len();
     let t = line.trim();
-    if t.starts_with('#') {
+    if t.starts_with('#') || t.starts_with('-') {
         return None;
     }
     let (k, v) = t.split_once(':')?;
-    let v = v.split(" #").next().unwrap_or("").trim().trim_matches(['"', '\'']);
+    if k.is_empty() || k.contains(' ') {
+        return None;
+    }
+    let v = v.trim();
+    let v = if v.starts_with(['"', '\'']) {
+        v.trim_matches(['"', '\''])
+    } else {
+        v.split(" #").next().unwrap_or("").trim()
+    };
     Some((indent, k.trim(), v))
 }
 
-/// Valor de `section.key` en la cabecera (un nivel de anidado).
-fn header_value<'a>(lines: &[&'a str], section: &str, key: &str) -> Option<&'a str> {
-    let mut inside = false;
+/// Una línea de la cabecera y las que cuelgan de ella (por sangría).
+#[derive(Clone, Debug)]
+struct Y {
+    /// Clave, si la línea es `clave: valor`; `None` para comentarios, vacías o lo que no se
+    /// entiende (se conserva tal cual).
+    key: Option<String>,
+    value: String,
+    indent: usize,
+    /// La línea original (se reescribe solo si cambia su valor).
+    raw: String,
+    kids: Vec<Y>,
+}
+
+/// Árbol de la cabecera por sangría: primero una lista plana con el padre de cada línea, luego
+/// el árbol. Lo que no es `clave: valor` cuelga del último abierto (conserva su sitio).
+fn parse_yaml(lines: &[&str]) -> Vec<Y> {
+    let mut flat: Vec<(Y, Option<usize>)> = Vec::new();
+    // Índices (en `flat`) de los nodos con clave abiertos, con su sangría.
+    let mut stack: Vec<(usize, usize)> = Vec::new();
     for l in lines {
-        let Some((indent, k, v)) = yaml_pair(l) else { continue };
-        if indent == 0 {
-            inside = k == section;
-            continue;
+        let pair = yaml_pair(l);
+        if let Some((indent, _, _)) = pair {
+            while stack.last().is_some_and(|(i, _)| *i >= indent) {
+                stack.pop();
+            }
         }
-        if inside && k == key {
-            return Some(v);
+        let parent = stack.last().map(|(_, p)| *p);
+        flat.push((
+            Y {
+                key: pair.map(|(_, k, _)| k.to_string()),
+                value: pair.map(|(_, _, v)| v.to_string()).unwrap_or_default(),
+                indent: pair.map_or(0, |(i, _, _)| i),
+                raw: (*l).to_string(),
+                kids: Vec::new(),
+            },
+            parent,
+        ));
+        if let Some((indent, _, _)) = pair
+            && stack.len() < 8
+        {
+            stack.push((indent, flat.len() - 1));
         }
     }
-    None
+    fn build(flat: &[(Y, Option<usize>)], parent: Option<usize>) -> Vec<Y> {
+        flat.iter()
+            .enumerate()
+            .filter(|(_, (_, p))| *p == parent)
+            .map(|(i, (y, _))| Y { kids: build(flat, Some(i)), ..y.clone() })
+            .collect()
+    }
+    build(&flat, None)
+}
+
+/// Valor en `path` (claves anidadas). Con claves repetidas gana la última (como en YAML).
+fn yaml_get<'a>(nodes: &'a [Y], path: &[&str]) -> Option<&'a str> {
+    let (first, rest) = path.split_first()?;
+    let n = nodes.iter().rev().find(|n| n.key.as_deref() == Some(*first))?;
+    if rest.is_empty() { Some(n.value.as_str()) } else { yaml_get(&n.kids, rest) }
+}
+
+/// Pone (o quita, con `None`) el valor en `path`; lo que falte se crea con la sangría de sus
+/// hermanos (o `indent` si no tiene; en el nivel superior, sin sangría). Con claves repetidas se
+/// escribe en la última (la que vale) y se quita de las demás. Al quitar, un padre que queda vacío
+/// y sin valor se va también.
+fn yaml_set(nodes: &mut Vec<Y>, path: &[&str], value: Option<&str>, indent: usize) {
+    let Some((first, rest)) = path.split_first() else { return };
+    // En el nivel superior, siempre sin sangría (una clave sangrada sin padre no es modelo).
+    // Lo nuevo va al final: con la sangría del último hermano (si las del bloque no coinciden, así
+    // no queda colgado del anterior).
+    let indent =
+        if indent == 0 { 0 } else { nodes.iter().rev().find(|n| n.key.is_some()).map_or(indent, |n| n.indent) };
+    let matches: Vec<usize> =
+        nodes.iter().enumerate().filter(|(_, n)| n.key.as_deref() == Some(*first)).map(|(i, _)| i).collect();
+    let target = match (matches.last().copied(), value) {
+        (Some(i), _) => Some(i),
+        (None, None) => None,
+        (None, Some(v)) => {
+            let node = |raw: String, value: &str| Y {
+                key: Some((*first).to_string()),
+                value: value.to_string(),
+                indent,
+                raw,
+                kids: Vec::new(),
+            };
+            if rest.is_empty() {
+                nodes.push(node(format!("{}{first}: {}", " ".repeat(indent), quote(v)), v));
+                return;
+            }
+            // `config` va antes que `iure` (lo de Mermaid primero).
+            let at = if *first == "config" {
+                nodes.iter().position(|n| n.key.as_deref() == Some("iure")).unwrap_or(nodes.len())
+            } else {
+                nodes.len()
+            };
+            nodes.insert(at, node(format!("{}{first}:", " ".repeat(indent)), ""));
+            Some(at)
+        }
+    };
+    // De atrás hacia adelante: quitar no mueve los índices que faltan.
+    let mut all: Vec<usize> =
+        nodes.iter().enumerate().filter(|(_, n)| n.key.as_deref() == Some(*first)).map(|(i, _)| i).collect();
+    all.sort_unstable();
+    for i in all.into_iter().rev() {
+        let mine = Some(i) == target;
+        let v = if mine { value } else { None };
+        if rest.is_empty() {
+            match v {
+                None => {
+                    nodes.remove(i);
+                }
+                Some(v) => {
+                    if let Some(n) = nodes.get_mut(i)
+                        && n.value != v
+                    {
+                        n.value = v.to_string();
+                        n.raw = format!("{}{first}: {}", " ".repeat(n.indent), quote(v));
+                    }
+                }
+            }
+            continue;
+        }
+        let Some(n) = nodes.get_mut(i) else { continue };
+        let child_indent = n.indent + 2;
+        yaml_set(&mut n.kids, rest, v, child_indent);
+        if v.is_none() && n.value.is_empty() && n.kids.iter().all(|k| k.key.is_none() && k.raw.trim().is_empty()) {
+            nodes.remove(i);
+        }
+    }
+}
+
+/// Valor YAML: entre comillas si lleva `#` o `:` (un color `#…` sin comillas sería un comentario).
+fn quote(v: &str) -> String {
+    if v.contains(['#', ':']) || v.starts_with([' ', '\'', '"']) { format!("\"{v}\"") } else { v.to_string() }
+}
+
+fn yaml_emit(nodes: &[Y], out: &mut String) {
+    for n in nodes {
+        out.push_str(&n.raw);
+        out.push('\n');
+        yaml_emit(&n.kids, out);
+    }
 }
 
 /// Opciones que trae el código.
 pub fn read_options(code: &str) -> DiagramOptions {
     let Some((lines, _)) = frontmatter(code) else { return DiagramOptions::default() };
+    let y = parse_yaml(&lines);
+    let mut colors = DiagramColors::default();
+    for role in ColorRole::ALL {
+        colors.set(role, yaml_get(&y, &["config", "themeVariables", role.key()]).and_then(parse_hex));
+    }
     DiagramOptions {
-        theme: header_value(&lines, "config", "theme").map(DiagramTheme::from_key).unwrap_or_default(),
-        layout: header_value(&lines, "iure", "layout").and_then(layout_from_value),
-        shape: header_value(&lines, "iure", "shape").and_then(Shape::from_token).unwrap_or_default(),
+        theme: yaml_get(&y, &["config", "theme"]).map(DiagramTheme::from_key).unwrap_or_default(),
+        colors,
+        layout: yaml_get(&y, &["iure", "layout"]).and_then(layout_from_value),
+        shape: yaml_get(&y, &["iure", "shape"]).and_then(Shape::from_token).unwrap_or_default(),
+        root: yaml_get(&y, &["iure", "root"]).and_then(root_from_value).unwrap_or_default(),
+        palette: yaml_get(&y, &["iure", "palette"]).and_then(Palette::from_value).unwrap_or_default(),
     }
 }
 
-/// El código con las opciones nuevas: reescribe `config.theme`, `iure.layout` e `iure.shape`,
-/// conserva el resto de la cabecera y quita la cabecera si queda vacía. Fin de línea `\n`.
+/// El código con las opciones nuevas: reescribe `config.theme`, `config.themeVariables.*` (los
+/// colores elegibles) e `iure.*` en su sitio, crea lo que falte, quita lo que vuelve a su valor de
+/// omisión (y las secciones que quedan vacías) y conserva todo lo demás. Fin de línea `\n`.
 pub fn set_options(code: &str, opts: &DiagramOptions) -> String {
     let (lines, body_start) = frontmatter(code).unwrap_or((Vec::new(), 0));
-    let body: Vec<&str> = code.lines().skip(body_start).collect();
-    // Secciones de primer nivel con sus líneas, sin las claves que se reescriben.
-    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
-    let mut current: Option<String> = None;
-    for l in &lines {
-        match yaml_pair(l) {
-            Some((0, k, v)) => {
-                current = Some(k.to_string());
-                let head = if v.is_empty() { format!("{k}:") } else { (*l).to_string() };
-                sections.push((head, Vec::new()));
-            }
-            Some((_, k, _))
-                if (current.as_deref() == Some("config") && k == "theme")
-                    || (current.as_deref() == Some("iure") && (k == "layout" || k == "shape")) => {}
-            _ => {
-                if let Some((_, kids)) = sections.last_mut() {
-                    kids.push((*l).to_string());
-                } else {
-                    sections.push(((*l).to_string(), Vec::new()));
-                }
-            }
-        }
+    let mut y = parse_yaml(&lines);
+    yaml_set(&mut y, &["config", "theme"], opts.theme.key(), 0);
+    for role in ColorRole::ALL {
+        let v = opts.colors.get(role).map(hex);
+        yaml_set(&mut y, &["config", "themeVariables", role.key()], v.as_deref(), 0);
     }
-    let mut add = |section: &str, line: String| match sections.iter_mut().find(|(h, _)| h == &format!("{section}:")) {
-        Some((_, kids)) => kids.insert(0, line),
-        None => sections.push((format!("{section}:"), vec![line])),
-    };
-    // `config` antes que `iure`; dentro de `iure`, la distribución antes que la forma (cada una
-    // se inserta al principio de su sección).
-    if let Some(t) = opts.theme.key() {
-        add("config", format!("  theme: {t}"));
-    }
-    if let Some(shape) = (opts.shape != Shape::Default).then_some(opts.shape) {
-        add("iure", format!("  shape: {}", shape.token()));
-    }
-    if let Some(l) = opts.layout {
-        add("iure", format!("  layout: {}", layout_value(l)));
-    }
-    // Secciones propias que quedaron vacías (`config:` o `iure:` sin nada) se quitan.
-    sections.retain(|(h, kids)| !((h == "config:" || h == "iure:") && kids.iter().all(|k| k.trim().is_empty())));
+    yaml_set(&mut y, &["iure", "layout"], opts.layout.map(layout_value), 0);
+    yaml_set(&mut y, &["iure", "shape"], (opts.shape != Shape::Default).then(|| opts.shape.token()), 0);
+    yaml_set(&mut y, &["iure", "root"], root_value(opts.root), 0);
+    yaml_set(&mut y, &["iure", "palette"], (opts.palette != Palette::Iure).then(|| opts.palette.value()), 0);
     let mut out = String::new();
-    if !sections.is_empty() {
+    if y.iter().any(|n| n.key.is_some() || !n.raw.trim().is_empty()) {
         out.push_str("---\n");
-        for (h, kids) in &sections {
-            out.push_str(h);
-            out.push('\n');
-            for k in kids {
-                out.push_str(k);
-                out.push('\n');
-            }
-        }
+        yaml_emit(&y, &mut out);
         out.push_str("---\n");
     }
-    for l in body {
+    for l in code.lines().skip(body_start) {
         out.push_str(l);
         out.push('\n');
     }
@@ -219,7 +437,7 @@ fn for_renderer(code: &str) -> String {
         if let Some((indent, k, _)) = yaml_pair(l) {
             if indent == 0 {
                 section = k.to_string();
-            } else if section == "config" && k == "theme" {
+            } else if section == "config" && k == "theme" && indent <= 2 {
                 // En blanco y no fuera: los números de línea de los errores siguen siendo los del
                 // código que ve el usuario.
                 out.push('\n');
@@ -373,37 +591,183 @@ fn mindmap_tree(code: &str) -> Option<Node> {
     m.root.as_ref().map(|r| conv(r, 0, &mut count))
 }
 
+/// S1.24: zona de un nodo con enlace, en px del SVG.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiagramLink {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// `http`, `https` o `mailto` (lo demás no se acepta).
+    pub href: String,
+}
+
+impl DiagramLink {
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x && y >= self.y && x <= self.x + self.w && y <= self.y + self.h
+    }
+}
+
+/// Un diagrama dibujado: el SVG (seguro, sin enlaces), su tamaño y las zonas con enlace.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Drawn {
+    pub svg: String,
+    pub width: f32,
+    pub height: f32,
+    pub links: Vec<DiagramLink>,
+}
+
+/// Enlaces de un diagrama como máximo.
+const MAX_LINKS: usize = 200;
+
+fn unescape(s: &str) -> String {
+    s.replace("&quot;", "\"").replace("&#39;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+}
+
+/// Atributo numérico `name` de una etiqueta.
+fn num_attr(tag: &str, name: &str) -> Option<f32> {
+    let at = tag.find(&format!(" {name}=\""))? + name.len() + 3;
+    let rest = tag.get(at..)?;
+    rest.get(..rest.find('"')?)?.trim().parse().ok()
+}
+
+/// Caja de la primera figura de `group` (rect, circle, ellipse, polygon o path).
+fn shape_box(group: &str) -> Option<(f32, f32, f32, f32)> {
+    let starts = ["<rect", "<circle", "<ellipse", "<polygon", "<path"];
+    let (pos, kind) = starts.iter().filter_map(|k| group.find(k).map(|p| (p, *k))).min_by_key(|(p, _)| *p)?;
+    let tag = group.get(pos..pos + group.get(pos..)?.find('>')?)?;
+    match kind {
+        "<rect" => Some((num_attr(tag, "x")?, num_attr(tag, "y")?, num_attr(tag, "width")?, num_attr(tag, "height")?)),
+        "<circle" => {
+            let (cx, cy, r) = (num_attr(tag, "cx")?, num_attr(tag, "cy")?, num_attr(tag, "r")?);
+            Some((cx - r, cy - r, 2.0 * r, 2.0 * r))
+        }
+        "<ellipse" => {
+            let (cx, cy) = (num_attr(tag, "cx")?, num_attr(tag, "cy")?);
+            let (rx, ry) = (num_attr(tag, "rx")?, num_attr(tag, "ry")?);
+            Some((cx - rx, cy - ry, 2.0 * rx, 2.0 * ry))
+        }
+        _ => {
+            // Puntos de `points` o de `d`: la caja de todos los números en pares.
+            let attr = if kind == "<polygon" { "points" } else { "d" };
+            let at = tag.find(&format!(" {attr}=\""))? + attr.len() + 3;
+            let rest = tag.get(at..)?;
+            let val = rest.get(..rest.find('"')?)?;
+            let nums: Vec<f32> = val
+                .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+                .filter_map(|t| t.parse().ok())
+                .take(400)
+                .collect();
+            let xs = nums.iter().step_by(2);
+            let ys = nums.iter().skip(1).step_by(2);
+            let (x0, x1) = xs.fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+            let (y0, y1) = ys.fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+            (x0 <= x1 && y0 <= y1).then_some((x0, y0, x1 - x0, y1 - y0))
+        }
+    }
+}
+
+/// Saca los enlaces del SVG de `mermaid-svg`: cada `<a href>` pasa a ser un `<g>` (el SVG queda
+/// sin referencias externas y pasa el filtro) y su zona se devuelve aparte; los `onclick`
+/// (llamadas a JavaScript) se quitan. Solo `http`, `https` y `mailto`.
+pub(crate) fn extract_links(svg: &str) -> (String, Vec<DiagramLink>) {
+    let mut out = String::with_capacity(svg.len());
+    let mut links = Vec::new();
+    let mut rest = svg;
+    // `</a>` que corresponden a un `<a>` cambiado.
+    let mut open_anchors = 0usize;
+    while let Some(i) = rest.find('<') {
+        out.push_str(rest.get(..i).unwrap_or(""));
+        rest = rest.get(i..).unwrap_or("");
+        let Some(end) = rest.find('>') else { break };
+        let tag = rest.get(..=end).unwrap_or("");
+        if tag.starts_with("<a ") || tag == "<a>" {
+            let href = tag
+                .find("href=\"")
+                .and_then(|p| tag.get(p + 6..))
+                .and_then(|r| r.get(..r.find('"')?))
+                .map(unescape)
+                .unwrap_or_default();
+            let lower = href.trim().to_ascii_lowercase();
+            let ok = lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("mailto:");
+            let close = rest.find("</a>").unwrap_or(rest.len());
+            if ok
+                && links.len() < MAX_LINKS
+                && let Some((x, y, w, h)) = rest.get(end + 1..close).and_then(shape_box)
+            {
+                links.push(DiagramLink { x, y, w, h, href: href.trim().to_string() });
+            }
+            out.push_str("<g>");
+            open_anchors += 1;
+        } else if tag == "</a>" && open_anchors > 0 {
+            out.push_str("</g>");
+            open_anchors -= 1;
+        } else if tag.contains(" onclick=") {
+            // `<g class="clickable" … onclick="…">` → `<g>`.
+            out.push_str("<g>");
+        } else {
+            out.push_str(tag);
+        }
+        rest = rest.get(end + 1..).unwrap_or("");
+    }
+    out.push_str(rest);
+    (out, links)
+}
+
 /// Dibuja el diagrama con sus opciones y el estilo de la nota. El SVG es seguro y de tamaño fijo.
 pub fn render(code: &str, style: &NoteStyle) -> Result<String, DiagramError> {
+    render_drawn(code, style).map(|d| d.svg)
+}
+
+fn too_slow() -> DiagramError {
+    DiagramError::new(
+        None,
+        "It took too long or came out too large to show here.",
+        "Tardó demasiado o salió demasiado grande para mostrarlo aquí.",
+    )
+}
+
+/// Como [`render`], con el tamaño y las zonas de los nodos con enlace.
+pub fn render_drawn(code: &str, style: &NoteStyle) -> Result<Drawn, DiagramError> {
     check(code)?;
     let opts = read_options(code);
     let is_mindmap = kind(code) == "mindmap";
-    if is_mindmap
-        && let Some(layout) = opts.layout.filter(|l| *l != Layout::Radial)
+    let svg = if is_mindmap
+        && opts.wants_own_mindmap()
         && let Some(tree) = mindmap_tree(code)
     {
-        return Ok(mindmap::draw(&tree, style, layout, opts.shape));
-    }
-    let mut theme = match opts.theme.key() {
-        Some(name) => mermaid_svg::Theme::by_name(name),
-        None => crate::mermaid::theme_for(style),
-    }
-    .ok_or_else(|| DiagramError::new(None, "It can't be drawn here.", "No se puede dibujar aquí."))?;
-    theme.font_size = f64::from(style.font_px.clamp(10.0, 24.0));
-    theme.responsive = false;
-    if opts.theme == DiagramTheme::App {
-        app_theme(&mut theme, style);
-        if is_mindmap {
-            crate::mermaid::branch_palette(&mut theme, style);
+        let look = Look {
+            layout: opts.layout.unwrap_or(Layout::Radial),
+            shape: opts.shape,
+            root: opts.root,
+            palette: opts.palette,
+        };
+        mindmap::draw(&tree, style, &look)
+    } else {
+        let mut theme = match opts.theme.key() {
+            Some(name) => mermaid_svg::Theme::by_name(name),
+            None => crate::mermaid::theme_for(style),
         }
+        .ok_or_else(|| DiagramError::new(None, "It can't be drawn here.", "No se puede dibujar aquí."))?;
+        theme.font_size = f64::from(style.font_px.clamp(10.0, 24.0));
+        theme.responsive = false;
+        if opts.theme == DiagramTheme::App {
+            app_theme(&mut theme, style);
+            if is_mindmap {
+                crate::mermaid::branch_palette(&mut theme, style);
+            }
+        }
+        crate::mermaid::render_raw(&for_renderer(code), theme).ok_or_else(too_slow)?
+    };
+    let (svg, links) = extract_links(&svg);
+    if svg.len() > crate::mermaid::MAX_SVG
+        || !svg.trim_start().starts_with("<svg")
+        || !crate::net::svg_is_safe(svg.as_bytes())
+    {
+        return Err(too_slow());
     }
-    crate::mermaid::render(&for_renderer(code), theme).ok_or_else(|| {
-        DiagramError::new(
-            None,
-            "It took too long or came out too large to show here.",
-            "Tardó demasiado o salió demasiado grande para mostrarlo aquí.",
-        )
-    })
+    let (width, height) = svg_size(&svg).unwrap_or((0.0, 0.0));
+    Ok(Drawn { svg, width, height, links })
 }
 
 /// Ancho y alto (px CSS) de un SVG, de sus atributos `width`/`height` o del `viewBox`.
@@ -556,7 +920,12 @@ mod tests {
     #[test]
     fn options_round_trip_and_keep_the_rest() {
         assert_eq!(read_options(FLOW), DiagramOptions::default());
-        let opts = DiagramOptions { theme: DiagramTheme::Forest, layout: Some(Layout::Down), shape: Shape::Cloud };
+        let opts = DiagramOptions {
+            theme: DiagramTheme::Forest,
+            layout: Some(Layout::Down),
+            shape: Shape::Cloud,
+            ..Default::default()
+        };
         let code = set_options(FLOW, &opts);
         assert!(
             code.starts_with(
@@ -568,7 +937,8 @@ mod tests {
         // Lo que no es nuestro se conserva; lo nuestro se reemplaza, no se duplica.
         let mine = "---\ntitle: Plan\nconfig:\n  look: handDrawn\n  theme: dark\n---\nflowchart LR\n  A-->B\n";
         let out = set_options(mine, &DiagramOptions { theme: DiagramTheme::Neutral, ..Default::default() });
-        assert_eq!(out, "---\ntitle: Plan\nconfig:\n  theme: neutral\n  look: handDrawn\n---\nflowchart LR\n  A-->B\n");
+        // El tema se cambia en su sitio (el cambio en el archivo es de una línea).
+        assert_eq!(out, "---\ntitle: Plan\nconfig:\n  look: handDrawn\n  theme: neutral\n---\nflowchart LR\n  A-->B\n");
         // Volver a lo de omisión quita las claves y la cabecera vacía.
         assert_eq!(set_options(&code, &DiagramOptions::default()), FLOW);
         let back = set_options(&out, &DiagramOptions::default());
@@ -613,6 +983,92 @@ mod tests {
             assert!(["Centro", "Uno", "Dos"].iter().all(|l| s.contains(l)), "{s}");
             assert!(crate::net::svg_is_safe(s.as_bytes()));
         }
+    }
+
+    #[test]
+    fn colors_go_to_theme_variables_and_respect_indentation() {
+        let mut colors = DiagramColors::default();
+        colors.set(ColorRole::NodeFill, Some([0xdb, 0xea, 0xfe]));
+        colors.set(ColorRole::Line, Some([0x1d, 0x4e, 0xd8]));
+        let opts = DiagramOptions { colors, ..Default::default() };
+        let code = set_options(FLOW, &opts);
+        assert!(
+            code.starts_with(
+                "---\nconfig:\n  themeVariables:\n    primaryColor: \"#dbeafe\"\n    lineColor: \"#1d4ed8\"\n---\n"
+            ),
+            "{code}"
+        );
+        assert_eq!(read_options(&code), opts);
+        assert_eq!(parse_hex("#abc"), Some([0xaa, 0xbb, 0xcc]));
+        assert_eq!(parse_hex("azul"), None);
+        // Se aplican: el SVG lleva los colores elegidos.
+        let svg = render(&code, &NoteStyle::default()).unwrap();
+        assert!(svg.to_ascii_lowercase().contains("#dbeafe") && svg.to_ascii_lowercase().contains("#1d4ed8"), "{svg}");
+        // Una cabecera con sangría de cuatro: lo nuevo usa la de sus hermanos (YAML válido).
+        let four = "---\nconfig:\n    look: handDrawn\n---\nflowchart LR\n  A-->B\n";
+        let out = set_options(four, &opts);
+        assert!(out.contains("config:\n    look: handDrawn\n    themeVariables:\n      primaryColor:"), "{out}");
+        assert_eq!(read_options(&out).colors, colors);
+        // Quitar un color deja los demás; quitar todos quita la sección.
+        let mut one = colors;
+        one.set(ColorRole::Line, None);
+        let out = set_options(&code, &DiagramOptions { colors: one, ..Default::default() });
+        assert!(!out.contains("lineColor") && out.contains("primaryColor"), "{out}");
+        assert_eq!(set_options(&code, &DiagramOptions::default()), FLOW);
+        // Comentarios y otras variables se conservan.
+        let rich = "---\n# mío\nconfig:\n  themeVariables:\n    fontFamily: Inter\n---\nflowchart LR\n  A-->B\n";
+        let out = set_options(rich, &opts);
+        assert!(
+            out.starts_with("---\n# mío\nconfig:\n  themeVariables:\n    fontFamily: Inter\n    primaryColor:"),
+            "{out}"
+        );
+        assert_eq!(set_options(&out, &DiagramOptions::default()), rich);
+        // Regresión (proptest): una clave sangrada sin padre no arrastra la sangría de lo nuevo.
+        let odd = "---\n  layout: down\nconfig:\n  layout: down\n---\nflowchart LR\n  A-->B\n";
+        let want = DiagramOptions { palette: Palette::Pastel, ..Default::default() };
+        assert_eq!(read_options(&set_options(odd, &want)), want);
+        // Regresión (proptest): con claves repetidas gana la última y no queda un valor viejo.
+        let dup = "---\niure:\niure:\n  layout: down\n---\nflowchart LR\n  A-->B\n";
+        assert_eq!(read_options(dup).layout, Some(Layout::Down));
+        assert_eq!(read_options(&set_options(dup, &DiagramOptions::default())), DiagramOptions::default());
+        // Regresión (proptest): hermanos con sangrías distintas.
+        let mixed = "---\nconfig:\n    lineColor: \"#123456\"\n  layout: down\n---\nflowchart LR\n  A-->B\n";
+        let want = DiagramOptions { theme: DiagramTheme::Default, ..Default::default() };
+        assert_eq!(read_options(&set_options(mixed, &want)).theme, DiagramTheme::Default);
+    }
+
+    #[test]
+    fn mermaid_mindmaps_with_root_size_and_palette() {
+        let mm = "mindmap\n  root((Un centro bastante largo para un mapa mental))\n    Uno\n    Dos\n";
+        let st = NoteStyle::default();
+        let opts = DiagramOptions { root: RootSize::Small, palette: Palette::Warm, ..Default::default() };
+        let code = set_options(mm, &opts);
+        assert!(code.contains("iure:\n  root: small\n  palette: warm\n"), "{code}");
+        assert_eq!(read_options(&code), opts);
+        // Con opciones propias se dibuja con el radial propio: centro partido y ramas cálidas.
+        let svg = render(&code, &st).unwrap();
+        assert!(svg.contains("<tspan") && svg.contains("#b45309"), "{svg}");
+    }
+
+    #[test]
+    fn node_links_become_zones_and_callbacks_go_away() {
+        let code = "flowchart LR\n  A[Sitio] --> B[Otro] --> C[Correo]\n  click A \"https://example.com/a?x=1&y=2\" \"Abrir\"\n  click B cb\n  click C \"mailto:ana@example.com\"\n";
+        let d = render_drawn(code, &NoteStyle::default()).unwrap();
+        assert!(!d.svg.contains("<a ") && !d.svg.contains("onclick") && !d.svg.contains("href"), "{}", d.svg);
+        assert!(crate::net::svg_is_safe(d.svg.as_bytes()));
+        assert_eq!(d.links.len(), 2, "{:?}", d.links);
+        assert_eq!(d.links[0].href, "https://example.com/a?x=1&y=2");
+        assert_eq!(d.links[1].href, "mailto:ana@example.com");
+        assert!(d.width > 0.0 && d.links.iter().all(|l| l.w > 10.0 && l.x + l.w <= d.width + 1.0));
+        let (cx, cy) = (d.links[0].x + d.links[0].w / 2.0, d.links[0].y + d.links[0].h / 2.0);
+        assert!(d.links[0].contains(cx, cy) && !d.links[1].contains(cx, cy));
+        // Esquemas peligrosos: sin zona.
+        let (_, links) = extract_links(
+            "<svg><a href=\"javascript:alert(1)\"><rect x=\"1\" y=\"1\" width=\"5\" height=\"5\"/></a></svg>",
+        );
+        assert!(links.is_empty());
+        // Antes de S1.24 un diagrama con `click` a una URL no se dibujaba.
+        assert!(render("flowchart LR\n  A-->B\n  click A \"https://x.mx\"\n", &NoteStyle::default()).is_ok());
     }
 
     #[test]
@@ -673,13 +1129,19 @@ mod tests {
         #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
         #[test]
         fn options_never_panic_and_round_trip(
-            head in "(---\n|config:\n|  theme: dark\n|iure:\n|  layout: down\n|title: x\n|\\PC|\n){0,30}",
+            head in "(---\n|config:\n|  theme: dark\n|  themeVariables:\n|    lineColor: \"#123456\"\n|iure:\n|  layout: down\n|    root: small\n|title: x\n|# nota\n|\\PC|\n){0,30}",
             theme in proptest::sample::select(DiagramTheme::ALL.to_vec()),
             layout in proptest::option::of(proptest::sample::select(Layout::ALL.to_vec())),
             shape in proptest::sample::select(Shape::ALL.to_vec()),
+            root in proptest::sample::select(RootSize::ALL.to_vec()),
+            palette in proptest::sample::select(Palette::ALL.to_vec()),
+            color in proptest::option::of(proptest::array::uniform3(0u8..)),
         ) {
             let code = format!("{head}\nflowchart LR\n  A-->B\n");
-            let opts = DiagramOptions { theme, layout, shape };
+            let mut colors = DiagramColors::default();
+            colors.set(ColorRole::Line, color);
+            colors.set(ColorRole::NodeFill, color.map(|c| [c[2], c[1], c[0]]));
+            let opts = DiagramOptions { theme, colors, layout, shape, root, palette };
             let out = set_options(&code, &opts);
             proptest::prop_assert_eq!(read_options(&out), opts);
             let _ = check(&out);

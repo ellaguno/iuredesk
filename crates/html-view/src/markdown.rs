@@ -106,6 +106,26 @@ pub struct NoteHtml {
     pub tasks: usize,
     /// Diagramas dibujados aquí (mapas mentales): `cid` y SVG, para entregarlos como imágenes.
     pub diagrams: Vec<(String, Vec<u8>)>,
+    /// S1.24: por cada bloque Mermaid (en el orden de `#iuredesk-mermaid-N`), su tamaño en px del
+    /// SVG y las zonas de los nodos con enlace (vacío si no se dibujó).
+    pub mermaid_links: Vec<MermaidLinks>,
+}
+
+/// S1.24: zonas con enlace de un diagrama Mermaid dibujado.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MermaidLinks {
+    /// Tamaño del SVG en px.
+    pub width: f32,
+    pub height: f32,
+    pub links: Vec<crate::diagram::DiagramLink>,
+}
+
+impl MermaidLinks {
+    /// El enlace del nodo en la fracción (`fx`, `fy`) del dibujo (0–1), si hay.
+    pub fn hit(&self, fx: f32, fy: f32) -> Option<&str> {
+        let (x, y) = (fx * self.width, fy * self.height);
+        self.links.iter().find(|l| l.contains(x, y)).map(|l| l.href.as_str())
+    }
 }
 
 /// Qué hacer al pulsar un enlace de la vista previa.
@@ -191,8 +211,8 @@ fn with_diagrams(md: &str, opts: &NoteOptions) -> (String, Vec<(String, Vec<u8>)
             }
             out.push('\n');
         }
-        let layout = b.layout.unwrap_or(opts.mindmap_layout);
-        diagrams.push((diagram_cid(i), crate::mindmap::draw(&root, &opts.style, layout, b.shape).into_bytes()));
+        let look = b.options.look(opts.mindmap_layout);
+        diagrams.push((diagram_cid(i), crate::mindmap::draw(&root, &opts.style, &look).into_bytes()));
         last = b.range.end;
     }
     out.push_str(md.get(last..).unwrap_or(""));
@@ -392,6 +412,7 @@ pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
     let (md, mut diagrams) = with_diagrams(md, opts);
     // S1.20: bloques Mermaid vistos, en el orden de `diagram::mermaid_blocks`.
     let mut mermaid_seen = 0usize;
+    let mut mermaid_links: Vec<MermaidLinks> = Vec::new();
     let md = md.as_str();
     let events: Vec<Event<'_>> = Parser::new_ext(md, parser_options()).collect();
     let mut out: Vec<Event<'_>> = Vec::with_capacity(events.len());
@@ -479,10 +500,11 @@ pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
                         depth = depth.saturating_sub(1);
                         let k = mermaid_seen;
                         mermaid_seen += 1;
-                        match crate::diagram::render(&code, &opts.style) {
-                            Ok(svg) => {
+                        match crate::diagram::render_drawn(&code, &opts.style) {
+                            Ok(d) => {
                                 let i = diagrams.len();
-                                diagrams.push((diagram_cid(i), svg.into_bytes()));
+                                mermaid_links.push(MermaidLinks { width: d.width, height: d.height, links: d.links });
+                                diagrams.push((diagram_cid(i), d.svg.into_bytes()));
                                 out.push(Event::Html(
                                     format!(
                                         "<p class=\"diagram\"><a href=\"{MERMAID_HREF}{k}\"><img alt=\"{}\" src=\"cid:{}\"></a></p>\n",
@@ -492,7 +514,9 @@ pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
                                     .into(),
                                 ));
                             }
-                            Err(e) => out.push(Event::Html(
+                            Err(e) => {
+                                mermaid_links.push(MermaidLinks::default());
+                                out.push(Event::Html(
                                 format!(
                                     "<div class=\"special\"><div class=\"label\"><a href=\"{MERMAID_HREF}{k}\">{}</a> — {}</div><pre><code>{}</code></pre></div>\n",
                                     escape(&opts.mermaid_label),
@@ -500,7 +524,8 @@ pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
                                     escape(&code)
                                 )
                                 .into(),
-                            )),
+                            ));
+                            }
                         }
                         continue;
                     }
@@ -581,7 +606,7 @@ pub fn to_html(md: &str, opts: &NoteOptions) -> NoteHtml {
     html.push_str("</style></head><body>");
     html.push_str(&body);
     html.push_str("</body></html>");
-    NoteHtml { html, images, deep_links, tasks, diagrams }
+    NoteHtml { html, images, deep_links, tasks, diagrams, mermaid_links }
 }
 
 fn is_math(lang: &str) -> bool {

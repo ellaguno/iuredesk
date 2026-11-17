@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a7463e5a085337a2af9cfd568d80e7059885bcef4d6bb8961d75824d50226691 # shrinks to head = "---\n  layout: down\nconfig:\n  layout: down\n---\n", theme = App, layout = None, shape = Default, root = Auto, palette = Pastel, color = None
+cc f940fb52f0f21b818c824898e73bb114ab279719ff7c7cc884bb12ed0034d534 # shrinks to head = "---\niure:\niure:\n  layout: down\n---\n", theme = App, layout = None, shape = Default, root = Auto, palette = Iure, color = None
+cc 5fe74304f6fa79890a2d6f00c6633648b3c42ed5907a37090bf17754ad5c6b51 # shrinks to head = "---\nconfig:\n    lineColor: \"#123456\"\n  layout: down\n---\n", theme = Default, layout = None, shape = Default, root = Auto, palette = Iure, color = None
