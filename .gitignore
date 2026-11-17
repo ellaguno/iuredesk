@@ -16,3 +16,6 @@ brag-output*/
 *.mobileprovision
 *.provisionprofile
 *.cer
+
+# S1.21: herramienta de desarrollo (mermaid.js + Chromium)
+scripts/mermaid-refs/node_modules/

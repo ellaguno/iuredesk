@@ -1,0 +1,13 @@
+{
+  "name": "iuredesk-mermaid-refs",
+  "private": true,
+  "description": "S1.21: capturas de referencia de mermaid.js para el corpus de fidelidad de html-view (solo desarrollo; el producto no lo usa).",
+  "type": "module",
+  "scripts": {
+    "refs": "node render.mjs"
+  },
+  "devDependencies": {
+    "mermaid": "11.16.0",
+    "puppeteer": "24.42.0"
+  }
+}
