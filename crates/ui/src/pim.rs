@@ -20,6 +20,8 @@ pub struct PimState {
     contact_cols: Vec<Column>,
     pub(crate) note_search: String,
     pub(crate) note_edit: Option<NoteEdit>,
+    /// S1.12: la nota se edita aquí (DocEditor) en lugar de verse.
+    pub(crate) note_editing: bool,
     pub(crate) task_list: Option<TaskListId>,
     show_done: bool,
     /// F7.1: tarea nueva que se está escribiendo.
@@ -405,6 +407,15 @@ impl NoteEdit {
 
 /// Guarda la nota abierta si tiene cambios (al cambiar de nota o de módulo, o al cumplirse la
 /// espera).
+/// Espera tras teclear antes de guardar la nota (segundos).
+const NOTE_SAVE_DELAY: f64 = 1.5;
+
+/// S1.12: editar la nota aquí o volver a verla (guarda lo escrito al volver).
+pub(crate) fn toggle_note_edit(app: &mut DeskApp) {
+    flush_note(app);
+    app.pim.note_editing = !app.pim.note_editing;
+}
+
 pub(crate) fn flush_note(app: &mut DeskApp) {
     let Some(e) = app.pim.note_edit.as_mut() else { return };
     if e.dirty_at.take().is_none() {
@@ -607,6 +618,7 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         .and_then(|n| n.file.as_ref().map(|f| f.name.clone()));
     let notes_dir = app.session.notes_dir();
     let dir_problem = app.session.notes_dir_problem().map(str::to_string);
+    let editing = app.pim.note_editing;
     split::center(ui, PaneKind::Detail, |ui| {
         let c = theme::colors(ui);
         let Some(edit) = app.pim.note_edit.as_mut() else {
@@ -614,6 +626,7 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             return;
         };
         let mut act: Option<&'static str> = None;
+        let mut save_now = false;
         let mut preview_act = None;
         ui.set_max_width(820.0);
         ui.add_space(4.0);
@@ -626,6 +639,18 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                 if icons::icon_button(ui, Icon::Trash, pick("Delete note", "Eliminar nota"), true).clicked() {
                     act = Some("notes.delete");
+                }
+                // S1.12: escribir aquí (Markdown con estilo) o ver la nota.
+                let toggle = if editing { pick("View", "Ver") } else { pick("Edit here", "Editar aquí") };
+                if ui
+                    .button(toggle)
+                    .on_hover_text(pick(
+                        "Write the note here as Markdown with live styling (Ctrl+Shift+E)",
+                        "Escribe la nota aquí en Markdown con estilo al teclear (Ctrl+Mayús+E)",
+                    ))
+                    .clicked()
+                {
+                    act = Some("notes.toggle_edit");
                 }
                 let r = iurefficient_ui::primary_button(ui, pick("Edit in IureEditor", "Editar en IureEditor"))
                     .on_hover_text(pick(
@@ -678,7 +703,33 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         let t = ui.label(RichText::new(&shown_title).font(theme::bold_font(ui.ctx(), 24.0)).color(c.text));
         crate::widgets::named(&t, egui::Role::Label, &shown_title);
         ui.add_space(8.0);
-        if edit.body.trim().is_empty() {
+        if editing {
+            // S1.12: el editor; se guarda solo al dejar de teclear.
+            let now_t = ui.input(|i| i.time);
+            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-editor").show(ui, |ui| {
+                let out = iure_doc_ui::show(
+                    ui,
+                    egui::Id::unique(("note-editor", edit.id)),
+                    &mut edit.body,
+                    pick("Write here… (# title, - list, **bold**)", "Escribe aquí… (# título, - lista, **negrita**)"),
+                );
+                crate::widgets::named(
+                    &out.response,
+                    egui::Role::MultilineTextInput,
+                    pick("Note text", "Texto de la nota"),
+                );
+                if out.changed {
+                    edit.dirty_at = Some(now_t);
+                }
+            });
+            if let Some(t) = edit.dirty_at {
+                if now_t - t >= NOTE_SAVE_DELAY {
+                    save_now = true;
+                } else {
+                    ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(NOTE_SAVE_DELAY - (now_t - t)));
+                }
+            }
+        } else if edit.body.trim().is_empty() {
             ui.add_space(24.0);
             ui.vertical_centered(|ui| {
                 ui.label(
@@ -689,9 +740,14 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                     .color(c.text_muted),
                 );
                 ui.add_space(8.0);
-                if ui.button(pick("Write in IureEditor", "Escribir en IureEditor")).clicked() {
-                    act = Some("notes.open_editor");
-                }
+                ui.horizontal(|ui| {
+                    if ui.button(pick("Write here", "Escribir aquí")).clicked() {
+                        act = Some("notes.toggle_edit");
+                    }
+                    if ui.button(pick("Write in IureEditor", "Escribir en IureEditor")).clicked() {
+                        act = Some("notes.open_editor");
+                    }
+                });
             });
         } else {
             let (nid, body) = (edit.id, edit.body.clone());
@@ -706,6 +762,9 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         }
         if let Some(id) = app.pim.note_edit.as_ref().map(|e| e.id) {
             crate::diagram_ui::show(app, ui, id);
+        }
+        if save_now {
+            flush_note(app);
         }
         if let Some(id) = act {
             flush_note(app);

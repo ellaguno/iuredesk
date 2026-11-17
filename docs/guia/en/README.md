@@ -131,7 +131,7 @@ Not available in the beta yet. If your company uses Microsoft 365, use "Sign in 
   (Google, Microsoft, iCloud or CardDAV).
 - **Tasks:** with due date, priority, reminder and lists; they sync with Google Tasks, Microsoft
   To Do or CalDAV.
-- **Notes** are written in [IureEditor](https://github.com/ellaguno/iureditor). Without it the
+- **Notes**: write them here with «Edit here» (Ctrl+Shift+E): Markdown that takes its style as you type (Enter continues lists, Tab indents, Ctrl+B bold, Ctrl+I italic, Ctrl+Shift+K link) and saves itself; or open them in [IureEditor](https://github.com/ellaguno/iureditor). Without it the
   Notes module isn't shown. Each note is a Markdown file in the folder you choose (Settings →
   General → Notes folder). Mind maps can be drawn to the right, radial (as in IureEditor), on both
   sides or top to bottom: pick the default in Settings → General → Mind maps, or click a map to

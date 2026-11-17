@@ -719,6 +719,12 @@ fn main() -> Result<(), String> {
         }
         later(&mut harness);
     }
+    // S1.12: `--note-edit` muestra la nota en el DocEditor (Markdown con estilo al teclear).
+    if args.iter().any(|a| a == "--note-edit") {
+        let ctx = harness.ctx.clone();
+        harness.state_mut().run(&ctx, "notes.toggle_edit");
+        later(&mut harness);
+    }
     // S1.20: menú, editor y visor de diagramas.
     let diagram_flag = |f: &str| args.iter().any(|a| a == f);
     if diagram_flag("--diagram-menu") || diagram_flag("--diagram-editor") || diagram_flag("--diagram-viewer") {

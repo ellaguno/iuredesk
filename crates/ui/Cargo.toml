@@ -14,6 +14,7 @@ iuredesk-engine = { workspace = true }
 # R1.2: abrir al iniciar sesión y memoria en Windows/macOS.
 iuredesk-desktop = { workspace = true }
 iuredesk-html-view = { workspace = true }
+iure-doc-ui = { workspace = true }
 iurefficient-ui = { workspace = true }
 egui = { workspace = true }
 chrono = { workspace = true }

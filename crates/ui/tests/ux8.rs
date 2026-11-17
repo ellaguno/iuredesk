@@ -107,19 +107,37 @@ fn body(h: &Harness<'_, DeskApp>) -> String {
     s.notes().into_iter().find(|n| n.id == id).unwrap().body
 }
 
-/// UX-12: la nota solo se ve (sin editor ligero); se escribe en IureEditor.
+/// UX-12 + S1.12: la nota se ve por omisión; «Editar aquí» (Ctrl+Mayús+E) abre el DocEditor,
+/// lo escrito se guarda solo al dejar de teclear y «Ver» vuelve a la vista.
 #[test]
-fn notes_are_view_only() {
+fn notes_view_and_edit_here() {
     let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(app(dir.path()));
     settle(&mut h);
-    assert!(h.query_by_label("Texto de la nota").is_none(), "sin editor ligero");
-    assert!(h.query_by_label("Vista").is_none() && h.query_by_label("Editar").is_none(), "sin conmutador");
+    assert!(h.query_by_label("Texto de la nota").is_none(), "se ve, no se edita");
     assert!(h.query_by_label("Editar en IureEditor").is_some());
-    // El render (imagen) lleva el texto como nombre accesible.
-    assert!(h.query_all_by_label_contains("Llamar al notario").next().is_some());
-    assert!(iuredesk_engine::command::find("notes.toggle_preview").is_none(), "el comando ya no existe");
+    assert!(h.query_all_by_label_contains("Llamar al notario").next().is_some(), "la vista");
+    h.get_by_label("Editar aquí").click();
+    settle(&mut h);
+    let editor = h.get_by_label("Texto de la nota");
+    editor.focus();
+    h.run_steps(2);
+    h.get_by_label("Texto de la nota").type_text("Nota nueva al principio. ");
+    // Se guarda solo tras dejar de teclear.
+    let start = Instant::now();
+    while !body(&h).contains("Nota nueva al principio.") {
+        assert!(start.elapsed() < Duration::from_secs(15), "no se guardó");
+        h.run_steps(5);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(body(&h).contains("Llamar al notario"), "el resto intacto");
+    // Ctrl+Mayús+E (o «Ver») vuelve a la vista.
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "notes.toggle_edit");
+    settle(&mut h);
+    assert!(h.query_by_label("Texto de la nota").is_none());
+    assert!(h.query_by_label("Editar aquí").is_some());
 }
 
 /// UX-12: «Nueva nota» la crea con título y la abre en IureEditor (donde se escribe).

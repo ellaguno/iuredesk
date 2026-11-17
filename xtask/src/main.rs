@@ -185,6 +185,8 @@ const LAYERS: &[(&str, u8)] = &[
     ("iuredesk-assistant", 4),
     ("iuredesk-html-view", 5),
     ("iuredesk-ui", 6),
+    // S1.12: el editor de documentos (egui); se mudará con iure-doc.
+    ("iure-doc-ui", 6),
     ("iuredesk", 7),
     ("xtask", 7),
 ];

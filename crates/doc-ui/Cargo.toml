@@ -1,0 +1,20 @@
+[package]
+name = "iure-doc-ui"
+description = "Editor de documentos de la suite Iurefficient para egui (DocEditor): Markdown con estilo al teclear"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+egui.workspace = true
+iure-doc.workspace = true
+iurefficient-ui.workspace = true
+pulldown-cmark.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+
+[lints]
+workspace = true

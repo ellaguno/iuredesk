@@ -1183,7 +1183,7 @@ impl Session {
             b if (b == "nav.notes" || b.starts_with("notes.")) && !self.notes_available => false,
             "nav.files" if !self.files_available => false,
             b if (b == "nav.assistant" || b.starts_with("ai.")) && !self.ai_available => false,
-            "notes.delete" | "notes.open_editor" => self.note_focus.is_some(),
+            "notes.delete" | "notes.open_editor" | "notes.toggle_edit" => self.note_focus.is_some(),
             "tasks.edit" => self.module == Module::Tasks || self.module == Module::Today,
             "contacts.edit" => self.contact_selection.len() == 1,
             "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
@@ -1270,6 +1270,7 @@ impl Session {
             "mail.new_folder" | "mail.rename_folder" | "mail.delete_folder" => self.run_folder_command(base, arg),
             "notes.delete" => self.run_delete_note(arg),
             "notes.open_editor" => Ok(Outcome::Assist("notes.open_editor".into())),
+            "notes.toggle_edit" => Ok(Outcome::Assist("notes.toggle_edit".into())),
             "tasks.edit" => Ok(Outcome::Assist("tasks.edit".into())),
             "mail.archive" => self.archive(),
             "mail.delete" => self.delete(),

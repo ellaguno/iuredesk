@@ -207,6 +207,7 @@ pub fn command(app: &mut DeskApp, ctx: &Context, id: &str) {
         }
         "app.import" => app.import.open(),
         "notes.open_editor" => crate::pim::open_note_in_editor(app),
+        "notes.toggle_edit" => crate::pim::toggle_note_edit(app),
         "tasks.edit" => match app.pim.task_sel {
             Some(id) => crate::task_editor::open(app, id),
             None => app.notice(iuredesk_engine::Notice::info("Select a task first.", "Primero elige una tarea.")),

@@ -342,6 +342,14 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("notes.delete", "Delete note", "Eliminar nota", "trash", Group::App, "note delete nota borrar eliminar"),
     c("tasks.edit", "Edit task…", "Editar tarea…", "edit", Group::App, "task todo edit tarea editar pendiente"),
     c(
+        "notes.toggle_edit",
+        "Edit note here / view it",
+        "Editar la nota aquí / verla",
+        "edit",
+        Group::App,
+        "note edit write markdown nota editar escribir ver",
+    ),
+    c(
         "notes.open_editor",
         "Edit note in IureEditor",
         "Editar nota en IureEditor",
@@ -642,6 +650,7 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
         "nav.notes" => Some(Chord::cmd("Num5")),
         "nav.assistant" => Some(Chord::cmd("Num6")),
         "nav.files" => Some(Chord::cmd("Num7")),
+        "notes.toggle_edit" => Some(Chord::cmd_shift("E")),
         // UX-3: como Outlook, Mayús+Intro abre el mensaje en su ventana; Ctrl +/−/0 es el zoom del
         // cuerpo (solo en el correo: en lo demás queda el zoom de egui).
         "mail.open_window" => Some(Chord::shift("Enter")),

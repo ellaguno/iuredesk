@@ -29,6 +29,7 @@
     clippy::indexing_slicing
 )]
 
+pub mod edit;
 mod parse;
 pub mod write;
 

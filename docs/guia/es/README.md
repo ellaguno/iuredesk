@@ -137,7 +137,7 @@ Microsoft».
   cuenta (Google, Microsoft, iCloud o CardDAV).
 - **Tareas:** con vencimiento, prioridad, recordatorio y listas; se sincronizan con Google Tasks,
   Microsoft To Do o CalDAV.
-- **Notas:** se escriben en [IureEditor](https://github.com/ellaguno/iureditor). Si no lo tienes
+- **Notas:** escríbelas aquí con «Editar aquí» (Ctrl+Mayús+E): es Markdown que toma su estilo mientras escribes (Intro sigue las listas, Tab sangra, Ctrl+B negrita, Ctrl+I cursiva, Ctrl+Mayús+K enlace) y se guarda solo; o ábrelas en [IureEditor](https://github.com/ellaguno/iureditor). Si no lo tienes
   instalado, el módulo de Notas no aparece. Cada nota es un archivo Markdown en la carpeta que
   elijas (Ajustes → General → Carpeta de notas). Los mapas mentales se dibujan hacia la derecha,
   radiales (como en IureEditor), a ambos lados o de arriba abajo: elige la forma de omisión en

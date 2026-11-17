@@ -31,6 +31,12 @@ Generado a partir de los comandos de IureDesk; no se edita a mano. El esquema se
 | Alejar el mensaje | `Ctrl+-` | `Ctrl+-` | `Ctrl+-` |
 | Restablecer el zoom del mensaje | `Ctrl+0` | `Ctrl+0` | `Ctrl+0` |
 
+## Aplicación
+
+| Comando | Outlook | Gmail | Apple Mail |
+|---|---|---|---|
+| Editar la nota aquí / verla | `Ctrl+Shift+E` | `Ctrl+Shift+E` | `Ctrl+Shift+E` |
+
 ## Correo
 
 | Comando | Outlook | Gmail | Apple Mail |

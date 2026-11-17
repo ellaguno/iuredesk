@@ -31,6 +31,12 @@ Generated from IureDesk's commands; don't edit by hand. Choose the scheme in Set
 | Zoom out message | `Ctrl+-` | `Ctrl+-` | `Ctrl+-` |
 | Reset message zoom | `Ctrl+0` | `Ctrl+0` | `Ctrl+0` |
 
+## App
+
+| Command | Outlook | Gmail | Apple Mail |
+|---|---|---|---|
+| Edit note here / view it | `Ctrl+Shift+E` | `Ctrl+Shift+E` | `Ctrl+Shift+E` |
+
 ## Mail
 
 | Command | Outlook | Gmail | Apple Mail |
