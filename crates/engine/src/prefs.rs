@@ -290,6 +290,39 @@ pub struct Prefs {
     /// R3.2: buscar versiones nuevas de IureDesk al arrancar y cada día.
     #[serde(default = "yes")]
     pub update_check: bool,
+    /// S1.19: distribución de los mapas mentales que no piden una en su metadato.
+    #[serde(default)]
+    pub mindmap_layout: MindmapLayout,
+}
+
+/// S1.19: cómo se dibujan los mapas mentales de las notas (la UI lo traduce a
+/// `iuredesk_html_view::mindmap::Layout`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MindmapLayout {
+    /// Centro a la izquierda, ramas a la derecha.
+    #[default]
+    Right,
+    /// En abanico alrededor del centro (como IureEditor).
+    Radial,
+    /// Ramas a ambos lados del centro.
+    Balanced,
+    /// De arriba abajo (organigrama).
+    Down,
+}
+
+impl MindmapLayout {
+    pub const ALL: [MindmapLayout; 4] =
+        [MindmapLayout::Right, MindmapLayout::Radial, MindmapLayout::Balanced, MindmapLayout::Down];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            MindmapLayout::Right => crate::lang::pick("To the right", "Hacia la derecha"),
+            MindmapLayout::Radial => crate::lang::pick("Radial (as in IureEditor)", "Radial (como IureEditor)"),
+            MindmapLayout::Balanced => crate::lang::pick("Both sides", "A ambos lados"),
+            MindmapLayout::Down => crate::lang::pick("Top to bottom", "De arriba abajo"),
+        }
+    }
 }
 
 /// UX-3: dónde se muestra el panel contextual.
@@ -434,6 +467,7 @@ impl Default for Prefs {
             today_layout: Default::default(),
             weather: Default::default(),
             update_check: true,
+            mindmap_layout: MindmapLayout::Right,
             notes_dir: None,
             reading_width: None,
             reading_zoom_pct: default_reading_zoom(),
@@ -488,6 +522,13 @@ mod tests {
         let p2 = Prefs::load(&p);
         assert_eq!(p2.theme, ThemePref::Dark);
         assert!(p2.conversations);
+        // S1.19: sin la clave, mapas a la derecha (como antes); con ella, la elegida.
+        assert_eq!(p2.mindmap_layout, MindmapLayout::Right);
+        std::fs::write(&p, br#"{"mindmap_layout":"radial"}"#).unwrap();
+        assert_eq!(Prefs::load(&p).mindmap_layout, MindmapLayout::Radial);
+        let prefs = Prefs { mindmap_layout: MindmapLayout::Down, ..Default::default() };
+        prefs.save(&p).unwrap();
+        assert_eq!(Prefs::load(&p), prefs);
     }
 
     #[test]

@@ -14,7 +14,10 @@
 //!   con [`toggle_task`], que usa el mismo análisis.
 //! - Mapas mentales de IureEditor (`> [!MINDMAP] Centro` + lista, UX-12): se dibujan como SVG
 //!   propio ([`crate::mindmap`]) y se entregan como imagen `cid:note-diagram-N`, en
-//!   [`NoteHtml::diagrams`]; con la vista `map` la lista no se muestra.
+//!   [`NoteHtml::diagrams`]; con la vista `map` la lista no se muestra. S1.19: con la distribución
+//!   del metadato o, si no la trae, [`NoteOptions::mindmap_layout`]; cada mapa es un enlace
+//!   `#iuredesk-mindmap-N` para que la UI ofrezca cambiar su distribución y forma
+//!   ([`crate::mindmap::set_options`]).
 //! - Mermaid (UX-12): se dibuja con `mermaid-svg` (Rust puro) como imagen `cid:note-diagram-N`,
 //!   con el tema claro u oscuro de la nota, en [`crate::mermaid`] (acotado, en su hilo, con
 //!   tiempo máximo y sin pánicos que salgan). Si no se puede (sintaxis que no entiende, muy
@@ -34,6 +37,8 @@ pub const MAX_DEPTH: usize = 40;
 pub const MAX_LOCAL_IMAGES: usize = 64;
 /// Prefijo de los enlaces de casilla.
 pub const TASK_HREF: &str = "#iuredesk-task-";
+/// S1.19: prefijo de los enlaces de mapa mental (N = orden de [`crate::mindmap::find`]).
+pub const MINDMAP_HREF: &str = "#iuredesk-mindmap-";
 /// Prefijo de los enlaces a IureEditor reescritos.
 pub const DEEP_HREF: &str = "#iuredesk-link-";
 
@@ -76,6 +81,8 @@ pub struct NoteOptions {
     pub mindmap_label: String,
     /// Texto alternativo de un diagrama Mermaid dibujado («Diagrama»).
     pub mermaid_alt: String,
+    /// S1.19: distribución de los mapas mentales que no piden una.
+    pub mindmap_layout: crate::mindmap::Layout,
 }
 
 /// Resultado de la conversión.
@@ -99,6 +106,8 @@ pub struct NoteHtml {
 pub enum NoteLink {
     /// Marcar o desmarcar la casilla `n` (ver [`toggle_task`]).
     Task(usize),
+    /// S1.19: el mapa mental `n` (cambiar su distribución o su forma).
+    Mindmap(usize),
     /// Abrir fuera: `http`, `https`, `mailto` o un deep link `iureditor:`.
     Open(String),
     /// Nada (ancla interna, nota al pie…).
@@ -117,6 +126,13 @@ pub fn classify(href: &str, deep_links: &[String]) -> NoteLink {
     let h = href.trim();
     if let Some(n) = h.strip_prefix(TASK_HREF) {
         return n.parse().map_or(NoteLink::None, NoteLink::Task);
+    }
+    if let Some(n) = h.strip_prefix(MINDMAP_HREF) {
+        return n
+            .parse::<usize>()
+            .ok()
+            .filter(|n| *n < crate::mindmap::MAX_MAPS)
+            .map_or(NoteLink::None, NoteLink::Mindmap);
     }
     if let Some(n) = h.strip_prefix(DEEP_HREF) {
         return n
@@ -156,14 +172,15 @@ fn with_diagrams(md: &str, opts: &NoteOptions) -> (String, Vec<(String, Vec<u8>)
             root.label = opts.mindmap_label.clone();
         }
         let alt = escape(&root.label).replace(['[', ']'], "");
-        let _ = write!(out, "\n![{alt}]({DIAGRAM_SCHEME}{i})\n\n");
+        let _ = write!(out, "\n[![{alt}]({DIAGRAM_SCHEME}{i})]({MINDMAP_HREF}{i})\n\n");
         if b.view == crate::mindmap::View::ListAndMap {
             for l in &b.body {
                 let _ = writeln!(out, "> {l}");
             }
             out.push('\n');
         }
-        diagrams.push((diagram_cid(i), crate::mindmap::svg(&root, &opts.style).into_bytes()));
+        let layout = b.layout.unwrap_or(opts.mindmap_layout);
+        diagrams.push((diagram_cid(i), crate::mindmap::draw(&root, &opts.style, layout, b.shape).into_bytes()));
         last = b.range.end;
     }
     out.push_str(md.get(last..).unwrap_or(""));
@@ -761,6 +778,29 @@ mod tests {
         assert_eq!(toggle_task(md, 0).unwrap(), md.replace("[ ] uno", "[x] uno"));
         // Un `iuredesk-diagram:` escrito a mano que no existe no apunta a nada.
         assert!(!conv("![x](iuredesk-diagram:7)").html.contains("cid:note-diagram"));
+    }
+
+    #[test]
+    fn mindmaps_are_links_and_follow_the_layout() {
+        // S1.19: cada mapa es un enlace para cambiar su dibujo; la distribución del metadato manda
+        // y, sin ella, la de las opciones.
+        let md = "> [!MINDMAP|map layout-down] A\n> - b\n\n> [!MINDMAP|map] C\n> - d\n> - e\n";
+        let h = conv(md);
+        assert!(
+            h.html.contains("href=\"#iuredesk-mindmap-0\"") && h.html.contains("href=\"#iuredesk-mindmap-1\""),
+            "{}",
+            h.html
+        );
+        assert_eq!(classify("#iuredesk-mindmap-1", &[]), NoteLink::Mindmap(1));
+        assert_eq!(classify("#iuredesk-mindmap-99999", &[]), NoteLink::None);
+        assert_eq!(classify("#iuredesk-mindmap-x", &[]), NoteLink::None);
+        let svg = |h: &NoteHtml, i: usize| String::from_utf8_lossy(&h.diagrams[i].1).into_owned();
+        let right = conv(md);
+        let both = to_html(md, &NoteOptions { mindmap_layout: crate::mindmap::Layout::Balanced, ..Default::default() });
+        // El primero pide `layout-down`: igual con cualquier preferencia.
+        assert_eq!(svg(&right, 0), svg(&both, 0));
+        // El segundo sigue la preferencia.
+        assert_ne!(svg(&right, 1), svg(&both, 1));
     }
 
     #[test]

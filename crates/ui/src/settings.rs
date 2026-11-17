@@ -747,6 +747,8 @@ fn general(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
     crate::update_ui::settings(app, ui);
     ui.add_space(14.0);
     notes_folder(app, ui);
+    ui.add_space(8.0);
+    mindmap_layout(app, ui);
     ui.add_space(14.0);
     section_label(ui, pick("Keyboard shortcuts", "Atajos de teclado"));
     muted(ui, pick("Use the keys you already know.", "Usa las teclas que ya conoces."));
@@ -754,6 +756,31 @@ fn general(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
     if segmented(ui, &mut s, &ShortcutScheme::ALL.map(|s| (s, s.label()))).changed() {
         *run = Some(format!("view.scheme.{}", s.key()));
     }
+}
+
+/// S1.19: distribución de los mapas mentales que no piden una (cada mapa se cambia al pulsarlo).
+fn mindmap_layout(app: &mut DeskApp, ui: &mut Ui) {
+    let c = theme::colors(ui);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(pick("Mind maps", "Mapas mentales")).color(c.text));
+        let cur = app.session.prefs.mindmap_layout;
+        let combo = egui::ComboBox::from_id_salt("mindmap-layout").selected_text(cur.label()).show_ui(ui, |ui| {
+            for l in iuredesk_engine::MindmapLayout::ALL {
+                if ui.selectable_label(cur == l, l.label()).clicked() && cur != l {
+                    app.session.prefs.mindmap_layout = l;
+                    app.session.save_prefs();
+                }
+            }
+        });
+        crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Mind maps", "Mapas mentales"));
+    });
+    muted(
+        ui,
+        pick(
+            "How mind maps in notes are drawn. Click a map to change only that one, or its node shape.",
+            "Cómo se dibujan los mapas mentales de las notas. Pulsa un mapa para cambiar solo ese, o la forma de sus nodos.",
+        ),
+    );
 }
 
 /// UX-6: carpeta de las notas en Markdown (la que abre IureEditor). Puede ser una unidad de

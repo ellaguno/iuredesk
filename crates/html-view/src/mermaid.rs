@@ -31,17 +31,45 @@ fn dark(style: &NoteStyle) -> bool {
     u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114 > 128_000
 }
 
-/// Dibuja el diagrama. `None` si no se puede (sintaxis, tamaño, tiempo, pánico, SVG raro).
-pub fn to_svg(code: &str, style: &NoteStyle) -> Option<String> {
-    let code = code.trim();
-    if code.is_empty() || code.len() > MAX_SOURCE || code.lines().count() > MAX_LINES {
-        return None;
-    }
+/// Tema de Mermaid con el claro u oscuro y la letra de la nota.
+fn theme_for(style: &NoteStyle) -> Option<mermaid_svg::Theme> {
     let mut theme =
         if dark(style) { mermaid_svg::Theme::by_name("dark")? } else { mermaid_svg::Theme::by_name("default")? };
     theme.font_size = f64::from(style.font_px.clamp(10.0, 24.0));
     // Tamaño fijo en píxeles (sin `width="100%"`): Blitz lo pinta a su tamaño.
     theme.responsive = false;
+    Some(theme)
+}
+
+/// Dibuja el diagrama. `None` si no se puede (sintaxis, tamaño, tiempo, pánico, SVG raro).
+pub fn to_svg(code: &str, style: &NoteStyle) -> Option<String> {
+    render(code, theme_for(style)?)
+}
+
+/// S1.19: el mapa mental en distribución radial, con los colores de rama del dibujo propio
+/// (contraste AA con texto blanco; los pasteles de Mermaid casi no se ven sobre fondo claro) y el
+/// centro en el color de acento.
+pub fn mindmap_svg(root: &crate::mindmap::Node, shape: crate::mindmap::Shape, style: &NoteStyle) -> Option<String> {
+    let mut theme = theme_for(style)?;
+    let hex = |c: [u8; 3]| format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]);
+    // `mermaid-svg` pinta la rama `k` con el color `k + 1` de la escala: se corre un lugar para que
+    // la primera rama tenga el mismo color que en las demás distribuciones.
+    let n = crate::mindmap::BRANCH.len();
+    theme.cscale_palette = (0..n)
+        .filter_map(|k| crate::mindmap::BRANCH.get((k + n - 1) % n))
+        .map(|c| hex(*c).into())
+        .collect::<Vec<_>>()
+        .into();
+    theme.git_palette = vec![hex(style.accent).into()].into();
+    render(&mindmap_code(root, shape), theme)
+}
+
+/// Dibuja con `mermaid-svg`, acotado: código, hilo propio con `catch_unwind`, tiempo y SVG.
+fn render(code: &str, theme: mermaid_svg::Theme) -> Option<String> {
+    let code = code.trim();
+    if code.is_empty() || code.len() > MAX_SOURCE || code.lines().count() > MAX_LINES {
+        return None;
+    }
     let code = code.to_string();
     let (tx, rx) = mpsc::sync_channel(1);
     let spawned = std::thread::Builder::new().name("mermaid".into()).stack_size(8 * 1024 * 1024).spawn(move || {
@@ -54,6 +82,61 @@ pub fn to_svg(code: &str, style: &NoteStyle) -> Option<String> {
     let svg = rx.recv_timeout(TIMEOUT).ok().flatten()?;
     (svg.len() <= MAX_SVG && svg.trim_start().starts_with("<svg") && crate::net::svg_is_safe(svg.as_bytes()))
         .then_some(svg)
+}
+
+/// S1.19: un mapa mental de IureEditor como diagrama `mindmap` de Mermaid (distribución radial).
+/// Etiquetas ya planas ([`crate::mindmap::plain_label`]); aquí se cambian los caracteres que
+/// Mermaid lee como forma o comentario por sus parecidos (como hace IureEditor).
+pub fn mindmap_code(root: &crate::mindmap::Node, shape: crate::mindmap::Shape) -> String {
+    let mut out = String::from("mindmap\n");
+    let mut next = 0usize;
+    mindmap_lines(root, shape, 1, &mut next, &mut out);
+    out
+}
+
+fn mindmap_lines(
+    n: &crate::mindmap::Node,
+    shape: crate::mindmap::Shape,
+    depth: usize,
+    next: &mut usize,
+    out: &mut String,
+) {
+    use std::fmt::Write as _;
+    let label = safe_label(&n.label);
+    let indent = "  ".repeat(depth);
+    // Sin forma, la línea es solo el texto (un id delante se leería como parte de él).
+    let _ = match shape.delims() {
+        Some((open, close)) => writeln!(out, "{indent}n{}{open}{label}{close}", *next),
+        None => writeln!(out, "{indent}{label}"),
+    };
+    *next += 1;
+    for c in &n.children {
+        mindmap_lines(c, shape, depth + 1, next, out);
+    }
+}
+
+fn safe_label(s: &str) -> String {
+    let mut out: String = s
+        .chars()
+        .map(|c| match c {
+            '(' => '（',
+            ')' => '）',
+            '[' => '［',
+            ']' => '］',
+            '{' => '｛',
+            '}' => '｝',
+            '<' => '＜',
+            '>' => '＞',
+            '*' => '∗',
+            '`' => 'ʼ',
+            '"' => '＂',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    // `%%` abre un comentario y `::` una clase o un icono.
+    out = out.replace("%%", "%％").replace("::", ":：");
+    if out.trim().is_empty() { "·".to_string() } else { out }
 }
 
 #[cfg(test)]
@@ -98,6 +181,36 @@ mod tests {
         let s = to_svg("flowchart LR\n  A[\"<script>alert(1)</script>\"] --> B", &NoteStyle::default());
         if let Some(s) = s {
             assert!(!s.contains("<script"), "{s}");
+        }
+    }
+
+    #[test]
+    fn mindmap_code_is_safe_mermaid() {
+        use crate::mindmap::{Node, Shape};
+        let root = Node {
+            label: "Centro (v2) %% x".into(),
+            children: vec![
+                Node {
+                    label: "a::b [c] {d}".into(),
+                    children: vec![Node { label: "<script>".into(), children: vec![] }],
+                },
+                Node { label: String::new(), children: vec![] },
+            ],
+        };
+        let code = mindmap_code(&root, Shape::Cloud);
+        assert!(code.starts_with("mindmap\n  n0)Centro （v2） %％ x(\n"), "{code}");
+        assert!(code.contains("    n1)a:：b ［c］ ｛d｝(\n") && code.contains("      n2)＜script＞(\n"), "{code}");
+        assert!(code.contains("    n3)·(\n"), "{code}");
+        let svg = to_svg(&code, &NoteStyle::default()).unwrap();
+        assert!(svg.contains("Centro") && !svg.contains("<script"));
+        // Con los colores de rama propios (no los pasteles de Mermaid) y el centro en el acento.
+        let ours = mindmap_svg(&root, Shape::Cloud, &NoteStyle::default()).unwrap();
+        // La primera rama, azul como en las demás distribuciones; la segunda, pizarra.
+        assert!(ours.contains("fill=\"#1d4ed8\"") && ours.contains("fill=\"#475569\""), "{ours}");
+        assert!(ours.contains("fill=\"#1a5fb4\""), "centro en el acento");
+        assert!(!ours.contains("#FFFFAB") && svg.contains("#FFFFAB"));
+        for shape in Shape::ALL {
+            assert!(to_svg(&mindmap_code(&root, shape), &NoteStyle::default()).is_some(), "{shape:?}");
         }
     }
 

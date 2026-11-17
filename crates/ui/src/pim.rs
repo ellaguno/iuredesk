@@ -704,6 +704,9 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         {
             crate::note_preview::handle(app, id, a);
         }
+        if let Some(id) = app.pim.note_edit.as_ref().map(|e| e.id) {
+            crate::note_preview::mindmap_menu(app, &ctx, id);
+        }
         if let Some(id) = act {
             flush_note(app);
             app.run(&ctx, id);

@@ -123,7 +123,9 @@ Not available in the beta yet. If your company uses Microsoft 365, use "Sign in 
   To Do or CalDAV.
 - **Notes** are written in [IureEditor](https://github.com/ellaguno/iureditor). Without it the
   Notes module isn't shown. Each note is a Markdown file in the folder you choose (Settings →
-  General → Notes folder).
+  General → Notes folder). Mind maps can be drawn to the right, radial (as in IureEditor), on both
+  sides or top to bottom: pick the default in Settings → General → Mind maps, or click a map to
+  change only that one and its node shape (undo with Ctrl+Z).
 
 ## My day
 

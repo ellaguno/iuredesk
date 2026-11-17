@@ -198,6 +198,46 @@ fn task_checkbox_rewrites_markdown_with_undo() {
     assert_eq!(body(&h), BODY);
 }
 
+/// S1.19: pulsar un mapa mental abre su menú; elegir distribución y forma reescribe solo el
+/// metadato del mapa, el menú se cierra y todo se deshace.
+#[test]
+fn mindmap_menu_rewrites_the_meta_with_undo() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    let id = a.session.note_focus().unwrap();
+    let md = "Antes\n\n> [!MINDMAP|map] Proyecto\n> - Análisis\n> - Diseño\n";
+    a.session.save_note(id, "Mapa", md).unwrap();
+    let mut h = harness(a);
+    settle(&mut h);
+    h.state_mut().click_note_mindmap(0);
+    settle(&mut h);
+    h.get_by_label("De arriba abajo").click();
+    settle(&mut h);
+    assert_eq!(body(&h), md.replace("[!MINDMAP|map]", "[!MINDMAP|map layout-down]"));
+    assert!(h.query_by_label("De arriba abajo").is_none(), "el menú se cerró");
+    h.state_mut().click_note_mindmap(0);
+    settle(&mut h);
+    h.get_by_label("Nube").click();
+    settle(&mut h);
+    assert_eq!(body(&h), md.replace("[!MINDMAP|map]", "[!MINDMAP|cloud map layout-down]"));
+    // Esc cierra sin cambiar nada; un mapa que no existe no abre menú.
+    h.state_mut().click_note_mindmap(0);
+    settle(&mut h);
+    assert!(h.query_by_label("Nube").is_some());
+    h.key_press(egui::Key::Escape);
+    settle(&mut h);
+    assert!(h.query_by_label("Nube").is_none());
+    h.state_mut().click_note_mindmap(5);
+    settle(&mut h);
+    assert!(h.query_by_label("Nube").is_none());
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "undo");
+    h.state_mut().run(&ctx, "undo");
+    settle(&mut h);
+    assert_eq!(body(&h), md);
+}
+
 /// Lo guardado en IureEditor (el archivo) regenera la vista sin bloquear.
 #[test]
 fn preview_follows_the_file() {

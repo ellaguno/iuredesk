@@ -252,6 +252,15 @@ impl DeskApp {
         }
     }
 
+    /// S1.19: lo mismo que pulsar el mapa mental `n` de la vista previa de la nota enfocada
+    /// (pruebas): abre su menú.
+    pub fn click_note_mindmap(&mut self, n: usize) {
+        if let Some(id) = self.session.note_focus() {
+            let act = crate::note_preview::PreviewAct::Mindmap(n, egui::pos2(300.0, 200.0));
+            crate::note_preview::handle(self, id, act);
+        }
+    }
+
     /// Ventanas de redacción abiertas (pruebas).
     pub fn composer_count(&self) -> usize {
         self.composers.len()

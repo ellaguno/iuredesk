@@ -129,7 +129,10 @@ Microsoft».
   Microsoft To Do o CalDAV.
 - **Notas:** se escriben en [IureEditor](https://github.com/ellaguno/iureditor). Si no lo tienes
   instalado, el módulo de Notas no aparece. Cada nota es un archivo Markdown en la carpeta que
-  elijas (Ajustes → General → Carpeta de notas).
+  elijas (Ajustes → General → Carpeta de notas). Los mapas mentales se dibujan hacia la derecha,
+  radiales (como en IureEditor), a ambos lados o de arriba abajo: elige la forma de omisión en
+  Ajustes → General → Mapas mentales, o pulsa un mapa para cambiar solo ese y la forma de sus
+  nodos (se deshace con Ctrl+Z).
 
 ## Mi día
 
