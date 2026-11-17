@@ -130,6 +130,63 @@ porque cualquier programa local puede dispararlo.
 - Cada fila indica su origen; clic → panel de detalle dentro de IureDesk; «Abrir en IureProject» o
   «Abrir en Iurefficient» como acción secundaria.
 
+### 4.5 Destino: IureEditor 2.0 en Rust + egui (`iure-doc`)
+
+Hoy IureEditor es ~22 000 líneas de TS/React sobre Tauri. Su valor está en bibliotecas web maduras:
+TipTap/ProseMirror (edición enriquecida), `mermaid.js`, KaTeX, `pagedjs` (PDF), `docx` (npm),
+highlight.js. Rehacerlo con Rust + egui 0.37 + `iurefficient-ui` es el único camino para que el
+editor se **embeba** en IureDesk (notas, redactor, documentos de un caso) y para tener un solo motor
+de documentos en la suite.
+
+**Qué se gana**
+- Embebible: el editor es un widget que IureDesk (e IureProject) dibujan en su propia ventana.
+- Un solo render de Markdown/Mermaid: S1.2, S1.3 y S1.9 se resuelven por construcción.
+- Pureza y «nunca fallar» también en IureEditor; fuera Node/npm y ~40 paquetes JS.
+- Un solo stack: ui-kit, temas, densidades, paleta, AccessKit.
+- Arranque casi instantáneo y del orden de 50–100 MB de memoria en vez de 200–400 MB (webview).
+  PDF con Typst (Rust puro) más rápido y fiel que `pagedjs`.
+
+**Qué no se gana por sí solo**
+- Velocidad al escribir: TipTap ya es fluido. egui recalcula la disposición cada cuadro; un documento
+  largo sería **más lento** sin caché de disposición por bloque y virtualización (solo dibujar lo
+  visible). Es trabajo explícito y medible (meta: < 8 ms por cuadro con 100 páginas).
+
+**Equivalencias**
+
+| Pieza | Hoy | Rust puro |
+|---|---|---|
+| Edición enriquecida por bloques | TipTap/ProseMirror | **No existe en egui**: se construye (`DocEditor`) |
+| Modelo de documento | ProseMirror | `compose::rich::RichBody` ampliado (ya hay ida y vuelta Markdown/HTML) |
+| Mermaid | `mermaid.js` | `mermaid-svg` (ya en `html-view`) |
+| LaTeX | KaTeX | Opciones inmaduras: **hueco mayor**; evaluar crates y, si no, render propio limitado o fórmula como imagen vía Typst |
+| PDF | `pagedjs` | **Typst** (crates `typst`/`typst-pdf`) |
+| DOCX | `docx` (npm) | `docx-rs` |
+| Resaltado de código | highlight.js | `syntect` con `fancy-regex` (verificar pureza); `tree-sitter` no (C) |
+
+**El reto: el editor de bloques.** Cursor y selección entre bloques, IME (acentos, teclados
+asiáticos), deshacer por transacciones, tablas editables, imágenes y diagramas en línea, atajos de
+Markdown al teclear, pegar desde web/Word, accesibilidad, corrector ortográfico. Es el corazón del
+riesgo y por eso se valida primero dentro de IureDesk.
+
+**Plan incremental** (cada paso entrega algo útil; si el editor no alcanza la calidad de TipTap se
+descubre en las notas de IureDesk, no tras retirar IureEditor):
+
+1. **Crate `iure-doc`** (Rust puro, sin egui en el núcleo): modelo de bloques a partir de
+   `compose::rich` ampliado con tablas, listas de tareas, Mermaid, fórmulas e imágenes; Markdown
+   como formato de archivo (sin pérdidas en lo que IureEditor ya escribe, incluido el YAML de
+   cabecera); render compartido (lo que §2 llama `iure-markdown`). Pruebas de propiedades de ida y
+   vuelta.
+2. **Widget `DocEditor`** (módulo egui de `iure-doc`, o en `iurefficient-ui`): edición por bloques,
+   atajos Markdown al teclear, caché por bloque y virtualización. Primer usuario: **las notas de
+   IureDesk**; después el redactor de correo (sustituye al editor actual de `compose`).
+3. **Exportación**: PDF con Typst, DOCX con `docx-rs`, HTML autocontenido.
+4. **IureEditor 2.0**: ventana egui + `iure-doc` + deep links y `--mcp` (S1.8) con los mismos
+   esquemas que hoy; migración de preferencias; la versión Tauri se retira cuando haya paridad en
+   las funciones que la gente usa.
+
+Mientras tanto, S1.3 (Mermaid de Rust en el backend de Tauri) queda como **paso intermedio** opcional
+para unificar el aspecto antes de que llegue la 2.0.
+
 ## 5. Seguridad
 
 - **Mismo proceso = mismo destino.** Lo que contiene C/C++ o webview se queda en otro proceso (además
@@ -170,6 +227,10 @@ porque cualquier programa local puede dispararlo.
 | iureditor | `--mcp` para exportar/convertir sin ventana | 5 |
 | iureproject | Usar `iure-markdown` en sus notas | 5 |
 | iuredesk | Documentar el contrato común (§6) en `docs/integraciones.md` | 1 |
+| nuevo `iure-doc` | Modelo de bloques + Markdown sin pérdidas + render compartido (absorbe `iure-markdown`) | 2 |
+| iuredesk | Notas y luego redactor sobre el widget `DocEditor` | 3 |
+| `iure-doc` | Exportar PDF (Typst), DOCX (`docx-rs`), HTML | 4 |
+| iureditor | IureEditor 2.0: egui + `iure-doc`; retirar Tauri al lograr paridad | 5 |
 
 ## 8. Decisiones pendientes del dueño
 
@@ -178,3 +239,6 @@ porque cualquier programa local puede dispararlo.
    proceso? (recomendación: sí, solo lectura y acciones simples, por tag fijo).
 3. **Dónde vive `iure-markdown`**: crate propio, o dentro de `iurefficient-ui` (que ya comparten
    IureDesk e IureProject).
+4. **IureEditor 2.0 en Rust + egui** (§4.5) como destino de IureEditor (recomendación: sí, por
+   pasos, validando el editor primero en las notas de IureDesk). Si se aprueba, S1.3 pasa a ser
+   opcional.

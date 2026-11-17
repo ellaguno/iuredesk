@@ -162,3 +162,9 @@ Las tareas marcadas **[Dueño]** esperan decisión.
 | S1.7 | **[Dueño]** Nivel A con IureProject: enlazar `iureproject-model`/`-engine`/`-ui-egui` por tag fijo para vistas embebidas de solo lectura y acciones simples (mini-Gantt, tareas del proyecto); cambia la regla «apps hermanas por frontera de proceso» de `CLAUDE.md` | ☐ |
 | S1.8 | `iureditor --mcp` para exportar/convertir sin ventana (PDF, DOCX, plantillas) (repo iureditor) | ☐ |
 | S1.9 | IureProject usa `iure-markdown` en sus notas (repo iureproject) | ☐ |
+| S1.10 | **[Dueño]** Decidir IureEditor 2.0 en Rust + egui 0.37 + `iurefficient-ui` como destino (análisis en `suite-integracion.md` §4.5); si se aprueba, S1.3 queda opcional | ☐ |
+| S1.11 | Crate `iure-doc` (Rust puro, núcleo sin egui): modelo de bloques a partir de `compose::rich` ampliado (tablas, listas de tareas, Mermaid, fórmulas, imágenes), Markdown sin pérdidas con el YAML de cabecera de IureEditor, render compartido (absorbe S1.2); pruebas de propiedades de ida y vuelta; evaluar LaTeX en Rust puro | ☐ |
+| S1.12 | Widget `DocEditor` (egui): edición por bloques, atajos Markdown al teclear, selección entre bloques, IME, deshacer por transacciones, tablas, pegar HTML, AccessKit; caché de disposición por bloque y virtualización (meta < 8 ms por cuadro con 100 páginas). Primer uso: notas de IureDesk | ☐ |
+| S1.13 | El redactor de correo usa `DocEditor` en lugar del editor actual de `compose` | ☐ |
+| S1.14 | Exportar desde `iure-doc`: PDF con Typst, DOCX con `docx-rs`, HTML autocontenido; verificar pureza (`cargo xtask purity`) | ☐ |
+| S1.15 | IureEditor 2.0: ventana egui + `iure-doc`, mismos deep links, `--mcp` (S1.8), migración de preferencias; retirar la versión Tauri al lograr paridad (repo iureditor) | ☐ |
