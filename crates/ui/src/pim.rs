@@ -628,7 +628,9 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         let mut act: Option<&'static str> = None;
         let mut save_now = false;
         let mut preview_act = None;
-        ui.set_max_width(820.0);
+        // S1.12: al editar, más ancho (editor y vista lado a lado).
+        let max = if editing { 1700.0 } else { 820.0 };
+        ui.set_max_width(ui.available_width().min(max));
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             // UX-12: la nota se ve aquí y se escribe en IureEditor.
@@ -704,29 +706,62 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         crate::widgets::named(&t, egui::Role::Label, &shown_title);
         ui.add_space(8.0);
         if editing {
-            // S1.12: el editor; se guarda solo al dejar de teclear.
+            // S1.12: el editor; se guarda solo al dejar de teclear. Con ancho, a su lado la vista de
+            // lo guardado (diagramas, mapas, tablas), que se pone al día al guardar.
             let now_t = ui.input(|i| i.time);
-            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-editor").show(ui, |ui| {
-                let out = iure_doc_ui::show(
-                    ui,
-                    egui::Id::unique(("note-editor", edit.id)),
-                    &mut edit.body,
-                    pick("Write here… (# title, - list, **bold**)", "Escribe aquí… (# título, - lista, **negrita**)"),
-                );
-                crate::widgets::named(
-                    &out.response,
-                    egui::Role::MultilineTextInput,
-                    pick("Note text", "Texto de la nota"),
-                );
-                if out.changed {
-                    edit.dirty_at = Some(now_t);
+            let id = edit.id;
+            let mut body = edit.body.clone();
+            let saved_body = notes.iter().find(|n| n.id == id).map(|n| n.body.clone()).unwrap_or_default();
+            let wide = ui.available_width() >= 980.0;
+            let mut changed = false;
+            let mut editor = |ui: &mut egui::Ui, body: &mut String| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-editor").show(ui, |ui| {
+                    let out = iure_doc_ui::show(
+                        ui,
+                        egui::Id::unique(("note-editor", id)),
+                        body,
+                        pick(
+                            "Write here… (# title, - list, **bold**)",
+                            "Escribe aquí… (# título, - lista, **negrita**)",
+                        ),
+                    );
+                    crate::widgets::named(
+                        &out.response,
+                        egui::Role::MultilineTextInput,
+                        pick("Note text", "Texto de la nota"),
+                    );
+                    changed |= out.changed;
+                });
+            };
+            if wide {
+                ui.columns(2, |cols| {
+                    if let [left, right] = cols {
+                        editor(left, &mut body);
+                        egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-live-preview").show(
+                            right,
+                            |ui| {
+                                if !saved_body.trim().is_empty() {
+                                    preview_act = crate::note_preview::show(app, ui, id, &saved_body);
+                                }
+                            },
+                        );
+                    }
+                });
+            } else {
+                editor(ui, &mut body);
+            }
+            if let Some(e) = app.pim.note_edit.as_mut().filter(|e| e.id == id) {
+                if changed {
+                    e.body = body;
+                    e.dirty_at = Some(now_t);
                 }
-            });
-            if let Some(t) = edit.dirty_at {
-                if now_t - t >= NOTE_SAVE_DELAY {
-                    save_now = true;
-                } else {
-                    ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(NOTE_SAVE_DELAY - (now_t - t)));
+                if let Some(t) = e.dirty_at {
+                    if now_t - t >= NOTE_SAVE_DELAY {
+                        save_now = true;
+                    } else {
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_secs_f64(NOTE_SAVE_DELAY - (now_t - t)));
+                    }
                 }
             }
         } else if edit.body.trim().is_empty() {
