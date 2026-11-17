@@ -377,15 +377,16 @@ se enriquece:
 | iuredesk (`html-view`) | Opciones de mapa mental (distribución y formas) ya en la vista de notas actual | 2 |
 | `iure-doc` / mermaid-svg | Barra de diagrama, tema de la app, vista previa en vivo, zoom, exportar, corpus de fidelidad; PR aguas arriba | 3 |
 
-## 8. Decisiones pendientes del dueño
+## 8. Decisiones del dueño (2026-11-17)
 
-1. **Renderizador canónico de Markdown/Mermaid** para toda la suite (recomendación: el de Rust).
-2. **¿IureDesk puede enlazar crates de IureProject** (y su interfaz egui) en lugar de hablar solo por
-   proceso? (recomendación: sí, solo lectura y acciones simples, por tag fijo).
-3. **Dónde vive `iure-markdown`**: crate propio, o dentro de `iurefficient-ui` (que ya comparten
-   IureDesk e IureProject).
-4. **IureEditor 2.0 en Rust + egui** (§4.5) como destino de IureEditor (recomendación: sí, por
-   pasos, validando el editor primero en las notas de IureDesk). Si se aprueba, S1.3 pasa a ser
-   opcional.
-5. **IureTranscribe con interfaz egui** y motor en proceso aparte (§4.6) como destino
-   (recomendación: sí, después de IureEditor 2.0 o en paralelo si el editor ya está maduro).
+1. **Renderizador canónico**: el de Rust (`mermaid-svg` + dibujo propio de mapas). IureEditor lo
+   adoptará con la 2.0; mientras tanto S1.3 queda opcional.
+2. **IureProject solo por MCP** (no se enlazan sus crates; se mantiene la frontera de proceso).
+3. **Dónde vive `iure-doc`**: empieza como crate del workspace de IureDesk (`crates/doc`, sin
+   dependencias de IureDesk); se muda a su propio repositorio cuando lo use una segunda app.
+   (Elección del agente; el dueño puede cambiarla.)
+4. **IureEditor 2.0 en Rust + egui, por pasos**: `iure-doc` → `DocEditor` en las notas de
+   IureDesk → redactor → exportar → IureEditor 2.0. IureEditor Tauri sigue hasta la paridad.
+5. **IureTranscribe con interfaz egui** y whisper.cpp en proceso aparte: **ya** (plan en su repo).
+6. **Permisos**: PR a `mermaid-svg` y navegador sin pantalla en desarrollo para las referencias
+   de `mermaid.js` (S1.21).
