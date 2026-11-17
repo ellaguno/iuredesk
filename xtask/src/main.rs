@@ -159,6 +159,8 @@ fn s<'a>(v: &'a Value, k: &str) -> &'a str {
 /// Capa de cada crate del workspace (PLAN.md §7). Un crate nuevo debe registrarse aquí.
 const LAYERS: &[(&str, u8)] = &[
     ("iuredesk-model", 1),
+    // S1.11: documento de la suite (se mudará a su propio repositorio).
+    ("iure-doc", 1),
     ("iuredesk-store", 2),
     ("iuredesk-autoconfig", 2),
     ("iuredesk-net", 2),

@@ -1,0 +1,27 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8899c1119504babd2a83beee094fef6c5b9303b550e5e00a326b2a856348d3f9 # shrinks to md = "- \n𔐀"
+cc 1cb862d19b249fa332b516fe9c62c738ab6c501192e49bbfcf3cb77f42a9f25b # shrinks to md = "##\n"
+cc 4ec60635b36a09ba31a2cc3f3ab54c8cfbcf6dc6bc0b7dda51a3bf08c6d9aa97 # shrinks to md = "🌀a\n- ------"
+cc 923aa2e6301de8cfd2c3d2dbf12edd255d97a2fa40c7cb6ac4422b2679358a00 # shrinks to md = "𐳀🩠𑃐ዀໜ\u{b01}\n---a\n------"
+cc 1932c77c57d6f5e1cabeffacbff6e066e51ed50f9ad092b008b5fa053f2b1e71 # shrinks to md = "> ꯰> #\n> ------"
+cc 94cef9f71a3bc653637438e455dea0eb944dcfff513d4d233f7cafb5fce4a7fe # shrinks to md = "1.  \n> \n1. "
+cc 68029e313afbc3de879c1f309b77e369b4a9f989713b414e8c1edc27b6920fca # shrinks to md = "1. ￼\n\n1. [ ] 1. ---𝒮"
+cc 1149ee3a9859094a040bab1a468ff4d1de02749f96c2cfa0b70a6306c2d3e9c9 # shrinks to md = "[ ] \n- [ ] 1. "
+cc 6661256b572040efbd8adddde53d31e6cbe8f6c7bb9e01321b33d9f8bc3f6e46 # shrinks to md = "> - - *\n"
+cc 9ee8d97b845be39212060315d111f817f5595614990992ca60cfa70362ab7c2a # shrinks to md = "> | 𞹋\n| - \n𐾰\u{1cd0}"
+cc e59346ed8db1a0ca0c3fa55366684bec87b1911fd3b2698e4d1669dee4b38511 # shrinks to md = "Ꙁ`````` ``````0```A``[ ] ``` "
+cc b2d1d284a439e48f57a1f75c0c87b44d45d7a4c492828c3eccb19be84b41497c # shrinks to md = " ``` ```0 𐶎¡\u{1a7f}\u{16af0}"
+cc 4547f9dd1f0547822d34c32638afcdad5e0125d15aba1659b19c7012b92b41c1 # shrinks to md = "[ ] a\n> ¡\n*\n- #\n"
+cc 3a35bbffabdf2c94cdf1d4aebb88f7ff2254f47bd29be4f31595a6fc4577c498 # shrinks to md = "[ ] \n> \u{202f}\n0"
+cc be9edb5078103007eaacad4afa3996a95968ee51ddd1d94b35bbf8d8ac9daedf # shrinks to md = "[ ] $𐄀\n[ ] !$\n- \n"
+cc d020995bb82c97dc34833eae3fc71e55f8f66d8c334f45e4932efc8d8084c7ab # shrinks to md = "- <a> ೦"
+cc 9c60237ab76c68dafe40fa39aa2dc6b91fef7d40c2f1a4258c537e3bcd3d8c93 # shrinks to md = "> ```\\\\#[ ] "
+cc ee604a4dab155cd336291d1309abf5edf296884d31cfe1d75c5312c22743a1fd # shrinks to md = "```🣀```*```Σ 𑱐 aA[ ] ```*```"
+cc e47f4b2bd3929f067c5e1a5e2e52b7043d21401e8845edf27252c3ca5f602346 # shrinks to md = "\\\n---1. \n- \n"
+cc 49b252f4f32225050de827f20ee7d51df8ca7e777dea0fdd55897eabc7b1b097 # shrinks to md = "[ ] \n- *---*\n!"
+cc ffabf7b8aaf4ab1a2d33925e5322c76c53a84551abc90cb0ae16989a24096d12 # shrinks to md = "\\#\n- \n"

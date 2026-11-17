@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/model",
+    "crates/doc",
     "crates/store",
     "crates/autoconfig",
     "crates/accounts",
@@ -41,6 +42,7 @@ repository = "https://github.com/ellaguno/iuredesk"
 [workspace.dependencies]
 # internos
 iuredesk-model = { path = "crates/model" }
+iure-doc = { path = "crates/doc" }
 iuredesk-store = { path = "crates/store" }
 iuredesk-autoconfig = { path = "crates/autoconfig" }
 iuredesk-accounts = { path = "crates/accounts" }
