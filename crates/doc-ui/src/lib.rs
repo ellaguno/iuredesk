@@ -15,8 +15,12 @@
 //! - **Ctrl+B** / **Ctrl+I** / **Ctrl+Mayús+X**: negrita, cursiva, tachado (ponen o quitan).
 //! - **Ctrl+Mayús+K**: enlace (`Ctrl+K` es la paleta de comandos de la suite).
 //!
-//! Lo que viene (S1.12, siguientes entregas): ocultar las marcas fuera de la línea del cursor,
-//! diagramas y tablas dibujados en su lugar, pegar HTML como Markdown, corrector.
+//! Las marcas en línea (`**`, `*`, `~~`, comillas, sintaxis de enlace, `#` de títulos) se ocultan
+//! fuera de la línea del cursor (la negrita se ve como negrita); en esa línea se ven para poder
+//! borrarlas. Viñetas, `>`, cercas y `|` de tablas siempre se ven: son estructura.
+//!
+//! Lo que viene (S1.12, siguientes entregas): diagramas y tablas dibujados en su lugar, pegar HTML
+//! como Markdown, corrector.
 
 #![deny(
     clippy::unwrap_used,
@@ -81,9 +85,19 @@ struct Fmt {
     link: bool,
     /// Marca de Markdown (tenue).
     marker: bool,
+    /// Marca en línea (`**`, `*`, `~~`, comillas, sintaxis de enlace, `#` de títulos): se oculta
+    /// fuera de la línea del cursor.
+    inline: bool,
     /// Viñeta, número o casilla (acento).
     bullet: bool,
     quote: bool,
+    /// Oculta (marca en línea fuera de la línea del cursor).
+    hidden: bool,
+}
+
+fn inline_marker(x: &mut Fmt) {
+    x.marker = true;
+    x.inline = true;
 }
 
 /// Formatos byte a byte del texto.
@@ -116,38 +130,51 @@ fn formats(text: &str) -> Vec<Fmt> {
                 let hashes = slice.len() - slice.trim_start_matches('#').len();
                 if hashes > 0 {
                     let sp = slice.get(hashes..).map_or(0, |s| s.len() - s.trim_start().len());
-                    set(r.start..r.start + hashes + sp, &|x| x.marker = true);
+                    set(r.start..r.start + hashes + sp, &|x| {
+                        x.marker = true;
+                        x.inline = true;
+                    });
                 }
             }
             Event::Start(Tag::Strong) => {
                 set(r.clone(), &|x| x.bold = true);
-                set(r.start..r.start + 2, &|x| x.marker = true);
-                set(r.end.saturating_sub(2)..r.end, &|x| x.marker = true);
+                set(r.start..r.start + 2, &inline_marker);
+                set(r.end.saturating_sub(2)..r.end, &inline_marker);
             }
             Event::Start(Tag::Emphasis) => {
                 set(r.clone(), &|x| x.italic = true);
-                set(r.start..r.start + 1, &|x| x.marker = true);
-                set(r.end.saturating_sub(1)..r.end, &|x| x.marker = true);
+                set(r.start..r.start + 1, &inline_marker);
+                set(r.end.saturating_sub(1)..r.end, &inline_marker);
             }
             Event::Start(Tag::Strikethrough) => {
                 set(r.clone(), &|x| x.strike = true);
                 let n = slice.len() - slice.trim_start_matches('~').len();
-                set(r.start..r.start + n, &|x| x.marker = true);
-                set(r.end.saturating_sub(n)..r.end, &|x| x.marker = true);
+                set(r.start..r.start + n, &inline_marker);
+                set(r.end.saturating_sub(n)..r.end, &inline_marker);
             }
             Event::Code(_) | Event::InlineMath(_) | Event::DisplayMath(_) => {
                 set(r.clone(), &|x| x.code = true);
                 let n = slice.len() - slice.trim_start_matches(['`', '$']).len();
-                set(r.start..r.start + n, &|x| x.marker = true);
-                set(r.end.saturating_sub(n)..r.end, &|x| x.marker = true);
+                set(r.start..r.start + n, &inline_marker);
+                set(r.end.saturating_sub(n)..r.end, &inline_marker);
+            }
+            Event::Start(Tag::Image { .. }) => {
+                // `![texto](ruta)`: el texto como enlace; `![` y `](ruta)` son marcas.
+                set(r.clone(), &|x| x.link = true);
+                if slice.starts_with("![")
+                    && let Some(close) = slice.rfind("](")
+                {
+                    set(r.start..r.start + 2, &inline_marker);
+                    set(r.start + close..r.end, &inline_marker);
+                }
             }
             Event::Start(Tag::Link { .. }) => {
                 set(r.clone(), &|x| x.link = true);
                 if slice.starts_with('[')
                     && let Some(close) = slice.rfind("](")
                 {
-                    set(r.start..r.start + 1, &|x| x.marker = true);
-                    set(r.start + close..r.end, &|x| x.marker = true);
+                    set(r.start..r.start + 1, &inline_marker);
+                    set(r.start + close..r.end, &inline_marker);
                 }
             }
             Event::Start(Tag::CodeBlock(_)) => {
@@ -221,6 +248,14 @@ fn heading_scale(level: u8) -> f32 {
 }
 
 fn text_format(fmt: Fmt, s: &EditorStyle) -> TextFormat {
+    if fmt.hidden {
+        // Casi sin ancho e invisible: sigue en el texto (el cursor pasa por ahí) pero no se ve.
+        return TextFormat {
+            font_id: FontId::new(0.05, s.body_family.clone()),
+            color: Color32::TRANSPARENT,
+            ..Default::default()
+        };
+    }
     let size = s.size * if fmt.heading > 0 { heading_scale(fmt.heading) } else { 1.0 };
     let family = if fmt.code {
         FontFamily::Monospace
@@ -253,9 +288,14 @@ fn text_format(fmt: Fmt, s: &EditorStyle) -> TextFormat {
     }
 }
 
-/// El texto con su estilo, en tramos de formato igual.
-pub fn layout_job(text: &str, s: &EditorStyle, wrap_width: f32) -> LayoutJob {
-    let f = formats(text);
+/// El texto con su estilo, en tramos de formato igual. Las marcas en línea fuera de `reveal`
+/// (bytes de la línea del cursor; `None` sin cursor) se ocultan: la negrita se ve como negrita y
+/// el enlace como enlace; en la línea donde se escribe se ven para poder borrarlas.
+pub fn layout_job(text: &str, s: &EditorStyle, wrap_width: f32, reveal: Option<std::ops::Range<usize>>) -> LayoutJob {
+    let mut f = formats(text);
+    for (i, x) in f.iter_mut().enumerate() {
+        x.hidden = x.inline && !reveal.as_ref().is_some_and(|r| r.contains(&i) || r.end == i);
+    }
     let mut job = LayoutJob::default();
     let mut start = 0usize;
     let mut cur = f.first().copied().unwrap_or_default();
@@ -338,8 +378,21 @@ pub fn show(ui: &mut Ui, id: Id, text: &mut String, hint: &str) -> Output {
             changed = true;
         }
     }
+    // La línea del cursor (en bytes), para mostrar ahí las marcas.
+    let reveal = if ui.memory(|m| m.has_focus(id)) {
+        TextEditState::load(ui.ctx(), id).and_then(|st| st.cursor.char_range()).map(|r| {
+            let (a, b) = (r.primary.index.0.min(r.secondary.index.0), r.primary.index.0.max(r.secondary.index.0));
+            let ab = text.char_indices().nth(a).map_or(text.len(), |(i, _)| i);
+            let bb = text.char_indices().nth(b).map_or(text.len(), |(i, _)| i);
+            let start = text.get(..ab).and_then(|t| t.rfind('\n')).map_or(0, |i| i + 1);
+            let end = text.get(bb..).and_then(|t| t.find('\n')).map_or(text.len(), |i| bb + i);
+            start..end
+        })
+    } else {
+        None
+    };
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| -> Arc<egui::Galley> {
-        ui.fonts_mut(|f| f.layout_job(layout_job(buf.as_str(), &style, wrap)))
+        ui.fonts_mut(|f| f.layout_job(layout_job(buf.as_str(), &style, wrap, reveal.clone())))
     };
     let out = egui::TextEdit::multiline(text)
         .id(id)
@@ -380,6 +433,34 @@ mod tests {
     }
 
     #[test]
+    fn inline_markers_hide_outside_the_cursor_line() {
+        let s = EditorStyle {
+            text: Color32::BLACK,
+            muted: Color32::GRAY,
+            accent: Color32::BLUE,
+            code_bg: Color32::LIGHT_GRAY,
+            size: 14.0,
+            bold_family: FontFamily::Proportional,
+            body_family: FontFamily::Proportional,
+        };
+        let t = "uno **dos**\ntres **cuatro**\n- lista";
+        let hidden = |job: &LayoutJob, needle: &str| {
+            let at = t.find(needle).unwrap_or(0);
+            job.sections.iter().any(|x| {
+                x.byte_range.start.0 <= at && at < x.byte_range.end.0 && x.format.color == Color32::TRANSPARENT
+            })
+        };
+        // Cursor en la primera línea: sus marcas se ven, las de la segunda no.
+        let job = layout_job(t, &s, 300.0, Some(0..11));
+        assert!(!hidden(&job, "**dos"));
+        assert!(hidden(&job, "**cuatro"));
+        assert!(!hidden(&job, "- lista"), "las viñetas siempre se ven");
+        // Sin cursor: todas ocultas.
+        let job = layout_job(t, &s, 300.0, None);
+        assert!(hidden(&job, "**dos") && hidden(&job, "**cuatro"));
+    }
+
+    #[test]
     fn layout_covers_every_byte() {
         let s = EditorStyle {
             text: Color32::BLACK,
@@ -391,7 +472,7 @@ mod tests {
             body_family: FontFamily::Proportional,
         };
         for t in ["", "hola", "# a\n**b** ñú `c`\n- [x] d", "```\ncódigo\n```"] {
-            let job = layout_job(t, &s, 300.0);
+            let job = layout_job(t, &s, 300.0, None);
             assert_eq!(job.text, t);
             let covered: usize = job.sections.iter().map(|x| x.byte_range.end.0 - x.byte_range.start.0).sum();
             assert_eq!(covered, t.len(), "{t:?}");
