@@ -52,6 +52,12 @@ pub enum SuiteAction {
     ProjectOverviews(Vec<PathBuf>),
     /// S1.6: abrir un plan en IureProject.
     OpenProject(PathBuf),
+    /// S1.4: grabar una reunión con IureTranscribe (sin abrir su ventana).
+    StartRecording { title: String },
+    /// S1.4: pausar (`true`) o reanudar la grabación.
+    PauseRecording(bool),
+    /// S1.4: detener, guardar y transcribir.
+    StopRecording,
     /// «Usar IureDesk desde Claude / Copilot».
     RegisterAgents,
     /// «Desconectar».
@@ -79,6 +85,22 @@ pub enum SuiteEvent {
     OcrText { name: String, text: String },
     /// S1.6: estado de los planes seguidos.
     Projects(Vec<iuredesk_integrations::ProjectStatus>),
+    /// S1.4: transcripción de una reunión grabada desde IureDesk (para guardarla como minuta).
+    MeetingTranscript { title: String, text: String, audio: PathBuf },
+}
+
+/// S1.4: grabación en curso (lo que muestra la interfaz).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RecordingState {
+    pub title: String,
+    pub elapsed_secs: f64,
+    pub paused: bool,
+    /// Nivel del micrófono y del sistema (0–1).
+    pub mic_level: f32,
+    pub sys_level: f32,
+    /// Deteniendo y guardando.
+    pub stopping: bool,
+    pub error: Option<String>,
 }
 
 /// Transcripción en curso.
@@ -106,6 +128,9 @@ pub struct SuiteHub {
     events: Vec<SuiteEvent>,
     agents: Option<AgentsStatus>,
     transcribe: Arc<Mutex<Option<TranscribeProgress>>>,
+    /// S1.4: la grabación (su proceso MCP vive mientras exista) y lo que se muestra de ella.
+    recording: Arc<Mutex<Option<iuredesk_integrations::Recording>>>,
+    rec_state: Arc<Mutex<Option<RecordingState>>>,
 }
 
 impl std::fmt::Debug for SuiteHub {
@@ -159,6 +184,8 @@ impl SuiteHub {
             events: Vec::new(),
             agents: None,
             transcribe: Arc::new(Mutex::new(None)),
+            recording: Arc::new(Mutex::new(None)),
+            rec_state: Arc::new(Mutex::new(None)),
         };
         h.background(|| vec![Msg::Detected(Arc::new(Suite::detect()))]);
         h
@@ -210,6 +237,16 @@ impl SuiteHub {
         self.transcribe.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
+    /// S1.4: grabación en curso.
+    pub fn recording(&self) -> Option<RecordingState> {
+        self.rec_state.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// S1.4: como si hubiera una grabación con este estado (pruebas y capturas; sin proceso).
+    pub fn set_recording_for_tests(&mut self, state: Option<RecordingState>) {
+        *self.rec_state.lock().unwrap_or_else(PoisonError::into_inner) = state;
+    }
+
     /// Hay trabajos en curso.
     pub fn busy(&self) -> bool {
         self.busy.load(Ordering::Acquire) > 0
@@ -225,6 +262,9 @@ impl SuiteHub {
             return;
         };
         let store = Arc::clone(&self.store);
+        let recording = Arc::clone(&self.recording);
+        let rec_state = Arc::clone(&self.rec_state);
+        let waker = self.waker.clone();
         let progress = Arc::clone(&self.transcribe);
         let missing =
             || SuiteEvent::Failed(Text::new("The attachment could not be read.", "No se pudo leer el adjunto."));
@@ -239,6 +279,7 @@ impl SuiteHub {
             SuiteAction::Transcribe { file, .. } if !is_text_transcript(file) => Some(SisterApp::Transcribe),
             SuiteAction::Launch(a) => Some(*a),
             SuiteAction::ProjectOverviews(_) | SuiteAction::OpenProject(_) => Some(SisterApp::Project),
+            SuiteAction::StartRecording { .. } => Some(SisterApp::Transcribe),
             _ => None,
         };
         if let Some(app) = needs
@@ -301,6 +342,64 @@ impl SuiteHub {
                         "Abierta en IureEditor. Lo que guardes allá vuelve aquí.",
                     ))
                 }),
+                SuiteAction::StartRecording { title } => {
+                    if lock(&recording).is_some() {
+                        return vec![Msg::Event(SuiteEvent::NotAvailable(Text::new(
+                            "You are already recording.",
+                            "Ya estás grabando.",
+                        )))];
+                    }
+                    match suite.start_recording() {
+                        Ok(SuiteOutcome::Ready(r)) => {
+                            *lock(&recording) = Some(r);
+                            *lock(&rec_state) = Some(RecordingState { title, ..Default::default() });
+                            spawn_recording_status(Arc::clone(&recording), Arc::clone(&rec_state), waker.clone());
+                            SuiteEvent::Done(Text::new(
+                                "Recording. Stop it from the bar at the top.",
+                                "Grabando. Detenla desde la barra de arriba.",
+                            ))
+                        }
+                        other => outcome(other.map(|o| o.map(|_| ())), |_| SuiteEvent::Failed(Text::default())),
+                    }
+                }
+                SuiteAction::PauseRecording(paused) => {
+                    let r = lock(&recording).as_mut().map(|r| r.set_paused(paused));
+                    match r {
+                        None => return vec![],
+                        Some(Ok(())) => {
+                            if let Some(st) = lock(&rec_state).as_mut() {
+                                st.paused = paused;
+                            }
+                            return vec![];
+                        }
+                        Some(Err(e)) => SuiteEvent::Failed(err_text(&e)),
+                    }
+                }
+                SuiteAction::StopRecording => {
+                    let title = match lock(&rec_state).as_mut() {
+                        Some(st) => {
+                            st.stopping = true;
+                            st.title.clone()
+                        }
+                        None => return vec![],
+                    };
+                    let Some(r) = lock(&recording).take() else {
+                        // Nada que detener (el proceso ya no estaba): no dejar la barra en «Guardando».
+                        *lock(&rec_state) = None;
+                        return vec![];
+                    };
+                    let saved = r.stop();
+                    *lock(&rec_state) = None;
+                    match saved {
+                        Err(e) => SuiteEvent::Failed(err_text(&e)),
+                        Ok(rec) => match transcribe(&suite, &rec.path, title, &progress) {
+                            SuiteEvent::Transcript { title, text } => {
+                                SuiteEvent::MeetingTranscript { title, text, audio: rec.path }
+                            }
+                            other => other,
+                        },
+                    }
+                }
                 SuiteAction::ProjectOverviews(files) => outcome(suite.project_overviews(&files), SuiteEvent::Projects),
                 SuiteAction::OpenProject(file) => outcome(suite.open_in_iureproject(&file), |_| {
                     SuiteEvent::Done(Text::new("Opening the plan in IureProject", "Abriendo el plan en IureProject"))
@@ -361,6 +460,47 @@ impl SuiteHub {
     pub fn take_events(&mut self) -> Vec<SuiteEvent> {
         std::mem::take(&mut self.events)
     }
+}
+
+/// Bloquea aunque otro hilo haya fallado con el candado tomado.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Segundos que una grabación se sigue consultando como mucho (8 h).
+const MAX_RECORDING_SECS: usize = 8 * 3600;
+
+/// S1.4: consulta el estado de la grabación cada segundo mientras exista (hilo propio: no cuenta
+/// como trabajo en curso, la reunión puede durar horas).
+fn spawn_recording_status(
+    recording: Arc<Mutex<Option<iuredesk_integrations::Recording>>>,
+    state: Arc<Mutex<Option<RecordingState>>>,
+    waker: Waker,
+) {
+    let _ = std::thread::Builder::new().name("recording-status".into()).spawn(move || {
+        for _ in 0..MAX_RECORDING_SECS {
+            std::thread::sleep(Duration::from_secs(1));
+            let st = match lock(&recording).as_mut() {
+                None => break,
+                Some(r) => r.status(),
+            };
+            match lock(&state).as_mut() {
+                None => break,
+                Some(s) if s.stopping => break,
+                Some(s) => match st {
+                    Ok(st) => {
+                        s.elapsed_secs = st.elapsed_secs;
+                        s.paused = st.paused;
+                        s.mic_level = st.mic_level;
+                        s.sys_level = st.sys_level;
+                        s.error = st.error;
+                    }
+                    Err(e) => s.error = Some(e.human(crate::lang::spanish())),
+                },
+            }
+            waker();
+        }
+    });
 }
 
 fn transcribe(

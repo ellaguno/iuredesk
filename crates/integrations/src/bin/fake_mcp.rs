@@ -25,6 +25,8 @@ struct Fake {
     status_calls: Mutex<u32>,
     /// Plan abierto con `file_open` (como IureProject).
     plan: Mutex<String>,
+    /// Grabación en curso (como IureTranscribe): en pausa o no.
+    recording: Mutex<Option<bool>>,
 }
 
 fn s<'a>(a: &'a Value, k: &str) -> &'a str {
@@ -50,6 +52,10 @@ impl Handler for Fake {
             "dictar",
             "file_open",
             "project_overview",
+            "start_recording",
+            "recording_status",
+            "pause_recording",
+            "stop_recording",
         ];
         Value::Array(
             names
@@ -128,6 +134,36 @@ impl Handler for Fake {
                     "resources": []
                 })))
             }
+            // Como IureTranscribe: una grabación a la vez.
+            "start_recording" => {
+                let mut r = self.recording.lock().unwrap_or_else(|e| e.into_inner());
+                if r.is_some() {
+                    return Err(CallError::Tool(anyhow::anyhow!("Ya hay una grabación en curso.")));
+                }
+                *r = Some(false);
+                Ok(Reply::Data(json!({"path": "/tmp/grabaciones/reunion.wav", "active": true})))
+            }
+            "recording_status" => {
+                let r = *self.recording.lock().unwrap_or_else(|e| e.into_inner());
+                Ok(Reply::Data(json!({
+                    "active": r.is_some(), "elapsedSecs": 12.5, "paused": r == Some(true),
+                    "micLevel": 3.0, "sysLevel": 0.2, "path": "/tmp/grabaciones/reunion.wav", "error": null,
+                })))
+            }
+            "pause_recording" => {
+                let mut r = self.recording.lock().unwrap_or_else(|e| e.into_inner());
+                if r.is_none() {
+                    return Err(CallError::Tool(anyhow::anyhow!("No se está grabando.")));
+                }
+                *r = Some(a.get("paused").and_then(Value::as_bool).unwrap_or(true));
+                Ok(Reply::Data(json!({"paused": *r == Some(true)})))
+            }
+            "stop_recording" => {
+                if self.recording.lock().unwrap_or_else(|e| e.into_inner()).take().is_none() {
+                    return Err(CallError::Tool(anyhow::anyhow!("No se está grabando.")));
+                }
+                Ok(Reply::Data(json!({"path": "/tmp/grabaciones/reunion.wav", "durationSecs": 12.5, "warning": null})))
+            }
             other => Err(CallError::Params(format!("herramienta desconocida: {other}"))),
         }
     }
@@ -157,5 +193,9 @@ fn main() {
         }
         _ => {}
     }
-    std::process::exit(serve(Fake { status_calls: Mutex::new(0), plan: Mutex::new(String::new()) }));
+    std::process::exit(serve(Fake {
+        status_calls: Mutex::new(0),
+        plan: Mutex::new(String::new()),
+        recording: Mutex::new(None),
+    }));
 }

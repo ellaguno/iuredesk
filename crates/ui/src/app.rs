@@ -300,6 +300,26 @@ impl DeskApp {
         crate::files::enter_for_tests(self, name);
     }
 
+    /// S1.4: como si se estuviera grabando la reunión `title` (pruebas y capturas).
+    pub fn set_recording_for_tests(&mut self, title: &str, secs: f64) {
+        self.suite.hub.set_recording_for_tests(Some(iuredesk_engine::suite::RecordingState {
+            title: title.to_string(),
+            elapsed_secs: secs,
+            mic_level: 0.5,
+            ..Default::default()
+        }));
+    }
+
+    /// S1.4: ¿se está grabando? (pruebas)
+    pub fn is_recording(&self) -> bool {
+        self.suite.hub.recording().is_some()
+    }
+
+    /// S1.4: llegó la transcripción de una reunión grabada (pruebas).
+    pub fn meeting_transcript_for_tests(&mut self, title: &str, text: &str) {
+        crate::recording_ui::on_transcript(self, title, text, std::path::Path::new("/tmp/reunion.wav"));
+    }
+
     /// S1.24: lo mismo que pulsar un nodo con enlace de un diagrama (pruebas).
     pub fn click_note_node_link(&mut self, href: &str) {
         if let Some(id) = self.session.note_focus() {

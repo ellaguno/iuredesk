@@ -126,6 +126,10 @@ Microsoft».
 - **Archivos** (si tienes IureDav): tus unidades de Iurefficient dentro de IureDesk. Navega las
   carpetas, filtra por nombre, abre un archivo, muéstralo en su carpeta o envíalo por correo
   como adjunto. Si la unidad no está montada, IureDesk te lleva a IureDav.
+- **Grabar una reunión** (si tienes IureTranscribe): pulsa «● Grabar» en tu próxima cita de Mi
+  día o busca «Grabar reunión» en la paleta (Ctrl+K). Arriba verás siempre que se está grabando,
+  con pausa y «Detener»; al detener, la grabación se transcribe en tu equipo y queda como nota
+  de minuta.
 - **Proyectos en Mi día** (si tienes IureProject): sigue tus planes y verás su avance, las tareas
   atrasadas y el próximo hito sin abrir IureProject; al pulsar un plan se abre allí.
 

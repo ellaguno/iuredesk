@@ -120,6 +120,10 @@ Not available in the beta yet. If your company uses Microsoft 365, use "Sign in 
 - **Files** (if you have IureDav): your Iurefficient drives inside IureDesk. Browse folders,
   filter by name, open a file, show it in its folder or email it as an attachment. If the drive
   isn't mounted, IureDesk takes you to IureDav.
+- **Record a meeting** (if you have IureTranscribe): click «● Record» on your next appointment in
+  My day or search «Record meeting» in the palette (Ctrl+K). A bar at the top always shows it's
+  recording, with pause and «Stop»; when you stop, the recording is transcribed on your computer
+  and saved as a minutes note.
 - **Projects in My day** (if you have IureProject): follow your plans to see their progress, late
   tasks and next milestone without opening IureProject; click a plan to open it there.
 

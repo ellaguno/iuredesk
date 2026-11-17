@@ -13,6 +13,7 @@
 //! - [`transcribe`]: transcribir una grabación con IureTranscribe y seguir el trabajo.
 //! - [`ocr`]: PDF buscable + texto de un adjunto escaneado con IureOCR.
 //! - [`voice`]: decir, dictar y preguntar sí/no con IureVoz (socket primero, MCP después).
+//! - [`recording`]: grabar una reunión con IureTranscribe sin abrir su ventana (S1.4).
 //! - [`project`]: estado de los planes de IureProject para «Hoy» (S1.6).
 //! - [`dav`]: unidades de IureDav, «Guardar adjunto en Iurefficient» y adjuntos grandes como
 //!   enlace.
@@ -36,6 +37,7 @@ pub mod mcp_client;
 pub mod ocr;
 pub mod opener;
 pub mod project;
+pub mod recording;
 pub mod suite;
 pub mod transcribe;
 pub mod voice;
@@ -47,5 +49,6 @@ pub use mcp_client::{McpClient, McpOptions, ServerInfo, ToolInfo, ToolResult};
 pub use ocr::{OcrOptions, OcrResult};
 pub use opener::{Opener, SystemOpener};
 pub use project::{ProjectOverview, ProjectStatus, ProjectTask};
+pub use recording::{Recorded, Recording, RecordingStatus};
 pub use suite::{AppStatus, InstallHint, Outcome, SisterApp, Suite, Text};
 pub use transcribe::{JobState, Transcript, TranscriptFile, TranscriptionJob};

@@ -53,6 +53,8 @@ pub struct TodayState {
 enum Act {
     Event(Box<Occurrence>),
     Join(String),
+    /// S1.4: grabar esta reunión con IureTranscribe.
+    Record(String),
     Calendar,
     /// UX-6: abrir la tarea en el editor (sobre «Mi día»).
     Task(TaskListId, TaskId),
@@ -737,10 +739,24 @@ fn next_box(app: &DeskApp, ui: &mut Ui, e: &AgendaItem, st: NextState, acts: &mu
                             iurefficient_ui::widgets::text::elided(ui, &meta, theme::body_font(&ctx), c.text_muted, w);
                         ui.label(egui::WidgetText::Galley(g));
                     });
-                    if let Some(j) = &e.join {
+                    let record = crate::recording_ui::can_record(app);
+                    if e.join.is_some() || record {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if crate::meeting::join_button(ui, j, true) {
+                            if let Some(j) = &e.join
+                                && crate::meeting::join_button(ui, j, true)
+                            {
                                 acts.push(Act::Join(j.url.clone()));
+                            }
+                            if record
+                                && ui
+                                    .button(RichText::new(format!("● {}", pick("Record", "Grabar"))).color(c.danger))
+                                    .on_hover_text(pick(
+                                        "Record this meeting with IureTranscribe (without opening it)",
+                                        "Grabar esta reunión con IureTranscribe (sin abrirlo)",
+                                    ))
+                                    .clicked()
+                            {
+                                acts.push(Act::Record(e.occ.summary.clone()));
                             }
                         });
                     }
@@ -749,7 +765,7 @@ fn next_box(app: &DeskApp, ui: &mut Ui, e: &AgendaItem, st: NextState, acts: &mu
     });
     let resp = card.response;
     iurefficient_ui::a11y::button(&resp, &e.occ.summary);
-    if resp.clicked() && !acts.iter().any(|a| matches!(a, Act::Join(_))) {
+    if resp.clicked() && !acts.iter().any(|a| matches!(a, Act::Join(_) | Act::Record(_))) {
         acts.push(Act::Event(Box::new(e.occ.clone())));
     }
 }
@@ -1209,6 +1225,7 @@ fn apply(app: &mut DeskApp, ctx: &egui::Context, a: Act) {
             crate::event_editor::open_occurrence(app, &o);
         }
         Act::Join(url) => crate::meeting::join(app, ctx, &url),
+        Act::Record(title) => crate::recording_ui::start(app, &title),
         Act::Calendar => {
             app.session.cal.anchor = None;
             app.session.module = Module::Calendar;

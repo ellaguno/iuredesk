@@ -600,6 +600,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         "voice voz leer speak",
     ),
     c(
+        "suite.record",
+        "Record meeting / stop recording (IureTranscribe)",
+        "Grabar reunión / detener la grabación (IureTranscribe)",
+        "video",
+        Group::App,
+        "grabar record reunión junta meeting minuta transcribir",
+    ),
+    c(
         "suite.connect_agents",
         "Use IureDesk from Claude / Copilot",
         "Usar IureDesk desde Claude / Copilot",

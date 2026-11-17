@@ -106,10 +106,14 @@ pub fn frame(app: &mut DeskApp, ctx: &Context) {
             }
             SuiteEvent::OcrText { name, text } => app.suite.ocr = Some((name, text)),
             SuiteEvent::Projects(v) => crate::today_projects::on_projects(app, v),
+            SuiteEvent::MeetingTranscript { title, text, audio } => {
+                crate::recording_ui::on_transcript(app, &title, &text, &audio)
+            }
         }
     }
     hint_dialog(app, ctx);
     ocr_window(app, ctx);
+    crate::recording_ui::pill(app, ctx);
 }
 
 fn hint_dialog(app: &mut DeskApp, ctx: &Context) {

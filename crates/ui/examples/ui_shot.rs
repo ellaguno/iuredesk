@@ -573,6 +573,12 @@ fn main() -> Result<(), String> {
     if let Some(q) = args.iter().find_map(|a| a.strip_prefix("--palette")) {
         app.palette.open_with(q.strip_prefix('=').unwrap_or(""));
     }
+    // S1.4: `--recording` muestra la barra de una grabación en curso.
+    if args.iter().any(|a| a == "--recording") {
+        use iuredesk_engine::iuredesk_integrations::{SisterApp, Suite};
+        app.set_suite(Suite::empty().with_app(SisterApp::Transcribe, "/opt/iuretranscribe/iuretranscribe"));
+        app.set_recording_for_tests("Comité de socios", 724.0);
+    }
     // S1.5: `--files` muestra Archivos con una unidad de IureDav de ejemplo.
     if args.iter().any(|a| a == "--files") {
         use iuredesk_engine::iuredesk_integrations::{DavMount, SisterApp, Suite};

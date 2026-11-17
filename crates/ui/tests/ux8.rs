@@ -416,3 +416,36 @@ fn preview_follows_the_file() {
     settle(&mut h);
     assert!(h.query_all_by_label_contains("Desde IureEditor").next().is_some(), "la vista muestra lo nuevo");
 }
+
+/// S1.4: mientras se graba hay una barra visible con el título y el tiempo; «Detener» la quita
+/// (sin proceso que detener no se queda en «Guardando»). La transcripción llega como nota de minuta.
+#[test]
+fn recording_pill_and_minutes_note() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    h.state_mut().set_recording_for_tests("Comité de socios", 724.0);
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("Grabando · Comité de socios · 12:04").is_some(), "la barra");
+    h.get_by_label("Pausar").click();
+    h.get_by_label("Detener").click();
+    let start = Instant::now();
+    while h.state().is_recording() {
+        assert!(start.elapsed() < Duration::from_secs(10), "la barra no se fue");
+        h.run_steps(1);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("Grabando ·").is_none(), "la barra se fue");
+    let before = h.state().session.notes().len();
+    h.state_mut().meeting_transcript_for_tests("Comité de socios", "[00:00:01] Buenos días a todos.");
+    settle(&mut h);
+    let s = &h.state().session;
+    assert_eq!(s.notes().len(), before + 1);
+    let id = s.note_focus().unwrap();
+    let n = s.notes().into_iter().find(|n| n.id == id).unwrap();
+    assert_eq!(n.title, "Minuta — Comité de socios");
+    assert!(n.body.contains("Buenos días a todos") && n.body.contains("/tmp/reunion.wav"), "{}", n.body);
+    assert_eq!(s.module, Module::Notes);
+}

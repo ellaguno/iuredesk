@@ -36,6 +36,7 @@ mod onboarding;
 mod opened;
 mod pim;
 mod reader;
+mod recording_ui;
 mod reminders;
 mod remote_images_ui;
 mod rich_edit;

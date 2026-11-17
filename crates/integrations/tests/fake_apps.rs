@@ -73,6 +73,23 @@ fn fake_suite(app: SisterApp) -> Suite {
     Suite::empty().with_app(app, FAKE).with_mcp_options(opts(None))
 }
 
+/// S1.4: grabar con IureTranscribe sin abrir su ventana: empezar, pausar, estado y detener.
+#[test]
+fn grabar_una_reunion() {
+    let s = fake_suite(SisterApp::Transcribe);
+    let mut rec = s.start_recording().unwrap().ready().unwrap();
+    assert_eq!(rec.path, Path::new("/tmp/grabaciones/reunion.wav"));
+    let st = rec.status().unwrap();
+    assert!(st.active && !st.paused && st.elapsed_secs > 12.0);
+    assert_eq!(st.mic_level, 1.0, "niveles acotados a 0–1");
+    rec.set_paused(true).unwrap();
+    assert!(rec.status().unwrap().paused);
+    let done = rec.stop().unwrap();
+    assert_eq!(done.path, Path::new("/tmp/grabaciones/reunion.wav"));
+    assert_eq!(done.duration_secs, 12.5);
+    assert!(matches!(Suite::empty().start_recording().unwrap(), Outcome::NotInstalled(_)));
+}
+
 /// S1.6: el estado de varios planes con un solo proceso; uno roto no detiene a los demás.
 #[test]
 fn resumen_de_planes_de_iureproject() {
