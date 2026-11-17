@@ -187,6 +187,45 @@ descubre en las notas de IureDesk, no tras retirar IureEditor):
 Mientras tanto, S1.3 (Mermaid de Rust en el backend de Tauri) queda como **paso intermedio** opcional
 para unificar el aspecto antes de que llegue la 2.0.
 
+### 4.6 `iure-doc` como formato de documento de la suite
+
+Con `iure-doc` el editor deja de ser «de IureEditor»: es un componente que cualquier app de escritorio
+en Rust + egui embebe. Notas, minutas, transcripciones, documentos de casos y notas de tareas se
+editan igual en todas.
+
+**Dónde se embebe**
+
+| App | Uso | Cómo |
+|---|---|---|
+| IureDesk | Notas, redactor, minutas de eventos, notas de casos | Widget `DocEditor` |
+| IureProject | Notas por tarea, hito y proyecto (hoy `egui_commonmark`, solo lectura) | Widget `DocEditor`; Markdown dentro del archivo del proyecto (formato sin cambios) |
+| IureEditor 2.0 | Documentos completos | §4.5 |
+| Iurefficient web | Notas y documentos por `iurefficient-connect` | No embebe el widget; el Markdown es el mismo y se ve/edita igual en escritorio |
+| IureTranscribe | Edición de transcripciones | Ver abajo |
+
+**IureTranscribe** (Tauri + whisper.cpp) no puede alojar un widget egui de forma natural:
+
+1. **Recomendado, inmediato**: la transcripción llega a IureDesk (S1.4) o a IureEditor 2.0 como
+   documento `iure-doc` y se edita ahí; el usuario no abre IureTranscribe.
+2. **Destino**: IureTranscribe con interfaz egui + `DocEditor`, y whisper.cpp en un **proceso
+   aparte** (servicio de S1.4). La interfaz queda en Rust puro y un aborto del motor C++ no tumba la
+   ventana. Mucho menos frontend que reescribir que IureEditor.
+3. Descartado: `DocEditor` compilado a WASM dentro del webview (IME, accesibilidad y selección
+   peores en canvas que el editor web nativo).
+
+**Requisitos para `iure-doc`** (desde S1.11):
+
+- **Bloques extensibles registrados por el anfitrión**: segmento de transcripción (hablante,
+  inicio/fin, clic → reproducir en ese punto), referencia a tarea (estado en vivo de IureProject),
+  vínculo a correo (abrir en IureDesk). El núcleo los guarda y **preserva aunque una app no sepa
+  dibujarlos** (se muestran como bloque genérico y vuelven intactos al archivo).
+- **Acciones provistas por el anfitrión**, nunca por el editor: abrir enlace, reproducir audio en
+  `t`, buscar contacto para @mencionar, subir imagen. El editor no hace E/S (como `html-view`).
+- **Markdown con metadatos sin pérdidas**: tiempos y hablantes sobreviven a la edición (borrar una
+  frase no desalinea las demás). Metadatos por bloque (atributos en YAML o comentarios
+  estructurados), con pruebas de propiedades de ida y vuelta y lectura tolerante de archivos
+  editados a mano en otro editor.
+
 ## 5. Seguridad
 
 - **Mismo proceso = mismo destino.** Lo que contiene C/C++ o webview se queda en otro proceso (además
@@ -231,6 +270,9 @@ para unificar el aspecto antes de que llegue la 2.0.
 | iuredesk | Notas y luego redactor sobre el widget `DocEditor` | 3 |
 | `iure-doc` | Exportar PDF (Typst), DOCX (`docx-rs`), HTML | 4 |
 | iureditor | IureEditor 2.0: egui + `iure-doc`; retirar Tauri al lograr paridad | 5 |
+| iureproject | Notas enriquecidas por tarea/hito/proyecto con `DocEditor` | 4 |
+| iuredesk | Transcripción editable (bloques de segmento, reproducir en el punto) | 3 |
+| iuretranscribe | Interfaz egui + `DocEditor`; whisper.cpp como proceso aparte | 5 |
 
 ## 8. Decisiones pendientes del dueño
 
@@ -242,3 +284,5 @@ para unificar el aspecto antes de que llegue la 2.0.
 4. **IureEditor 2.0 en Rust + egui** (§4.5) como destino de IureEditor (recomendación: sí, por
    pasos, validando el editor primero en las notas de IureDesk). Si se aprueba, S1.3 pasa a ser
    opcional.
+5. **IureTranscribe con interfaz egui** y motor en proceso aparte (§4.6) como destino
+   (recomendación: sí, después de IureEditor 2.0 o en paralelo si el editor ya está maduro).
