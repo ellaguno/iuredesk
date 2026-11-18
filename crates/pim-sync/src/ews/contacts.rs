@@ -19,6 +19,37 @@ use crate::ops::{self, PimOp};
 use crate::provider::Ctx;
 use crate::{ConflictResolution, PimEvent};
 
+/// Cambios de una carpeta según `SyncFolderItems`.
+#[derive(Debug, Default)]
+pub(crate) struct FolderChanges {
+    /// Creados o cambiados (hay que pedir sus datos).
+    pub upserts: Vec<String>,
+    /// Borrados.
+    pub deleted: Vec<String>,
+    /// Estado nuevo (con su prefijo), para `delta_link`.
+    pub state: Option<String>,
+    /// Desde cero: lo local que no esté en `upserts` ya no existe.
+    pub full: bool,
+}
+
+impl FolderChanges {
+    /// Aplica los borrados (y, desde cero, quita lo que no volvió) y guarda el estado nuevo.
+    pub fn finish(self, ctx: &Ctx, st: &mut iuredesk_store::CollectionSync, pending: &ops::Pending) -> Result<bool> {
+        let mut changed = false;
+        for id in &self.deleted {
+            changed |= super::remove_item(ctx, st, pending, id)?;
+        }
+        if self.full {
+            let gone: Vec<String> = st.items.keys().filter(|k| !self.upserts.contains(k)).cloned().collect();
+            for id in gone {
+                changed |= super::remove_item(ctx, st, pending, &id)?;
+            }
+        }
+        st.delta_link = self.state;
+        Ok(changed)
+    }
+}
+
 /// Ruta local (y carpeta distinguida de EWS) de la libreta.
 pub(crate) const CONTACTS: &str = "contacts";
 /// Prefijo del estado guardado (distingue el `SyncState` de EWS de otros).
@@ -44,21 +75,17 @@ impl Ews {
         Ok(id)
     }
 
-    /// Cambios de la carpeta de contactos desde la pasada anterior.
-    pub(crate) async fn pull_contacts(&self, ctx: &Ctx, book: AddressBookId) -> Result<()> {
-        let store = &ctx.store;
-        let cref = CollectionRef::AddressBook(book);
-        let mut st = store.collection_sync(cref)?;
-        let mut state = st.delta_link.as_deref().and_then(|s| s.strip_prefix(STATE_PREFIX)).map(str::to_string);
-        let mut full = state.is_none();
-        let pending = ops::pending(store, ctx.acct)?;
-        let mut changed = false;
-        let mut seen: Vec<String> = Vec::new();
+    /// Cambios de una carpeta (`contacts`, `tasks`) desde el estado guardado en `saved`: los ids
+    /// creados o cambiados, los borrados y el estado nuevo. Si el servidor olvidó el estado,
+    /// vuelve a empezar (`full`: lo local que no aparezca ya no existe).
+    pub(crate) async fn folder_changes(&self, folder: &str, saved: Option<&str>) -> Result<FolderChanges> {
+        let mut state = saved.and_then(|s| s.strip_prefix(STATE_PREFIX)).map(str::to_string);
+        let mut out = FolderChanges { full: state.is_none(), ..Default::default() };
         for _ in 0..MAX_PAGES {
-            let page = match self.client.sync_folder_items(CONTACTS, state.as_deref(), 512).await {
+            let page = match self.client.sync_folder_items(folder, state.as_deref(), 512).await {
                 Ok(p) => p,
                 Err(e)
-                    if !full
+                    if !out.full
                         && matches!(
                             e.code(),
                             Some("ErrorInvalidSyncStateData" | "ErrorInvalidSyncStateDataVersion")
@@ -66,41 +93,45 @@ impl Ews {
                 {
                     // El servidor olvidó el estado: todo de nuevo.
                     state = None;
-                    full = true;
-                    seen.clear();
+                    out = FolderChanges { full: true, ..Default::default() };
                     continue;
                 }
                 Err(e) => return Err(e.into()),
             };
-            let wanted: Vec<String> = page
-                .created
-                .iter()
-                .chain(&page.updated)
-                .map(|(id, _)| id.clone())
-                .filter(|id| !pending.deleted.contains(id))
-                .collect();
-            seen.extend(wanted.iter().cloned());
-            for e in self.client.get_contacts(&wanted).await? {
-                let Some(v) = cmap::contact_json(&e) else { continue };
-                let Some(id) = v.get("id").and_then(Value::as_str).map(str::to_string) else { continue };
-                changed |= apply_contact(ctx, &mut st, &pending, book, &id, &v)?;
+            for (id, _) in page.created.iter().chain(&page.updated) {
+                out.deleted.retain(|d| d != id);
+                if !out.upserts.contains(id) {
+                    out.upserts.push(id.clone());
+                }
             }
             for id in &page.deleted {
-                changed |= super::remove_item(ctx, &mut st, &pending, id)?;
+                out.upserts.retain(|u| u != id);
+                out.deleted.push(id.clone());
             }
             state = Some(page.state.clone());
             if page.last {
                 break;
             }
         }
-        if full {
-            // Desde cero: lo local que no volvió ya no existe.
-            let gone: Vec<String> = st.items.keys().filter(|k| !seen.contains(k)).cloned().collect();
-            for id in gone {
-                changed |= super::remove_item(ctx, &mut st, &pending, &id)?;
-            }
+        out.state = state.map(|s| format!("{STATE_PREFIX}{s}"));
+        Ok(out)
+    }
+
+    /// Cambios de la carpeta de contactos desde la pasada anterior.
+    pub(crate) async fn pull_contacts(&self, ctx: &Ctx, book: AddressBookId) -> Result<()> {
+        let store = &ctx.store;
+        let cref = CollectionRef::AddressBook(book);
+        let mut st = store.collection_sync(cref)?;
+        let changes = self.folder_changes(CONTACTS, st.delta_link.as_deref()).await?;
+        let pending = ops::pending(store, ctx.acct)?;
+        let mut changed = false;
+        let wanted: Vec<String> = changes.upserts.iter().filter(|id| !pending.deleted.contains(*id)).cloned().collect();
+        for e in self.client.get_contacts(&wanted).await? {
+            let Some(v) = cmap::contact_json(&e) else { continue };
+            let Some(id) = v.get("id").and_then(Value::as_str).map(str::to_string) else { continue };
+            changed |= apply_contact(ctx, &mut st, &pending, book, &id, &v)?;
         }
-        st.delta_link = state.map(|s| format!("{STATE_PREFIX}{s}"));
+        changed |= changes.finish(ctx, &mut st, &pending)?;
         store.put_collection_sync(cref, &st)?;
         if changed {
             ctx.changed(cref);

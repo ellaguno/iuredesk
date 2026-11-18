@@ -1,5 +1,6 @@
 //! Proveedor Exchange Web Services (Exchange Server local, F8.4): calendarios, contactos
-//! ([`contacts`]) y la libreta global de la organización ([`directory`]).
+//! ([`contacts`]), tareas ([`tasks`]), la libreta global de la organización ([`directory`]) y la
+//! disponibilidad de otras personas ([`availability`]).
 //!
 //! Mismo planteamiento que [`crate::graph`]: cada elemento de EWS se guarda como JSON con la forma
 //! de Graph ([`crate::map::ews`]) y se reutiliza su traducción al modelo, el parche con solo lo
@@ -25,6 +26,7 @@ use crate::provider::{BoxFuture, Ctx, Provider};
 use crate::{ConflictResolution, PimEvent};
 
 mod contacts;
+mod tasks;
 
 /// Días de cada consulta de `CalendarView` (el servidor limita las apariciones por consulta).
 const VIEW_DAYS: i64 = 31;
@@ -475,7 +477,9 @@ impl Provider for Ews {
                 self.pull(ctx, id, &folder).await?;
             }
             let book = self.contact_book(ctx)?;
-            self.pull_contacts(ctx, book).await
+            self.pull_contacts(ctx, book).await?;
+            let list = self.task_list(ctx)?;
+            self.pull_tasks(ctx, list).await
         })
     }
 
@@ -494,9 +498,8 @@ impl Provider for Ews {
                 PimOp::DeleteEvent { calendar, href, .. } => self.push_delete(ctx, *calendar, href).await,
                 PimOp::PutContact { contact } => self.push_contact(ctx, *contact).await,
                 PimOp::DeleteContact { book, href, .. } => self.push_delete_contact(ctx, *book, href).await,
-                // Tareas por EWS: hito 3 de F8.4 (la cuenta aún no tiene listas, así que no se
-                // encolan).
-                PimOp::PutTask { .. } | PimOp::DeleteTask { .. } => Ok(()),
+                PimOp::PutTask { task } => self.push_task(ctx, *task).await,
+                PimOp::DeleteTask { list, href, .. } => self.push_delete_task(ctx, *list, href).await,
             }
         })
     }
@@ -582,5 +585,24 @@ pub(crate) async fn directory(ctx: &Ctx, url: &str, query: &str) -> Result<Vec<i
                 iuredesk_model::Mailbox::new(a.name, a.email)
             }
         })
+        .collect())
+}
+
+/// Disponibilidad de `emails` entre `from` y `to` (`GetUserAvailability`): por persona, sus
+/// intervalos ocupados (inicio, fin, provisional) o `None` si no se pudo consultar.
+pub(crate) async fn availability(
+    ctx: &Ctx,
+    url: &str,
+    emails: &[String],
+    from: chrono::DateTime<Utc>,
+    to: chrono::DateTime<Utc>,
+) -> Result<Vec<Option<Vec<(chrono::DateTime<Utc>, chrono::DateTime<Utc>, bool)>>>> {
+    let ews = Ews::new(ctx, url).await?;
+    Ok(ews
+        .client
+        .availability(emails, from, to)
+        .await?
+        .into_iter()
+        .map(|p| p.map(|v| v.into_iter().map(|b| (b.start, b.end, b.kind == "Tentative")).collect()))
         .collect())
 }
