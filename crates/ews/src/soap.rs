@@ -96,7 +96,7 @@ pub fn folder_id(id: &str) -> String {
 
 /// Carpetas con nombre de EWS que se usan aquí.
 pub const DISTINGUISHED: &[&str] =
-    &["inbox", "sentitems", "drafts", "deleteditems", "junkemail", "archive", "msgfolderroot", "outbox"];
+    &["inbox", "sentitems", "drafts", "deleteditems", "junkemail", "archive", "msgfolderroot", "outbox", "calendar"];
 
 /// ¿Es un id distinguido?
 pub fn is_distinguished(id: &str) -> bool {

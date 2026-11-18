@@ -202,6 +202,7 @@ async fn provider(ctx: &Ctx) -> Result<Box<dyn Provider>> {
             Some(Box::new(CalDav::connect(ctx, caldav.clone(), carddav.clone(), auth).await?))
         }
         PimSource::Graph { base_url } => Some(Box::new(Graph::new(ctx, base_url)?)),
+        PimSource::Ews { url } => Some(Box::new(crate::ews::Ews::new(ctx, url).await?)),
     };
     match (&ctx.account.tasks_api, main) {
         (Some(base), dav) => {
@@ -389,6 +390,9 @@ impl PimSyncHandle {
             PimSource::Graph { .. } => {
                 CalendarCaps { server_invites: true, meeting: Some(MeetingProvider::Teams), exceptions: false }
             }
+            // Exchange local: el servidor manda invitaciones y respuestas; las series se expanden
+            // en el servidor como en Graph. Teams no se crea desde EWS.
+            PimSource::Ews { .. } => CalendarCaps { server_invites: true, meeting: None, exceptions: false },
             PimSource::Dav { .. } => CalendarCaps {
                 server_invites: s.ctx.opts.trust_server_scheduling && server_schedules(&self.inner.store, s.acct),
                 meeting: (s.ctx.account.calendar_api.is_some() && crate::gmeet::calendar_id(&c.remote_path).is_some())
@@ -462,7 +466,7 @@ impl PimSyncHandle {
         let slot = acct.and_then(|a| self.slot_by_acct(a));
         let (me, send_imip, spanish) = match slot {
             Some(s) => {
-                let graph = matches!(s.ctx.account.source, PimSource::Graph { .. });
+                let graph = matches!(s.ctx.account.source, PimSource::Graph { .. } | PimSource::Ews { .. });
                 let schedules = s.ctx.opts.trust_server_scheduling && server_schedules(store, s.acct);
                 (s.ctx.account.emails(), !graph && !schedules, s.ctx.opts.spanish)
             }

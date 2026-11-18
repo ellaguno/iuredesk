@@ -41,6 +41,11 @@ pub enum PimSource {
         /// Raíz de la API (en pruebas, un servidor local).
         base_url: String,
     },
+    /// Exchange Web Services (Exchange Server local, F8.4).
+    Ews {
+        /// URL del servicio (`https://servidor/EWS/Exchange.asmx`).
+        url: String,
+    },
 }
 
 /// Una cuenta para la sincronización PIM.
@@ -70,6 +75,12 @@ impl PimAccount {
         let source = match a.kind {
             AccountKind::Iurefficient => return None,
             AccountKind::Microsoft365 if oauth => PimSource::Graph { base_url: GRAPH_BASE.into() },
+            // Exchange local: calendario por el mismo servicio que el correo (F8.4).
+            AccountKind::Exchange if a.incoming.protocol == iuredesk_model::account::Protocol::Ews => {
+                let tls = a.incoming.security != iuredesk_model::account::Security::Plain;
+                let url = iuredesk_ews::server_url(&a.incoming.host, a.incoming.port, tls).ok()?;
+                PimSource::Ews { url }
+            }
             AccountKind::ICloud => PimSource::Dav {
                 caldav: Some(a.caldav_url.clone().unwrap_or_else(|| "https://caldav.icloud.com/".into())),
                 carddav: Some(a.carddav_url.clone().unwrap_or_else(|| "https://contacts.icloud.com/".into())),

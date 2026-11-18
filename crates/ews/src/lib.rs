@@ -23,6 +23,7 @@
 )]
 
 pub mod autodiscover;
+pub mod calendar;
 pub mod kerberos;
 pub mod ntlm;
 pub mod ops;
