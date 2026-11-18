@@ -20,6 +20,9 @@ pub struct PimState {
     contact_cols: Vec<Column>,
     pub(crate) note_search: String,
     pub(crate) note_edit: Option<NoteEdit>,
+    /// S1.12: corrector ortográfico de las notas (se crea al editar la primera; carga los
+    /// diccionarios del sistema en otro hilo).
+    speller: Option<std::sync::Arc<iure_doc_ui::Speller>>,
     /// S1.12: la nota se edita aquí (DocEditor) en lugar de verse.
     pub(crate) note_editing: bool,
     pub(crate) task_list: Option<TaskListId>,
@@ -720,6 +723,8 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             // carpeta de notas (como en la vista previa) se dibujan en su lugar.
             let mindmap_layout = crate::note_preview::layout_of(app.session.prefs.mindmap_layout);
             let notes_dir = app.session.notes_dir();
+            let speller =
+                app.pim.speller.get_or_insert_with(|| iure_doc_ui::Speller::system(personal_dictionary())).clone();
             let mut editor = |ui: &mut egui::Ui, body: &mut String| {
                 let diagrams: std::sync::Arc<dyn iure_doc_ui::DiagramRenderer> =
                     std::sync::Arc::new(iure_doc_ui::Renderers(vec![
@@ -730,6 +735,8 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                 let hooks = iure_doc_ui::Hooks {
                     diagrams: Some(diagrams),
                     paste: Some(std::sync::Arc::new(iure_doc_ui::SystemClipboard)),
+                    // Subraya lo mal escrito; clic derecho: sugerencias, agregar, ignorar.
+                    spell: Some(speller.clone()),
                 };
                 let out = iure_doc_ui::show_blocks_hooks(
                     ui,
@@ -1136,3 +1143,12 @@ fn task_row(app: &mut DeskApp, ui: &mut Ui, t: &Task, writable: bool) -> Option<
 
 // ---------------------------------------------------------------------------------------------
 // Asistente
+
+/// S1.12: diccionario personal del corrector (con `IUREDESK_DATA_DIR`, dentro de esa carpeta,
+/// para no tocar la instalación normal).
+fn personal_dictionary() -> Option<std::path::PathBuf> {
+    match std::env::var_os("IUREDESK_DATA_DIR").filter(|v| !v.is_empty()) {
+        Some(d) => Some(std::path::PathBuf::from(d).join("diccionario.txt")),
+        None => iure_doc_ui::spell::personal_path("iuredesk"),
+    }
+}
