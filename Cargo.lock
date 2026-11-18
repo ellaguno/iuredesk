@@ -3529,8 +3529,8 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "iure-doc"
-version = "0.1.0"
-source = "git+https://github.com/ellaguno/iure-doc?tag=v0.1.0#20e558df39f16ce8ebff658a3d2145ae8e0a03cf"
+version = "0.2.0"
+source = "git+https://github.com/ellaguno/iure-doc?tag=v0.2.0#0c3b0fcafa48926c73e2d8c8cca99284d0ab2895"
 dependencies = [
  "pulldown-cmark",
  "serde_json",
@@ -3538,8 +3538,8 @@ dependencies = [
 
 [[package]]
 name = "iure-doc-ui"
-version = "0.1.0"
-source = "git+https://github.com/ellaguno/iure-doc?tag=v0.1.0#20e558df39f16ce8ebff658a3d2145ae8e0a03cf"
+version = "0.2.0"
+source = "git+https://github.com/ellaguno/iure-doc?tag=v0.2.0#0c3b0fcafa48926c73e2d8c8cca99284d0ab2895"
 dependencies = [
  "egui",
  "iure-doc",
