@@ -911,8 +911,104 @@ pub fn replace_mermaid(md: &str, k: usize, code: &str) -> Option<String> {
     Some(out)
 }
 
+/// El código de un bloque ```` ```mermaid ```` (o `~~~mermaid`) cerrado, sin las cercas. Un bloque
+/// sin cerrar es `None`: se sigue escribiendo.
+pub fn mermaid_code(block: &str) -> Option<String> {
+    let mut lines = block.lines();
+    let first = lines.next()?.trim_start();
+    let fence_char = first.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let n = first.chars().take_while(|c| *c == fence_char).count();
+    if n < 3 || !first.get(n..)?.trim().eq_ignore_ascii_case("mermaid") {
+        return None;
+    }
+    let body: Vec<&str> = lines.collect();
+    let (last, code) = body.split_last()?;
+    let closing = last.trim();
+    (closing.len() >= n && closing.chars().all(|c| c == fence_char)).then(|| code.join("\n"))
+}
+
+/// ¿Es un mapa mental de IureEditor (`> [!MINDMAP…]` con ramas)?
+pub fn is_mindmap_block(block: &str) -> bool {
+    block.trim_start().starts_with('>') && !mindmap::find(block).is_empty()
+}
+
+/// ¿Es un bloque que [`draw_block`] sabe dibujar?
+pub fn is_diagram_block(block: &str) -> bool {
+    mermaid_code(block).is_some() || is_mindmap_block(block)
+}
+
+/// Píxeles de un bloque dibujado.
+#[derive(Clone, Debug)]
+pub struct BlockPixels {
+    /// En px físicos.
+    pub width: u32,
+    pub height: u32,
+    /// RGBA8 opacos, fila a fila.
+    pub rgba: Vec<u8>,
+    /// Tamaño del dibujo en px CSS (puntos de la UI).
+    pub points: (f32, f32),
+}
+
+/// Dibuja un bloque de Markdown que es diagrama (```` ```mermaid ```` o mapa mental de IureEditor)
+/// a `scale` píxeles por punto, sobre `background`. Bloqueante (Blitz): la UI lo llama en otro
+/// hilo. Lo usan los editores de la suite (`iure-doc-ui::DiagramRenderer`).
+pub fn draw_block(
+    block: &str,
+    style: &NoteStyle,
+    mindmap_layout: Layout,
+    scale: f32,
+    background: [u8; 3],
+) -> Result<BlockPixels, DiagramError> {
+    let svg = if let Some(code) = mermaid_code(block) {
+        render_drawn(&code, style)?.svg
+    } else {
+        let map = mindmap::find(block).into_iter().next().ok_or_else(|| {
+            DiagramError::new(
+                None,
+                "This mind map has no branches to draw.",
+                "Este mapa mental no tiene ramas que dibujar.",
+            )
+        })?;
+        mindmap::draw(&map.root, style, &map.options.look(mindmap_layout))
+    };
+    let points = svg_size(&svg).unwrap_or((800.0, 600.0));
+    let px = rasterize(&svg, scale, background).map_err(|e| {
+        DiagramError::new(
+            None,
+            format!("The diagram could not be drawn ({e})."),
+            format!("No se pudo dibujar el diagrama ({e})."),
+        )
+    })?;
+    Ok(BlockPixels { width: px.width, height: px.height, rgba: px.rgba, points })
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn recognizes_closed_mermaid_fences_and_mind_maps() {
+        assert_eq!(mermaid_code("```mermaid\nflowchart LR\n  A-->B\n```").as_deref(), Some("flowchart LR\n  A-->B"));
+        assert_eq!(mermaid_code("~~~~ Mermaid\nx\n~~~~").as_deref(), Some("x"));
+        assert!(mermaid_code("```mermaid\nflowchart LR").is_none(), "sin cerrar: se sigue escribiendo");
+        assert!(mermaid_code("```rust\nfn f() {}\n```").is_none());
+        assert!(mermaid_code("````mermaid\nx\n```").is_none(), "la cerca de cierre es más corta");
+        assert!(is_mindmap_block("> [!MINDMAP|map] Proyecto\n> - Análisis\n> - Diseño"));
+        assert!(!is_mindmap_block("> una cita"));
+        assert!(is_diagram_block("```mermaid\ngraph LR; A-->B\n```") && !is_diagram_block("texto"));
+    }
+
+    #[test]
+    fn draws_blocks_and_explains_errors() {
+        let style = NoteStyle::default();
+        let px = draw_block("```mermaid\ngraph LR; A-->B\n```", &style, Layout::Right, 1.0, [255, 255, 255]).unwrap();
+        assert!(px.width > 10 && px.rgba.len() == (px.width * px.height * 4) as usize);
+        let map =
+            draw_block("> [!MINDMAP|map] Caso\n> - A\n> - B", &style, Layout::Right, 1.0, [255, 255, 255]).unwrap();
+        assert!(map.points.0 > 10.0);
+        let err = draw_block("```mermaid\nflowchart LR\n  A[abierto --> B\n```", &style, Layout::Right, 1.0, [255; 3])
+            .unwrap_err();
+        assert!(err.es.contains("línea"), "{err:?}");
+    }
     use super::*;
 
     const FLOW: &str = "flowchart LR\n  A[Inicio] --> B{¿Listo?}\n  B -- Sí --> C[Enviar]\n";
