@@ -21,6 +21,8 @@
 //! - `sign <archivos…>`: firma minisign `<archivo>.sig` (formato de Tauri, lo verifica iureapps) con
 //!   la clave de `IUREDESK_MINISIGN_KEY` (ver `sign.rs`).
 //! - `keygen <secreta> <pública>`: par minisign nuevo (la secreta con permisos 600, nunca se imprime).
+//! - `sweep [--dry-run] [--days N]`: borra de `target/` las copias viejas de los binarios de prueba y
+//!   ejemplo y la compilación incremental sin usar (ver `sweep.rs`); `ci` lo hace al terminar.
 #![deny(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -35,6 +37,7 @@ mod msi;
 mod package;
 mod sign;
 mod site;
+mod sweep;
 mod unsafety;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,6 +73,7 @@ fn main() -> ExitCode {
         "keygen" => sign::keygen(std::env::args().skip(2).collect()),
         // R4.3: página de descargas del release (GitHub Pages).
         "site" => site::site(std::env::args().skip(2).collect()),
+        "sweep" => sweep::sweep(std::env::args().skip(2).collect()),
         other => Err(format!("tarea desconocida: {other}")),
     };
     match r {
@@ -102,6 +106,8 @@ fn ci() -> Res {
     licenses(&m)?;
     notices_file(&root().join("target/THIRD-PARTY-NOTICES.txt"))?;
     assets()?;
+    // Sin esto `target/` crece cientos de GB con copias viejas de las pruebas.
+    sweep::run(&root().join("target"), 7, false)?;
     println!("xtask ci: todo en verde");
     Ok(())
 }
