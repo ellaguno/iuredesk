@@ -29,6 +29,7 @@ pub mod kerberos;
 pub mod ntlm;
 pub mod ops;
 pub mod soap;
+pub mod tasks;
 
 use std::future::Future;
 use std::pin::Pin;

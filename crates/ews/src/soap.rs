@@ -106,6 +106,7 @@ pub const DISTINGUISHED: &[&str] = &[
     "outbox",
     "calendar",
     "contacts",
+    "tasks",
 ];
 
 /// ¿Es un id distinguido?

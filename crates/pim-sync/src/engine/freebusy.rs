@@ -2,6 +2,7 @@
 //!
 //! - CalDAV con buzón de salida de agenda (RFC 6638: iCloud, Fastmail, Nextcloud, Stalwart): un
 //!   `POST` `VFREEBUSY` con todos los asistentes a la vez.
+//! - Exchange local (F8.4): `GetUserAvailability` (hasta 42 días por consulta).
 //! - Sin buzón de salida, o en Microsoft 365 (`getSchedule` queda pendiente), la respuesta es
 //!   «disponibilidad desconocida» (`busy: None`) y la interfaz lo dice así.
 
@@ -57,6 +58,19 @@ impl PimSyncHandle {
         let acct = self.calendar_account(calendar).ok_or_else(|| PimError::NotFound(calendar.to_string()))?;
         let Some(slot) = self.slot_by_acct(acct) else { return Ok(unknown(&attendees)) };
         let ctx = std::sync::Arc::clone(&slot.ctx);
+        if let PimSource::Ews { url } = &ctx.account.source {
+            let found = crate::ews::availability(&ctx, url, &attendees, from, to).await?;
+            return Ok(attendees
+                .iter()
+                .enumerate()
+                .map(|(i, a)| FreeBusy {
+                    email: a.trim().to_lowercase(),
+                    busy: found.get(i).cloned().flatten().map(|v| {
+                        v.into_iter().map(|(start, end, tentative)| BusySlot { start, end, tentative }).collect()
+                    }),
+                })
+                .collect());
+        }
         let PimSource::Dav { caldav, auth, .. } = &ctx.account.source else { return Ok(unknown(&attendees)) };
         let Some(outbox) = discovered_outbox(&ctx.store, acct) else { return Ok(unknown(&attendees)) };
         let dav = CalDav::connect(&ctx, caldav.clone(), None, auth).await?;

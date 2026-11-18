@@ -43,7 +43,8 @@
 //! el servidor: fusión a tres bandas como con el 412); las invitaciones, cancelaciones y
 //! respuestas las manda el servidor. Los contactos (la carpeta de contactos del buzón) bajan
 //! incrementales con `SyncFolderItems`; la libreta global de la organización se consulta con
-//! [`PimSyncHandle::directory_search`] (`ResolveNames`).
+//! [`PimSyncHandle::directory_search`] (`ResolveNames`). Las tareas (la carpeta de tareas) bajan
+//! igual que los contactos, y la disponibilidad de otras personas sale de `GetUserAvailability`.
 //!
 //! # Para la interfaz
 //! - Leer apariciones: [`occurrences_between`] (reemplaza la expansión ingenua del motor).

@@ -503,6 +503,7 @@ pub fn update_xml(patch: &Map<String, Value>, user_tz: Tz) -> String {
 }
 
 pub mod contact;
+pub mod task;
 
 #[cfg(test)]
 mod tests;

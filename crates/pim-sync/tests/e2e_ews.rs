@@ -46,6 +46,9 @@ struct X {
     log: Vec<(&'static str, String)>,
     /// El servidor olvidó los estados de sincronización anteriores a este índice.
     forgot_before: usize,
+    /// Tareas: id → (asunto, estado, change key), y su registro de cambios.
+    tasks: BTreeMap<String, (String, String, u32)>,
+    tlog: Vec<(&'static str, String)>,
 }
 
 impl X {
@@ -53,6 +56,19 @@ impl X {
         self.seq += 1;
         self.contacts.insert(id.into(), (name.into(), email.into(), title.into(), self.seq));
         self.log.push(("Create", id.into()));
+    }
+
+    fn add_task(&mut self, id: &str, subject: &str) {
+        self.seq += 1;
+        self.tasks.insert(id.into(), (subject.into(), "NotStarted".into(), self.seq));
+        self.tlog.push(("Create", id.into()));
+    }
+
+    fn task_xml(&self, id: &str) -> String {
+        let Some((subject, status, ck)) = self.tasks.get(id) else { return String::new() };
+        format!(
+            r#"<t:Task><t:ItemId Id="{id}" ChangeKey="ck{ck}"/><t:Subject>{subject}</t:Subject><t:Importance>High</t:Importance><t:DueDate>2026-11-20T06:00:00Z</t:DueDate><t:Status>{status}</t:Status></t:Task>"#
+        )
     }
 
     fn contact_xml(&self, id: &str) -> String {
@@ -118,6 +134,11 @@ fn response(op: &str, msgs: &str) -> Resp {
     ))
 }
 
+/// Respuesta sin `ResponseMessages` (`GetUserAvailability` tiene su propia forma).
+fn response_plain(name: &str, inner: &str) -> Resp {
+    envelope(&format!(r#"<m:{name} xmlns:m="{M}" xmlns:t="{T}">{inner}</m:{name}>"#))
+}
+
 fn ok(op: &str, inner: &str) -> String {
     format!(
         r#"<m:{op}ResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode>{inner}</m:{op}ResponseMessage>"#
@@ -177,7 +198,9 @@ fn handle(st: &Mutex<X>, req: Req) -> Resp {
         );
     }
     if b.contains("<m:SyncFolderItems>") {
-        assert!(b.contains(r#"<t:DistinguishedFolderId Id="contacts"/>"#), "{b}");
+        let tasks = b.contains(r#"<t:DistinguishedFolderId Id="tasks"/>"#);
+        assert!(tasks || b.contains(r#"<t:DistinguishedFolderId Id="contacts"/>"#), "{b}");
+        let log = if tasks { x.tlog.clone() } else { x.log.clone() };
         let from = match between(&b, "<m:SyncState>", "</m:SyncState>") {
             None => 0,
             Some(s) => match s.strip_prefix('s').and_then(|n| n.parse::<usize>().ok()) {
@@ -185,8 +208,7 @@ fn handle(st: &Mutex<X>, req: Req) -> Resp {
                 _ => return response("SyncFolderItems", &err("SyncFolderItems", "ErrorInvalidSyncStateData")),
             },
         };
-        let changes: String = x
-            .log
+        let changes: String = log
             .iter()
             .skip(from)
             .map(|(kind, id)| match *kind {
@@ -194,7 +216,7 @@ fn handle(st: &Mutex<X>, req: Req) -> Resp {
                 k => format!(r#"<t:{k}><t:Contact><t:ItemId Id="{id}" ChangeKey="x"/></t:Contact></t:{k}>"#),
             })
             .collect();
-        let state = x.log.len();
+        let state = log.len();
         return response(
             "SyncFolderItems",
             &ok(
@@ -225,6 +247,8 @@ fn handle(st: &Mutex<X>, req: Req) -> Resp {
             .map(|id| {
                 if x.items.contains_key(id) {
                     ok("GetItem", &format!("<m:Items>{}</m:Items>", x.xml(id)))
+                } else if x.tasks.contains_key(id) {
+                    ok("GetItem", &format!("<m:Items>{}</m:Items>", x.task_xml(id)))
                 } else if x.contacts.contains_key(id) {
                     ok("GetItem", &format!("<m:Items>{}</m:Items>", x.contact_xml(id)))
                 } else {
@@ -235,6 +259,42 @@ fn handle(st: &Mutex<X>, req: Req) -> Resp {
         return response("GetItem", &msgs);
     }
     x.writes.push(b.clone());
+    if b.contains("<m:UpdateItem") && b.contains("<t:Task>") {
+        let id = ids(&b, "ItemId").remove(0);
+        let ck = between(&b, "ChangeKey=\"", "\"").map(str::to_string);
+        let Some(cur) = x.tasks.get(&id).cloned() else {
+            return response("UpdateItem", &err("UpdateItem", "ErrorItemNotFound"));
+        };
+        if ck.is_some_and(|c| c != format!("ck{}", cur.2)) {
+            return response("UpdateItem", &err("UpdateItem", "ErrorIrresolvableConflict"));
+        }
+        x.seq += 1;
+        let seq = x.seq;
+        if let Some(t) = x.tasks.get_mut(&id) {
+            if let Some(st) = between(&b, "<t:Status>", "</t:Status>") {
+                t.1 = st.to_string();
+            }
+            t.2 = seq;
+        }
+        x.tlog.push(("Update", id.clone()));
+        return response(
+            "UpdateItem",
+            &ok(
+                "UpdateItem",
+                &format!(r#"<m:Items><t:Task><t:ItemId Id="{id}" ChangeKey="ck{seq}"/></t:Task></m:Items>"#),
+            ),
+        );
+    }
+    if b.contains("<m:GetUserAvailabilityRequest>") {
+        assert!(
+            b.to_lowercase().contains("<t:address>bea@contoso.com</t:address>") && b.contains("<t:Bias>0</t:Bias>"),
+            "{b}"
+        );
+        return response_plain(
+            "GetUserAvailabilityResponse",
+            r#"<m:FreeBusyResponseArray><m:FreeBusyResponse><m:ResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode></m:ResponseMessage><m:FreeBusyView><t:FreeBusyViewType>FreeBusy</t:FreeBusyViewType><t:CalendarEventArray><t:CalendarEvent><t:StartTime>2026-11-25T15:00:00</t:StartTime><t:EndTime>2026-11-25T16:00:00</t:EndTime><t:BusyType>Busy</t:BusyType></t:CalendarEvent><t:CalendarEvent><t:StartTime>2026-11-25T18:00:00</t:StartTime><t:EndTime>2026-11-25T19:00:00</t:EndTime><t:BusyType>Tentative</t:BusyType></t:CalendarEvent></t:CalendarEventArray></m:FreeBusyView></m:FreeBusyResponse><m:FreeBusyResponse><m:ResponseMessage ResponseClass="Error"><m:MessageText>x</m:MessageText><m:ResponseCode>ErrorMailRecipientNotFound</m:ResponseCode></m:ResponseMessage></m:FreeBusyResponse></m:FreeBusyResponseArray>"#,
+        );
+    }
     if b.contains("<m:UpdateItem") && b.contains("<t:Contact>") {
         let id = ids(&b, "ItemId").remove(0);
         let ck = between(&b, "ChangeKey=\"", "\"").map(str::to_string);
@@ -302,6 +362,15 @@ fn handle(st: &Mutex<X>, req: Req) -> Resp {
     if b.contains("<t:AcceptItem>") {
         return response("CreateItem", &ok("CreateItem", "<m:Items/>"));
     }
+    if b.contains("<m:CreateItem") && b.contains("<t:Task>") {
+        let subject = between(&b, "<t:Subject>", "</t:Subject>").unwrap_or_default().to_string();
+        assert!(b.contains(r#"<t:DistinguishedFolderId Id="tasks"/>"#), "{b}");
+        x.add_task("tnew", &subject);
+        return response(
+            "CreateItem",
+            &ok("CreateItem", r#"<m:Items><t:Task><t:ItemId Id="tnew" ChangeKey="x"/></t:Task></m:Items>"#),
+        );
+    }
     if b.contains("<m:CreateItem") && b.contains("<t:Contact>") {
         let name = between(&b, "<t:DisplayName>", "</t:DisplayName>").unwrap_or_default().to_string();
         let email = between(&b, r#"<t:Entry Key="EmailAddress1">"#, "</t:Entry>").unwrap_or_default().to_string();
@@ -327,7 +396,10 @@ fn handle(st: &Mutex<X>, req: Req) -> Resp {
         for id in ids(&b, "ItemId") {
             x.items.remove(&id);
             if x.contacts.remove(&id).is_some() {
-                x.log.push(("Delete", id));
+                x.log.push(("Delete", id.clone()));
+            }
+            if x.tasks.remove(&id).is_some() {
+                x.tlog.push(("Delete", id));
             }
         }
         return response("DeleteItem", &ok("DeleteItem", ""));
@@ -696,5 +768,99 @@ async fn ews_contacts_and_directory() {
         found.iter().map(|m| (m.name.as_deref().unwrap_or_default(), m.addr.as_str())).collect::<Vec<_>>(),
         [("Ana Pérez", "ana.perez@contoso.com"), ("Anabel Ríos", "anabel@contoso.com")]
     );
+    handle.shutdown().await;
+}
+
+/// Hito 3: la carpeta de tareas como lista (incremental, edición del estado con `ChangeKey`, alta
+/// y baja) y la disponibilidad de otras personas para el asistente de programación.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ews_tasks_and_availability() {
+    let state = Arc::new(Mutex::new(X::default()));
+    {
+        let mut x = state.lock().unwrap();
+        x.add_task("t1", "Enviar informe");
+        x.add_task("t2", "Llamar a Bea");
+        x.add("e1", "Revisión", 25, "Single", "uid-e1");
+    }
+    let h = Arc::clone(&state);
+    let base = serve(move |req| handle(&h, req)).await;
+    let url = format!("{base}/EWS/Exchange.asmx");
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
+    let secrets = Arc::new(MemoryStore::default());
+    secrets.set("ana-ex", SecretPurpose::Incoming, "secreto").unwrap();
+    let opts = PimSyncOptions {
+        poll_interval: Duration::from_secs(3600),
+        sync_on_start: false,
+        user_tz: "America/Mexico_City".parse().unwrap(),
+        ..Default::default()
+    };
+    let pim = PimAccount::from_account(&account(&url)).unwrap();
+    let handle = PimSyncEngine::start(Arc::clone(&store), vec![pim], None, secrets, opts);
+    handle.sync_now_wait("ana-ex").await.unwrap();
+
+    // --- primera pasada
+    let list = store.task_lists().unwrap().remove(0);
+    assert_eq!(list.name, "Tareas");
+    let by = |s: &str| store.tasks(list.id).unwrap().into_iter().find(|t| t.summary == s);
+    let t1 = by("Enviar informe").unwrap();
+    assert_eq!(t1.priority, 1);
+    assert_eq!(t1.due, Some(EventTime::Date(chrono::NaiveDate::from_ymd_opt(2026, 11, 20).unwrap())));
+    assert!(by("Llamar a Bea").is_some());
+
+    // --- completar: solo el estado, con ChangeKey
+    let mut done = t1.clone();
+    done.status = iuredesk_model::TaskStatus::Completed;
+    handle.save_task(&done).unwrap();
+    handle.sync_now_wait("ana-ex").await.unwrap();
+    {
+        let x = state.lock().unwrap();
+        let w = x.writes.iter().rev().find(|w| w.contains("<m:UpdateItem")).unwrap();
+        assert!(
+            w.contains(r#"FieldURI="task:Status""#) && w.contains("ChangeKey=\"ck") && !w.contains("item:Subject"),
+            "{w}"
+        );
+        assert_eq!(x.tasks["t1"].1, "Completed");
+    }
+    assert_eq!(by("Enviar informe").unwrap().status, iuredesk_model::TaskStatus::Completed);
+
+    // --- alta y baja
+    let id = handle
+        .save_task(&iuredesk_model::Task { list: list.id, summary: "Revisar contrato".into(), ..Default::default() })
+        .unwrap();
+    handle.sync_now_wait("ana-ex").await.unwrap();
+    assert_eq!(store.get_task(id).unwrap().unwrap().remote_id.as_deref(), Some("tnew"));
+    handle.delete_task(id).unwrap();
+    handle.sync_now_wait("ana-ex").await.unwrap();
+    assert!(!state.lock().unwrap().tasks.contains_key("tnew"));
+    // Borrado en el servidor.
+    {
+        let mut x = state.lock().unwrap();
+        x.tasks.remove("t2");
+        x.tlog.push(("Delete", "t2".into()));
+    }
+    handle.sync_now_wait("ana-ex").await.unwrap();
+    assert!(by("Llamar a Bea").is_none());
+    assert_eq!(store.ops_len().unwrap(), 0);
+
+    // --- disponibilidad
+    let cal = store.calendars().unwrap().remove(0);
+    let from = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 11, 25, 0, 0, 0).unwrap();
+    let fb = handle
+        .free_busy(
+            cal.id,
+            vec!["Bea@Contoso.com".into(), "nadie@otra.org".into()],
+            from,
+            from + chrono::Duration::days(1),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fb.len(), 2);
+    assert_eq!(fb[0].email, "bea@contoso.com");
+    let busy = fb[0].busy.as_ref().unwrap();
+    assert_eq!(busy.len(), 2);
+    assert_eq!(busy[0].start.to_rfc3339(), "2026-11-25T15:00:00+00:00");
+    assert!(!busy[0].tentative && busy[1].tentative);
+    assert_eq!(fb[1].busy, None, "no se pudo consultar");
     handle.shutdown().await;
 }
