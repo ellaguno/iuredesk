@@ -42,6 +42,10 @@ struct Suggest {
     field: Option<Field>,
     items: Vec<Mailbox>,
     idx: usize,
+    /// Texto de la sugerencia y generación de la libreta global con la que se calculó (si llega
+    /// algo nuevo del directorio, se recalcula).
+    query: String,
+    generation: u64,
 }
 
 /// Una ventana de redacción.
@@ -214,7 +218,20 @@ pub fn show_all(app: &mut DeskApp, ctx: &Context) {
     // Sugerencias pedidas en este cuadro (se ven en el siguiente).
     for w in &mut app.composers {
         if let Some((f, q)) = w.want_suggest.take() {
-            w.suggest = Suggest { field: Some(f), items: app.session.suggest_addresses(&q, SUGGESTIONS), idx: 0 };
+            app.session.directory_lookup(&q);
+            w.suggest = Suggest {
+                field: Some(f),
+                items: app.session.suggest_addresses(&q, SUGGESTIONS),
+                idx: 0,
+                generation: app.session.directory_generation(),
+                query: q,
+            };
+            ctx.request_repaint();
+        } else if w.suggest.field.is_some() && w.suggest.generation != app.session.directory_generation() {
+            // Llegó la libreta global: se suman sus nombres sin mover la selección.
+            w.suggest.items = app.session.suggest_addresses(&w.suggest.query, SUGGESTIONS);
+            w.suggest.idx = w.suggest.idx.min(w.suggest.items.len().saturating_sub(1));
+            w.suggest.generation = app.session.directory_generation();
             ctx.request_repaint();
         }
     }

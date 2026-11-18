@@ -372,6 +372,29 @@ impl PimSyncHandle {
         &self.inner.store
     }
 
+    /// ¿Alguna cuenta tiene libreta global de la organización (Exchange)?
+    pub fn has_directory(&self) -> bool {
+        self.inner.slots.iter().any(|s| matches!(s.ctx.account.source, PimSource::Ews { .. }))
+    }
+
+    /// Busca `query` en la libreta global de las cuentas de Exchange (F8.4): nombres y
+    /// direcciones, sin repetir, hasta `limit`. Una cuenta que falla (sin red, contraseña) se
+    /// salta: es solo una ayuda al escribir.
+    pub async fn directory_search(&self, query: &str, limit: usize) -> Vec<iuredesk_model::Mailbox> {
+        let mut out: Vec<iuredesk_model::Mailbox> = Vec::new();
+        for s in &self.inner.slots {
+            let PimSource::Ews { url } = &s.ctx.account.source else { continue };
+            let Ok(found) = crate::ews::directory(&s.ctx, url, query).await else { continue };
+            for m in found {
+                if !out.iter().any(|x| x.addr.eq_ignore_ascii_case(&m.addr)) {
+                    out.push(m);
+                }
+            }
+        }
+        out.truncate(limit);
+        out
+    }
+
     /// Id local de una cuenta (`Account::id`).
     pub fn account_id(&self, account: &str) -> Option<AccountId> {
         self.inner.slots.iter().find(|s| s.id == account).map(|s| s.acct)

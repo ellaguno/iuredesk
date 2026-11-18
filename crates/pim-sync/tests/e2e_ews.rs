@@ -40,9 +40,28 @@ struct X {
     writes: Vec<String>,
     /// Elementos pedidos con `GetItem`.
     fetched: usize,
+    /// Contactos: id → (nombre, correo, puesto, change key).
+    contacts: BTreeMap<String, (String, String, String, u32)>,
+    /// Registro de cambios de la carpeta de contactos (lo que da `SyncFolderItems`).
+    log: Vec<(&'static str, String)>,
+    /// El servidor olvidó los estados de sincronización anteriores a este índice.
+    forgot_before: usize,
 }
 
 impl X {
+    fn add_contact(&mut self, id: &str, name: &str, email: &str, title: &str) {
+        self.seq += 1;
+        self.contacts.insert(id.into(), (name.into(), email.into(), title.into(), self.seq));
+        self.log.push(("Create", id.into()));
+    }
+
+    fn contact_xml(&self, id: &str) -> String {
+        let Some((name, email, title, ck)) = self.contacts.get(id) else { return String::new() };
+        format!(
+            r#"<t:Contact><t:ItemId Id="{id}" ChangeKey="ck{ck}"/><t:DisplayName>{name}</t:DisplayName><t:EmailAddresses><t:Entry Key="EmailAddress1">{email}</t:Entry></t:EmailAddresses><t:PhoneNumbers><t:Entry Key="BusinessFax">+52 81 0000</t:Entry></t:PhoneNumbers><t:JobTitle>{title}</t:JobTitle></t:Contact>"#
+        )
+    }
+
     fn add(&mut self, id: &str, subject: &str, day: u32, kind: &'static str, uid: &str) {
         self.seq += 1;
         let it = Item {
@@ -157,6 +176,42 @@ fn handle(st: &Mutex<X>, req: Req) -> Resp {
             ),
         );
     }
+    if b.contains("<m:SyncFolderItems>") {
+        assert!(b.contains(r#"<t:DistinguishedFolderId Id="contacts"/>"#), "{b}");
+        let from = match between(&b, "<m:SyncState>", "</m:SyncState>") {
+            None => 0,
+            Some(s) => match s.strip_prefix('s').and_then(|n| n.parse::<usize>().ok()) {
+                Some(n) if n >= x.forgot_before => n,
+                _ => return response("SyncFolderItems", &err("SyncFolderItems", "ErrorInvalidSyncStateData")),
+            },
+        };
+        let changes: String = x
+            .log
+            .iter()
+            .skip(from)
+            .map(|(kind, id)| match *kind {
+                "Delete" => format!(r#"<t:Delete><t:ItemId Id="{id}"/></t:Delete>"#),
+                k => format!(r#"<t:{k}><t:Contact><t:ItemId Id="{id}" ChangeKey="x"/></t:Contact></t:{k}>"#),
+            })
+            .collect();
+        let state = x.log.len();
+        return response(
+            "SyncFolderItems",
+            &ok(
+                "SyncFolderItems",
+                &format!(
+                    "<m:SyncState>s{state}</m:SyncState><m:IncludesLastItemInRange>true</m:IncludesLastItemInRange><m:Changes>{changes}</m:Changes>"
+                ),
+            ),
+        );
+    }
+    if b.contains("<m:ResolveNames") {
+        assert!(b.contains("<m:UnresolvedEntry>ana</m:UnresolvedEntry>"), "{b}");
+        return response(
+            "ResolveNames",
+            r#"<m:ResolveNamesResponseMessage ResponseClass="Warning"><m:ResponseCode>ErrorNameResolutionMultipleResults</m:ResponseCode><m:ResolutionSet><t:Resolution><t:Mailbox><t:Name>Ana Pérez</t:Name><t:EmailAddress>ana.perez@contoso.com</t:EmailAddress><t:RoutingType>SMTP</t:RoutingType></t:Mailbox></t:Resolution><t:Resolution><t:Mailbox><t:Name>Anabel Ríos</t:Name><t:EmailAddress>anabel@contoso.com</t:EmailAddress><t:RoutingType>SMTP</t:RoutingType></t:Mailbox></t:Resolution></m:ResolutionSet></m:ResolveNamesResponseMessage>"#,
+        );
+    }
     if b.contains("<t:RecurringMasterItemId") {
         return response(
             "GetItem",
@@ -167,14 +222,45 @@ fn handle(st: &Mutex<X>, req: Req) -> Resp {
         x.fetched += ids(&b, "ItemId").len();
         let msgs: String = ids(&b, "ItemId")
             .iter()
-            .map(|id| match x.items.contains_key(id) {
-                true => ok("GetItem", &format!("<m:Items>{}</m:Items>", x.xml(id))),
-                false => err("GetItem", "ErrorItemNotFound"),
+            .map(|id| {
+                if x.items.contains_key(id) {
+                    ok("GetItem", &format!("<m:Items>{}</m:Items>", x.xml(id)))
+                } else if x.contacts.contains_key(id) {
+                    ok("GetItem", &format!("<m:Items>{}</m:Items>", x.contact_xml(id)))
+                } else {
+                    err("GetItem", "ErrorItemNotFound")
+                }
             })
             .collect();
         return response("GetItem", &msgs);
     }
     x.writes.push(b.clone());
+    if b.contains("<m:UpdateItem") && b.contains("<t:Contact>") {
+        let id = ids(&b, "ItemId").remove(0);
+        let ck = between(&b, "ChangeKey=\"", "\"").map(str::to_string);
+        let Some(cur) = x.contacts.get(&id).cloned() else {
+            return response("UpdateItem", &err("UpdateItem", "ErrorItemNotFound"));
+        };
+        if ck.is_some_and(|c| c != format!("ck{}", cur.3)) {
+            return response("UpdateItem", &err("UpdateItem", "ErrorIrresolvableConflict"));
+        }
+        x.seq += 1;
+        let seq = x.seq;
+        if let Some(c) = x.contacts.get_mut(&id) {
+            if let Some(t) = between(&b, "<t:JobTitle>", "</t:JobTitle>") {
+                c.2 = t.to_string();
+            }
+            c.3 = seq;
+        }
+        x.log.push(("Update", id.clone()));
+        return response(
+            "UpdateItem",
+            &ok(
+                "UpdateItem",
+                &format!(r#"<m:Items><t:Contact><t:ItemId Id="{id}" ChangeKey="ck{seq}"/></t:Contact></m:Items>"#),
+            ),
+        );
+    }
     if b.contains("<m:UpdateItem") {
         let id = ids(&b, "ItemId").remove(0);
         let ck = between(&b, "ChangeKey=\"", "\"").map(str::to_string);
@@ -216,6 +302,15 @@ fn handle(st: &Mutex<X>, req: Req) -> Resp {
     if b.contains("<t:AcceptItem>") {
         return response("CreateItem", &ok("CreateItem", "<m:Items/>"));
     }
+    if b.contains("<m:CreateItem") && b.contains("<t:Contact>") {
+        let name = between(&b, "<t:DisplayName>", "</t:DisplayName>").unwrap_or_default().to_string();
+        let email = between(&b, r#"<t:Entry Key="EmailAddress1">"#, "</t:Entry>").unwrap_or_default().to_string();
+        x.add_contact("cnew", &name, &email, "");
+        return response(
+            "CreateItem",
+            &ok("CreateItem", r#"<m:Items><t:Contact><t:ItemId Id="cnew" ChangeKey="x"/></t:Contact></m:Items>"#),
+        );
+    }
     if b.contains("<m:CreateItem") {
         let subject = between(&b, "<t:Subject>", "</t:Subject>").unwrap_or_default().to_string();
         let day: u32 = between(&b, "<t:Start>2026-11-", "T").and_then(|d| d.parse().ok()).unwrap_or(1);
@@ -231,6 +326,9 @@ fn handle(st: &Mutex<X>, req: Req) -> Resp {
     if b.contains("<m:DeleteItem") {
         for id in ids(&b, "ItemId") {
             x.items.remove(&id);
+            if x.contacts.remove(&id).is_some() {
+                x.log.push(("Delete", id));
+            }
         }
         return response("DeleteItem", &ok("DeleteItem", ""));
     }
@@ -495,5 +593,108 @@ async fn ews_series_whole_and_split() {
         assert!(!x.items.contains_key("new1"), "serie nueva borrada");
     }
     assert_eq!(store.ops_len().unwrap(), 0);
+    handle.shutdown().await;
+}
+
+/// Hito 2: la carpeta de contactos como libreta (cambios incrementales con `SyncFolderItems`,
+/// edición de un solo campo sin tocar el fax, alta y baja, estado olvidado por el servidor) y la
+/// libreta global de la organización (`ResolveNames`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ews_contacts_and_directory() {
+    let state = Arc::new(Mutex::new(X::default()));
+    {
+        let mut x = state.lock().unwrap();
+        x.add_contact("c1", "Luis Gómez", "luis@contoso.com", "Ventas");
+        x.add_contact("c2", "Marta Ruiz", "marta@contoso.com", "Compras");
+    }
+    let h = Arc::clone(&state);
+    let base = serve(move |req| handle(&h, req)).await;
+    let url = format!("{base}/EWS/Exchange.asmx");
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(dir.path()).unwrap());
+    let secrets = Arc::new(MemoryStore::default());
+    secrets.set("ana-ex", SecretPurpose::Incoming, "secreto").unwrap();
+    let opts = PimSyncOptions { poll_interval: Duration::from_secs(3600), sync_on_start: false, ..Default::default() };
+    let pim = PimAccount::from_account(&account(&url)).unwrap();
+    let handle = PimSyncEngine::start(Arc::clone(&store), vec![pim], None, secrets, opts);
+    handle.sync_now_wait("ana-ex").await.unwrap();
+
+    // --- primera pasada
+    let book = store.address_books().unwrap().remove(0);
+    assert_eq!(book.name, "Contactos");
+    let by_name = |n: &str| store.contacts(book.id).unwrap().into_iter().find(|c| c.full_name == n);
+    let luis = by_name("Luis Gómez").unwrap();
+    assert_eq!((luis.title.as_str(), luis.primary_email()), ("Ventas", Some("luis@contoso.com")));
+    assert!(luis.phones.is_empty(), "el fax no se lee");
+    assert!(by_name("Marta Ruiz").is_some());
+
+    // --- edición local: solo el puesto, con ChangeKey; el fax no se toca
+    let mut l = luis.clone();
+    l.title = "Director de ventas".into();
+    handle.save_contact(&l, None).unwrap();
+    handle.sync_now_wait("ana-ex").await.unwrap();
+    {
+        let x = state.lock().unwrap();
+        let w = x.writes.iter().rev().find(|w| w.contains("<m:UpdateItem")).unwrap();
+        assert!(w.contains(r#"FieldURI="contacts:JobTitle""#) && w.contains("ChangeKey=\"ck"), "{w}");
+        assert!(!w.contains("PhoneNumber") && !w.contains("EmailAddress"), "{w}");
+        assert_eq!(x.contacts["c1"].2, "Director de ventas");
+    }
+
+    // --- cambios del servidor: solo se pide lo cambiado
+    {
+        let mut x = state.lock().unwrap();
+        x.seq += 1;
+        let seq = x.seq;
+        if let Some(c) = x.contacts.get_mut("c2") {
+            c.2 = "Gerente de compras".into();
+            c.3 = seq;
+        }
+        x.log.push(("Update", "c2".into()));
+        x.contacts.remove("c1");
+        x.log.push(("Delete", "c1".into()));
+        x.fetched = 0;
+    }
+    handle.sync_now_wait("ana-ex").await.unwrap();
+    assert_eq!(state.lock().unwrap().fetched, 1, "solo el contacto cambiado");
+    assert_eq!(by_name("Marta Ruiz").unwrap().title, "Gerente de compras");
+    assert!(by_name("Luis Gómez").is_none(), "borrado en el servidor");
+
+    // --- alta y baja
+    let id = handle
+        .save_contact(
+            &iuredesk_model::Contact {
+                address_book: book.id,
+                full_name: "Nora Paz".into(),
+                emails: vec![iuredesk_model::Labeled::new("", "nora@contoso.com")],
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    handle.sync_now_wait("ana-ex").await.unwrap();
+    assert_eq!(store.get_contact(id).unwrap().unwrap().remote_id.as_deref(), Some("cnew"));
+    assert_eq!(state.lock().unwrap().contacts["cnew"].1, "nora@contoso.com");
+    handle.delete_contact(id).unwrap();
+    handle.sync_now_wait("ana-ex").await.unwrap();
+    assert!(!state.lock().unwrap().contacts.contains_key("cnew"));
+
+    // --- el servidor olvida el estado: todo de nuevo, sin perder nada
+    {
+        let mut x = state.lock().unwrap();
+        x.forgot_before = x.log.len() + 1;
+    }
+    handle.sync_now_wait("ana-ex").await.unwrap();
+    let names: Vec<String> = store.contacts(book.id).unwrap().into_iter().map(|c| c.full_name).collect();
+    assert_eq!(names, ["Marta Ruiz"]);
+    assert_eq!(store.ops_len().unwrap(), 0);
+
+    // --- libreta global
+    assert!(handle.has_directory());
+    let found = handle.directory_search("ana", 10).await;
+    assert_eq!(
+        found.iter().map(|m| (m.name.as_deref().unwrap_or_default(), m.addr.as_str())).collect::<Vec<_>>(),
+        [("Ana Pérez", "ana.perez@contoso.com"), ("Anabel Ríos", "anabel@contoso.com")]
+    );
     handle.shutdown().await;
 }

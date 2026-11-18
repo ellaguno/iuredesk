@@ -502,5 +502,7 @@ pub fn update_xml(patch: &Map<String, Value>, user_tz: Tz) -> String {
         .collect()
 }
 
+pub mod contact;
+
 #[cfg(test)]
 mod tests;

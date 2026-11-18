@@ -41,7 +41,9 @@
 //! Graph (modelo, `RRULE`, parche con solo lo cambiado, series «toda» y «este y los
 //! siguientes»). Subir es `UpdateItem` solo con los campos cambiados y el `ChangeKey` (si cambió en
 //! el servidor: fusión a tres bandas como con el 412); las invitaciones, cancelaciones y
-//! respuestas las manda el servidor.
+//! respuestas las manda el servidor. Los contactos (la carpeta de contactos del buzón) bajan
+//! incrementales con `SyncFolderItems`; la libreta global de la organización se consulta con
+//! [`PimSyncHandle::directory_search`] (`ResolveNames`).
 //!
 //! # Para la interfaz
 //! - Leer apariciones: [`occurrences_between`] (reemplaza la expansión ingenua del motor).

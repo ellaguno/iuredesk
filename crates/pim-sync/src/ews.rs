@@ -1,4 +1,5 @@
-//! Proveedor Exchange Web Services (Exchange Server local, F8.4): calendarios.
+//! Proveedor Exchange Web Services (Exchange Server local, F8.4): calendarios, contactos
+//! ([`contacts`]) y la libreta global de la organización ([`directory`]).
 //!
 //! Mismo planteamiento que [`crate::graph`]: cada elemento de EWS se guarda como JSON con la forma
 //! de Graph ([`crate::map::ews`]) y se reutiliza su traducción al modelo, el parche con solo lo
@@ -22,6 +23,8 @@ use crate::merge;
 use crate::ops::{self, PimOp};
 use crate::provider::{BoxFuture, Ctx, Provider};
 use crate::{ConflictResolution, PimEvent};
+
+mod contacts;
 
 /// Días de cada consulta de `CalendarView` (el servidor limita las apariciones por consulta).
 const VIEW_DAYS: i64 = 31;
@@ -471,7 +474,8 @@ impl Provider for Ews {
             for (id, folder) in self.refresh(ctx).await? {
                 self.pull(ctx, id, &folder).await?;
             }
-            Ok(())
+            let book = self.contact_book(ctx)?;
+            self.pull_contacts(ctx, book).await
         })
     }
 
@@ -488,12 +492,11 @@ impl Provider for Ews {
                     self.push_rsvp(ctx, *event, partstat, comment.as_deref()).await
                 }
                 PimOp::DeleteEvent { calendar, href, .. } => self.push_delete(ctx, *calendar, href).await,
-                // Contactos y tareas por EWS: siguiente hito de F8.4 (la cuenta aún no tiene
-                // libretas ni listas, así que no se encolan).
-                PimOp::PutContact { .. }
-                | PimOp::PutTask { .. }
-                | PimOp::DeleteContact { .. }
-                | PimOp::DeleteTask { .. } => Ok(()),
+                PimOp::PutContact { contact } => self.push_contact(ctx, *contact).await,
+                PimOp::DeleteContact { book, href, .. } => self.push_delete_contact(ctx, *book, href).await,
+                // Tareas por EWS: hito 3 de F8.4 (la cuenta aún no tiene listas, así que no se
+                // encolan).
+                PimOp::PutTask { .. } | PimOp::DeleteTask { .. } => Ok(()),
             }
         })
     }
@@ -555,9 +558,29 @@ fn remove_item(ctx: &Ctx, st: &mut CollectionSync, pending: &ops::Pending, id: &
         if pending.dirty.contains(r) {
             ctx.conflict(*r, id, ConflictResolution::ServerWon);
         }
-        if let PimRef::Event(i) = r {
-            ctx.store.delete_event(*i)?;
+        match r {
+            PimRef::Event(i) => ctx.store.delete_event(*i)?,
+            PimRef::Contact(i) => ctx.store.delete_contact(*i)?,
+            PimRef::Task(i) => ctx.store.delete_task(*i)?,
         }
     }
     Ok(!item.refs.is_empty())
+}
+
+/// Busca `query` en la libreta global de la organización de una cuenta de Exchange.
+pub(crate) async fn directory(ctx: &Ctx, url: &str, query: &str) -> Result<Vec<iuredesk_model::Mailbox>> {
+    let ews = Ews::new(ctx, url).await?;
+    Ok(ews
+        .client
+        .resolve_names(query)
+        .await?
+        .into_iter()
+        .map(|a| {
+            if a.name.trim().is_empty() || a.name.eq_ignore_ascii_case(&a.email) {
+                iuredesk_model::Mailbox::addr(a.email)
+            } else {
+                iuredesk_model::Mailbox::new(a.name, a.email)
+            }
+        })
+        .collect())
 }
