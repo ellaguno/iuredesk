@@ -716,11 +716,16 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             let mut changed = false;
             // Por bloques (con su propio desplazamiento): teclear en una nota larga rehace solo el
             // bloque editado.
-            // Los diagramas (Mermaid y mapas mentales) se dibujan en su lugar, con el motor de la vista.
+            // Los diagramas (Mermaid y mapas mentales, con el motor de la vista) y las imágenes de la
+            // carpeta de notas (como en la vista previa) se dibujan en su lugar.
             let mindmap_layout = crate::note_preview::layout_of(app.session.prefs.mindmap_layout);
+            let notes_dir = app.session.notes_dir();
             let mut editor = |ui: &mut egui::Ui, body: &mut String| {
                 let diagrams: std::sync::Arc<dyn iure_doc_ui::DiagramRenderer> =
-                    std::sync::Arc::new(crate::note_diagrams::NoteDiagrams::new(ui, mindmap_layout));
+                    std::sync::Arc::new(iure_doc_ui::Renderers(vec![
+                        std::sync::Arc::new(crate::note_diagrams::NoteDiagrams::new(ui, mindmap_layout)),
+                        std::sync::Arc::new(iure_doc_ui::LocalImages::new(notes_dir.clone())),
+                    ]));
                 let out = iure_doc_ui::show_blocks_with(
                     ui,
                     egui::Id::unique(("note-editor", id)),
