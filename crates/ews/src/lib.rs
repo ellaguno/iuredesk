@@ -4,8 +4,9 @@
 //! Lo que resuelve:
 //! - SOAP sobre HTTPS con `RequestServerVersion` fijo (Exchange 2013 SP1: lo entienden todos los
 //!   servidores con soporte);
-//! - autenticación enchufable ([`EwsAuth`]: Basic sobre TLS, token Bearer para Exchange híbrido;
-//!   NTLM/Negotiate después);
+//! - autenticación enchufable ([`EwsAuth`]: Basic sobre TLS, token Bearer para Exchange híbrido)
+//!   y, si el servidor no ofrece Basic, NTLMv2 ([`ntlm`]) o Kerberos ([`kerberos`]) propios;
+//! - Autodiscover POX con contraseña ([`autodiscover`]);
 //! - **limitación**: `ErrorServerBusy` con `BackOffMilliseconds` (y 503) espera lo pedido
 //!   (acotado) y reintenta unas pocas veces; después [`EwsError::ServerBusy`];
 //! - respuestas acotadas en tamaño y XML acotado en profundidad y elementos (datos hostiles);
@@ -21,6 +22,8 @@
     clippy::unreachable
 )]
 
+pub mod autodiscover;
+pub mod kerberos;
 pub mod ntlm;
 pub mod ops;
 pub mod soap;
@@ -80,6 +83,30 @@ pub enum EwsError {
     /// Autenticación (token, NTLM…).
     #[error("autenticación: {0}")]
     Auth(String),
+    /// El dominio rechazó al usuario por algo que no es la contraseña (Kerberos).
+    #[error("dominio: {0}")]
+    Domain(DomainIssue),
+}
+
+/// Por qué el dominio no deja entrar (además de una contraseña equivocada).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DomainIssue {
+    /// La hora del equipo difiere más de 5 minutos de la del dominio.
+    ClockSkew,
+    /// La contraseña caducó.
+    PasswordExpired,
+    /// Cuenta bloqueada o desactivada.
+    Locked,
+}
+
+impl std::fmt::Display for DomainIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::ClockSkew => "la hora del equipo no coincide con la del dominio",
+            Self::PasswordExpired => "la contraseña caducó",
+            Self::Locked => "cuenta bloqueada o desactivada",
+        })
+    }
 }
 
 impl EwsError {
@@ -95,7 +122,7 @@ impl EwsError {
 
     /// ¿Hay que volver a iniciar sesión (contraseña cambiada o caducada)?
     pub fn needs_reauth(&self) -> bool {
-        matches!(self, Self::Unauthorized)
+        matches!(self, Self::Unauthorized | Self::Domain(DomainIssue::PasswordExpired))
     }
 
     /// ¿El elemento ya no existe? (borrar o mover algo que ya no está da igual).
@@ -220,6 +247,16 @@ pub struct EwsClient {
     ntlm_scheme: Arc<std::sync::Mutex<Option<&'static str>>>,
     /// NTLM autentica la conexión: los intercambios van de uno en uno por la misma.
     ntlm_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Ticket de Kerberos para `HTTP/servidor`, cuando se usa Kerberos.
+    kerberos: Arc<std::sync::Mutex<Option<Arc<kerberos::Ticket>>>>,
+    /// Hacia dónde van las peticiones de Kerberos (el KDC del dominio; uno falso en pruebas).
+    kdc: Arc<dyn kerberos::Kdc>,
+    /// Kerberos ya se intentó sin KDC alcanzable: no se insiste en cada petición.
+    kerberos_unavailable: Arc<std::sync::atomic::AtomicBool>,
+    /// El servidor ofreció `Negotiate` (Kerberos posible).
+    negotiate_offered: Arc<std::sync::atomic::AtomicBool>,
+    /// Certificado TLS del servidor (DER) visto en la última respuesta, para el channel binding.
+    peer_cert: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
 }
 
 impl std::fmt::Debug for EwsClient {
@@ -301,7 +338,18 @@ impl EwsClient {
             max_wait: DEFAULT_MAX_WAIT,
             ntlm_scheme: Arc::new(std::sync::Mutex::new(None)),
             ntlm_lock: Arc::new(tokio::sync::Mutex::new(())),
+            kerberos: Arc::new(std::sync::Mutex::new(None)),
+            kdc: Arc::new(kerberos::TcpKdc::default()),
+            kerberos_unavailable: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            negotiate_offered: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            peer_cert: Arc::new(std::sync::Mutex::new(None)),
         })
+    }
+
+    /// Cambia el KDC de Kerberos (pruebas).
+    pub fn with_kdc(mut self, kdc: Arc<dyn kerberos::Kdc>) -> Self {
+        self.kdc = kdc;
+        self
     }
 
     /// Reintentos por limitación y espera máxima por reintento.
@@ -321,35 +369,10 @@ impl EwsClient {
     /// llama ([`soap::messages`]).
     pub async fn call(&self, body: &str) -> Result<Element> {
         let envelope = soap::envelope(body);
-        let mut retried_auth = false;
         let mut attempt = 0u32;
         loop {
-            let scheme = *self.ntlm_scheme.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let resp = match scheme {
-                Some(scheme) => self.ntlm_send(&envelope, scheme).await?,
-                None => {
-                    let auth = self.auth.authorization().await?;
-                    self.post(&envelope).header("Authorization", auth).send().await?
-                }
-            };
+            let resp = self.send_authed(&envelope).await?;
             let status = resp.status().as_u16();
-            if status == 401 {
-                // Sin Basic pero con NTLM/Negotiate (lo habitual en Exchange local): se cambia a
-                // NTLM una vez y se recuerda para las siguientes.
-                if scheme.is_none()
-                    && let Some(next) = ntlm_offer(resp.headers())
-                    && self.auth.ntlm().is_some()
-                {
-                    *self.ntlm_scheme.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(next);
-                    continue;
-                }
-                self.auth.invalidate();
-                if retried_auth {
-                    return Err(EwsError::Unauthorized);
-                }
-                retried_auth = true;
-                continue;
-            }
             if resp.content_length().is_some_and(|l| l > MAX_RESPONSE as u64) {
                 return Err(EwsError::TooLarge);
             }
@@ -389,6 +412,141 @@ impl EwsClient {
 }
 
 impl EwsClient {
+    /// Manda `body` tal cual (XML que no es SOAP, p. ej. Autodiscover POX) con la misma
+    /// autenticación y devuelve el código HTTP y el cuerpo acotado.
+    pub async fn post_xml(&self, body: &str) -> Result<(u16, Vec<u8>)> {
+        let resp = self.send_authed(body).await?;
+        let status = resp.status().as_u16();
+        if resp.content_length().is_some_and(|l| l > MAX_RESPONSE as u64) {
+            return Err(EwsError::TooLarge);
+        }
+        Ok((status, read_capped(resp).await?))
+    }
+
+    /// Manda `body` autenticado: Basic (o Bearer) y, si el servidor no ofrece Basic, NTLM o
+    /// Kerberos (se recuerda para las siguientes):
+    /// - solo `Negotiate` (NTLM restringido en el dominio): Kerberos; sin KDC alcanzable, NTLM
+    ///   dentro de `Negotiate`;
+    /// - NTLM ofrecido: NTLM; si el servidor lo rechaza y también ofrece `Negotiate`, Kerberos una
+    ///   vez antes de rendirse.
+    ///
+    /// Un 401 tras reintentar es [`EwsError::Unauthorized`]; cualquier otra respuesta vuelve a
+    /// quien llama.
+    async fn send_authed(&self, body: &str) -> Result<reqwest::Response> {
+        use std::sync::atomic::Ordering;
+        let mut retried_auth = false;
+        let mut tried_kerberos = false;
+        loop {
+            // Ticket vencido: se pide otro (o se deja Kerberos si ya no se puede).
+            if let Some(t) = self.ticket()
+                && !t.fresh(chrono::Utc::now())
+            {
+                let fresh = self.kerberos_ticket().await.ok();
+                *self.kerberos.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = fresh.map(Arc::new);
+            }
+            let ticket = self.ticket();
+            let scheme = *self.ntlm_scheme.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let resp = match (&ticket, scheme) {
+                (Some(t), _) => {
+                    let cert = self.peer_cert.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+                    let header =
+                        kerberos::authorization(t, cert.as_deref()).map_err(|e| EwsError::Auth(e.to_string()))?;
+                    self.post(body).header("Authorization", header).send().await?
+                }
+                (None, Some(scheme)) => self.ntlm_send(body, scheme).await?,
+                (None, None) => {
+                    let auth = self.auth.authorization().await?;
+                    self.post(body).header("Authorization", auth).send().await?
+                }
+            };
+            if let Some(cert) =
+                resp.extensions().get::<reqwest::tls::TlsInfo>().and_then(|i| i.peer_certificate()).map(<[u8]>::to_vec)
+            {
+                *self.peer_cert.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cert);
+            }
+            if resp.status().as_u16() != 401 {
+                return Ok(resp);
+            }
+            let offered = offered_schemes(resp.headers());
+            if offered.iter().any(|s| s == "negotiate") {
+                self.negotiate_offered.store(true, Ordering::Relaxed);
+            }
+            let has_password = self.auth.ntlm().is_some();
+            if ticket.is_none() && scheme.is_none() && has_password && !offered.iter().any(|s| s == "basic") {
+                // Solo Negotiate: Kerberos primero.
+                if !offered.iter().any(|s| s == "ntlm") && offered.iter().any(|s| s == "negotiate") && !tried_kerberos {
+                    tried_kerberos = true;
+                    if self.try_kerberos().await? {
+                        continue;
+                    }
+                }
+                // Sin Basic pero con NTLM/Negotiate (lo habitual en Exchange local): NTLM.
+                if let Some(next) = ntlm_offer(resp.headers()) {
+                    *self.ntlm_scheme.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(next);
+                    continue;
+                }
+            }
+            // NTLM rechazado con Negotiate ofrecido: quizá el dominio restringe NTLM.
+            if ticket.is_none() && scheme.is_some() && !tried_kerberos && self.negotiate_offered.load(Ordering::Relaxed)
+            {
+                tried_kerberos = true;
+                if self.try_kerberos().await? {
+                    continue;
+                }
+            }
+            if ticket.is_some() {
+                *self.kerberos.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+            }
+            self.auth.invalidate();
+            if retried_auth {
+                return Err(EwsError::Unauthorized);
+            }
+            retried_auth = true;
+        }
+    }
+
+    fn ticket(&self) -> Option<Arc<kerberos::Ticket>> {
+        self.kerberos.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+
+    /// Pide el ticket de `HTTP/servidor` con el usuario y la contraseña.
+    async fn kerberos_ticket(&self) -> std::result::Result<kerberos::Ticket, kerberos::KerberosError> {
+        let creds = match self.auth.ntlm() {
+            Some(f) => f.await.map_err(|e| kerberos::KerberosError::Protocol(e.to_string()))?,
+            None => return Err(kerberos::KerberosError::Protocol("sin contraseña".into())),
+        };
+        let login =
+            if creds.domain.is_empty() { creds.user.clone() } else { format!("{}\\{}", creds.domain, creds.user) };
+        let host =
+            reqwest::Url::parse(&self.url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+        kerberos::http_ticket(&*self.kdc, &login, &creds.password, &host).await
+    }
+
+    /// Intenta pasar a Kerberos. `Ok(true)`: hay ticket; `Ok(false)`: no se pudo (sin KDC, sin
+    /// el servicio…), se sigue con NTLM; error: el dominio rechazó al usuario (no se insiste).
+    async fn try_kerberos(&self) -> Result<bool> {
+        use kerberos::KerberosError as K;
+        use std::sync::atomic::Ordering;
+        if self.kerberos_unavailable.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
+        match self.kerberos_ticket().await {
+            Ok(t) => {
+                *self.kerberos.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(t));
+                Ok(true)
+            }
+            Err(K::BadPassword | K::UnknownUser) => Err(EwsError::Unauthorized),
+            Err(K::PasswordExpired) => Err(EwsError::Domain(DomainIssue::PasswordExpired)),
+            Err(K::Locked) => Err(EwsError::Domain(DomainIssue::Locked)),
+            Err(K::ClockSkew) => Err(EwsError::Domain(DomainIssue::ClockSkew)),
+            Err(K::Unreachable(_)) => {
+                self.kerberos_unavailable.store(true, Ordering::Relaxed);
+                Ok(false)
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
     fn post(&self, body: &str) -> reqwest::RequestBuilder {
         self.http
             .post(&self.url)
@@ -436,6 +594,18 @@ impl EwsClient {
         let auth = ntlm::authenticate(&creds, &negotiate, &challenge, cert.as_deref(), &format!("HTTP/{host}"), nonce);
         Ok(self.post(envelope).header("Authorization", format!("{scheme} {}", b64.encode(&auth))).send().await?)
     }
+}
+
+/// Esquemas de `WWW-Authenticate`, en minúsculas.
+fn offered_schemes(headers: &reqwest::header::HeaderMap) -> Vec<String> {
+    headers
+        .get_all(reqwest::header::WWW_AUTHENTICATE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter_map(|v| v.split_whitespace().next())
+        .map(str::to_ascii_lowercase)
+        .take(8)
+        .collect()
 }
 
 /// ¿El servidor ofrece NTLM (o Negotiate) y no Basic? Devuelve el esquema que se usará.

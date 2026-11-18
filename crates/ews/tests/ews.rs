@@ -487,3 +487,75 @@ async fn ntlm_when_basic_is_off() {
 fn ok_msg() -> String {
     r#"<m:SyncFolderHierarchyResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode><m:SyncState>N1</m:SyncState><m:IncludesLastFolderInRange>true</m:IncludesLastFolderInRange><m:Changes/></m:SyncFolderHierarchyResponseMessage>"#.to_string()
 }
+
+/// Autodiscover POX (F8.3) con Basic: la primera dirección redirige a la principal
+/// (`redirectAddr`), el primer servidor manda a otra ruta del mismo (`redirectUrl`) y ahí llegan
+/// las URL de EWS (la de fuera primero). Un servidor que no existe se salta; contraseña
+/// equivocada: se detiene sin probar más servidores; una redirección fuera del dominio no recibe
+/// la contraseña.
+#[tokio::test]
+async fn autodiscover_pox_with_redirects() {
+    use iuredesk_ews::autodiscover;
+    let log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let l = Arc::clone(&log);
+    let good = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode("ana@contoso.com:secreto"));
+    let base = Arc::new(Mutex::new(String::new()));
+    let b = Arc::clone(&base);
+    let url = serve(move |req| {
+        l.lock().unwrap().push(format!("{} {}", req.method, req.path));
+        if req.header("Authorization") != Some(good.as_str()) {
+            return Resp::new(401, "").with("WWW-Authenticate", "Basic realm=\"x\"");
+        }
+        let account = |inner: &str| {
+            Resp::xml(
+                200,
+                format!(
+                    r#"<?xml version="1.0"?><Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/responseschema/2006"><Response xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a"><Account>{inner}</Account></Response></Autodiscover>"#
+                ),
+            )
+        };
+        if req.path == "/autodiscover/autodiscover.xml" {
+            if req.body.contains("<EMailAddress>ana@contoso.com</EMailAddress>") {
+                return account("<Action>redirectAddr</Action><RedirectAddr>ana.perez@contoso.com</RedirectAddr>");
+            }
+            assert!(req.body.contains("<EMailAddress>ana.perez@contoso.com</EMailAddress>"));
+            let base = b.lock().unwrap().clone();
+            return account(&format!(
+                "<Action>redirectUrl</Action><RedirectUrl>{base}/ad2/autodiscover.xml</RedirectUrl>"
+            ));
+        }
+        if req.path == "/evil/autodiscover.xml" {
+            return account("<Action>redirectUrl</Action><RedirectUrl>https://autodiscover.evil.example/a.xml</RedirectUrl>");
+        }
+        assert_eq!(req.path, "/ad2/autodiscover.xml");
+        account(
+            "<Action>settings</Action><Protocol><Type>EXCH</Type><EwsUrl>https://mbx.corp.contoso.com/EWS/Exchange.asmx</EwsUrl></Protocol><Protocol><Type>EXPR</Type><EwsUrl>https://mail.contoso.com/EWS/Exchange.asmx</EwsUrl></Protocol>",
+        )
+    })
+    .await;
+    *base.lock().unwrap() = url.clone();
+    let auth = |pw: &str| -> Arc<dyn iuredesk_ews::EwsAuth> { Arc::new(BasicAuth::new("ana@contoso.com", pw)) };
+    let endpoints = vec![
+        "https://127.0.0.1:1/autodiscover/autodiscover.xml".to_string(),
+        format!("{url}/autodiscover/autodiscover.xml"),
+    ];
+
+    let urls =
+        autodiscover::discover(&endpoints, "ana@contoso.com", auth("secreto"), Duration::from_secs(5)).await.unwrap();
+    assert_eq!(urls, ["https://mail.contoso.com/EWS/Exchange.asmx", "https://mbx.corp.contoso.com/EWS/Exchange.asmx"]);
+
+    log.lock().unwrap().clear();
+    let wrong = vec![format!("{url}/autodiscover/autodiscover.xml"), format!("{url}/ad2/autodiscover.xml")];
+    let err =
+        autodiscover::discover(&wrong, "ana@contoso.com", auth("otra"), Duration::from_secs(5)).await.unwrap_err();
+    assert_eq!(err, EwsError::Unauthorized);
+    assert!(
+        log.lock().unwrap().iter().all(|p| !p.contains("/ad2/")),
+        "con la contraseña rechazada no se prueban más servidores"
+    );
+
+    let evil = vec![format!("{url}/evil/autodiscover.xml")];
+    let err =
+        autodiscover::discover(&evil, "ana@contoso.com", auth("secreto"), Duration::from_secs(5)).await.unwrap_err();
+    assert!(matches!(err, EwsError::Invalid(ref m) if m.contains("fuera de tu dominio")), "{err:?}");
+}

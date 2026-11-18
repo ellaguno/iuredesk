@@ -37,6 +37,8 @@ pub struct HttpResponse {
     /// Cabecera `Location`, si la hay.
     pub location: Option<String>,
     pub body: String,
+    /// Esquemas de `WWW-Authenticate` (en minúsculas: `ntlm`, `negotiate`, `basic`…).
+    pub auth_schemes: Vec<String>,
 }
 
 /// Registro MX.
@@ -121,6 +123,15 @@ impl Http for ReqwestHttp {
             .and_then(|v| v.to_str().ok())
             .filter(|v| v.len() <= 2048)
             .map(str::to_string);
+        let auth_schemes = resp
+            .headers()
+            .get_all(reqwest::header::WWW_AUTHENTICATE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .filter_map(|v| v.split_whitespace().next())
+            .map(str::to_ascii_lowercase)
+            .take(8)
+            .collect();
         if resp.content_length().is_some_and(|l| l > MAX_BODY as u64) {
             return Err(NetError::TooLarge);
         }
@@ -135,7 +146,7 @@ impl Http for ReqwestHttp {
             }
             body.extend_from_slice(&chunk);
         }
-        Ok(HttpResponse { status, location, body: String::from_utf8_lossy(&body).into_owned() })
+        Ok(HttpResponse { status, location, body: String::from_utf8_lossy(&body).into_owned(), auth_schemes })
     }
 }
 

@@ -9,7 +9,9 @@
 //! 3. ISPDB de Thunderbird (`https://autoconfig.thunderbird.net/v1.1/<dominio>`).
 //! 4. MX: si apunta a Google o Microsoft (u otro proveedor de la tabla) se clasifica como Google
 //!    Workspace / Microsoft 365; si no, se consulta la ISPDB con el dominio base del MX.
-//! 5. Autodiscover v2 de Microsoft (solo clasifica: ¿el dominio es de un inquilino de M365?).
+//! 5. Autodiscover v2 de Microsoft (solo clasifica: ¿el dominio es de un inquilino de M365?) y el
+//!    del propio dominio para Exchange Server local ([`exchange`]): v2 da la URL de EWS; POX que
+//!    pide NTLM/Negotiate dice «hay un Exchange» (la URL se pide luego con la contraseña).
 //! 6. SRV de RFC 6186 (`_imaps._tcp`, `_submission._tcp`, `_pop3s._tcp`…) y RFC 6764
 //!    (`_caldavs._tcp`, `_carddavs._tcp`).
 //! 7. Adivinanza (`imap.`, `mail.`, `smtp.`): solo con confianza baja.
@@ -31,6 +33,7 @@
 )]
 
 pub mod email;
+pub mod exchange;
 pub mod net;
 pub mod providers;
 pub mod srv;
@@ -42,6 +45,7 @@ use iuredesk_model::account::{AccountKind, AuthMethod, OAuthProvider, Protocol, 
 use serde::{Deserialize, Serialize};
 
 pub use email::{EmailAddress, EmailError};
+pub use exchange::ExchangeHint;
 use net::{Dns, HickoryDns, Http, NetError, ReqwestHttp};
 
 /// Tiempo total por defecto del descubrimiento.
@@ -68,6 +72,8 @@ pub enum Source {
     Autodiscover,
     Srv,
     Guess,
+    /// Autodiscover del dominio (Exchange Server local).
+    ExchangeAutodiscover,
 }
 
 /// Confianza, derivada de la puntuación.
@@ -143,6 +149,9 @@ pub struct Discovery {
     pub carddav: Option<DavHint>,
     /// Alguna fuente no respondió dentro del tiempo total.
     pub timed_out: bool,
+    /// Exchange Server local encontrado por Autodiscover (aunque falte la URL de EWS).
+    #[serde(default)]
+    pub exchange: Option<ExchangeHint>,
 }
 
 impl Discovery {
@@ -167,6 +176,7 @@ struct Partial {
     notes: Vec<Note>,
     caldav: Option<DavHint>,
     carddav: Option<DavHint>,
+    exchange: Option<ExchangeHint>,
 }
 
 /// Descubre con la red real (reqwest + hickory) y el tiempo total por defecto.
@@ -223,9 +233,10 @@ impl<H: Http + Sync, D: Dns + Sync> Discoverer<H, D> {
                 at(deadline, self.srv_mail(&email)),
                 at(deadline, self.srv_dav(&email)),
                 at(deadline, self.guess(&email)),
+                at(deadline, self.exchange(&email)),
             );
-            let (a, b, c, d, e, f, g) = results;
-            for r in [a, b, c, d, e, f, g] {
+            let (a, b, c, d, e, f, g, h) = results;
+            for r in [a, b, c, d, e, f, g, h] {
                 match r {
                     Ok(p) => parts.push(p),
                     Err(_) => timed_out = true,
@@ -331,6 +342,91 @@ impl<H: Http + Sync, D: Dns + Sync> Discoverer<H, D> {
                 ..Default::default()
             },
             _ => Partial::default(),
+        }
+    }
+
+    /// Exchange Server local: Autodiscover v2 y POX en `autodiscover.<dominio>`, `<dominio>` y el
+    /// destino SRV `_autodiscover._tcp` (solo si queda dentro del dominio).
+    async fn exchange(&self, email: &EmailAddress) -> Partial {
+        let d = &email.domain;
+        let srv = self
+            .dns
+            .srv(&format!("_autodiscover._tcp.{d}"))
+            .await
+            .ok()
+            .and_then(|v| srv::pick(&v))
+            .filter(|(h, _)| exchange::within(h, d))
+            .map(|(h, p)| exchange::origin(&h, p));
+        let (o1, o2) = (exchange::origin(&format!("autodiscover.{d}"), 443), exchange::origin(d, 443));
+        let o3 = srv.filter(|o| *o != o1 && *o != o2);
+        let (h1, h2, h3) = tokio::join!(self.exchange_at(&o1, email), self.exchange_at(&o2, email), async {
+            match &o3 {
+                Some(o) => self.exchange_at(o, email).await,
+                None => ExchangeHint::default(),
+            }
+        });
+        let mut hint = h1;
+        hint.merge(h2);
+        hint.merge(h3);
+        // Buzón en Microsoft 365 (Exchange híbrido): se entra como Microsoft 365.
+        if hint.ews_url.as_deref().and_then(url_host).is_some_and(|h| exchange::is_microsoft_cloud(&h))
+            && let Some(p) = providers::PROVIDERS.iter().find(|p| p.id == "microsoft365")
+        {
+            return Partial {
+                candidates: p.candidates(email, Source::ExchangeAutodiscover, 80),
+                notes: p.notes(),
+                ..Default::default()
+            };
+        }
+        if hint.is_empty() {
+            return Partial::default();
+        }
+        let candidates = hint
+            .ews_url
+            .iter()
+            .map(|url| {
+                let server = ServerConfig {
+                    protocol: Protocol::Ews,
+                    host: url.clone(),
+                    port: 443,
+                    security: Security::Tls,
+                    auth: AuthMethod::Password,
+                    username: email.address.clone(),
+                };
+                Candidate {
+                    kind: AccountKind::Exchange,
+                    provider: None,
+                    incoming: server.clone(),
+                    outgoing: Some(server),
+                    source: Source::ExchangeAutodiscover,
+                    score: 88,
+                    caldav_url: None,
+                    carddav_url: None,
+                }
+            })
+            .collect();
+        Partial {
+            candidates,
+            notes: vec![Note::new(
+                "Your organization uses Exchange: sign in with your work email and password.",
+                "Tu organización usa Exchange: entra con el correo y la contraseña del trabajo.",
+            )],
+            exchange: Some(hint),
+            ..Default::default()
+        }
+    }
+
+    /// Autodiscover v2 y POX en un servidor.
+    async fn exchange_at(&self, origin: &str, email: &EmailAddress) -> ExchangeHint {
+        let pox = exchange::pox_url(origin);
+        let v2_url = exchange::v2_url(origin, &email.address);
+        let (v2, probe) = tokio::join!(self.fetch(&v2_url), self.http.get(&pox));
+        ExchangeHint {
+            ews_url: v2.as_deref().and_then(exchange::parse_v2),
+            autodiscover: match probe {
+                Ok(r) if exchange::looks_like_exchange(r.status, &r.auth_schemes) => vec![pox],
+                _ => Vec::new(),
+            },
         }
     }
 
@@ -536,7 +632,11 @@ fn finish(email: &EmailAddress, parts: Vec<Partial>, timed_out: bool) -> Discove
     let mut notes: Vec<Note> = Vec::new();
     let mut caldav: Option<DavHint> = None;
     let mut carddav: Option<DavHint> = None;
+    let mut exchange: Option<ExchangeHint> = None;
     for p in parts {
+        if let Some(h) = p.exchange {
+            exchange.get_or_insert_with(ExchangeHint::default).merge(h);
+        }
         candidates.extend(p.candidates);
         for n in p.notes {
             if !notes.contains(&n) {
@@ -552,8 +652,16 @@ fn finish(email: &EmailAddress, parts: Vec<Partial>, timed_out: bool) -> Discove
         .retain(|c| seen.insert((c.incoming.protocol, c.incoming.host.clone(), c.incoming.port, c.incoming.security)));
     candidates.truncate(MAX_CANDIDATES);
 
+    // Exchange encontrado por Autodiscover manda salvo que haya algo mejor de verdad (Microsoft
+    // 365 por el MX, el autoconfig del dominio): sin URL de EWS todavía, la pide el asistente con
+    // la contraseña.
+    let mut kind = candidates.first().map(|c| c.kind).unwrap_or_default();
+    if exchange.is_some() && candidates.first().is_none_or(|c| c.score < 80) {
+        kind = AccountKind::Exchange;
+    }
+    let exchange = exchange.filter(|_| kind == AccountKind::Exchange);
     // Notas de los candidatos de baja confianza solo si el mejor es de baja confianza.
-    let best_low = candidates.first().is_none_or(|c| c.confidence() == Confidence::Low);
+    let best_low = exchange.is_none() && candidates.first().is_none_or(|c| c.confidence() == Confidence::Low);
     if !best_low {
         notes.retain(|n| !n.es.starts_with("Estos servidores son una suposición"));
     }
@@ -571,7 +679,7 @@ fn finish(email: &EmailAddress, parts: Vec<Partial>, timed_out: bool) -> Discove
         if carddav.is_none() {
             carddav = best.carddav_url.clone().map(|url| DavHint { url, source: best.source });
         }
-    } else {
+    } else if exchange.is_none() {
         notes.push(Note::new(
             "We couldn't find the settings automatically; enter the servers by hand (your provider has them).",
             "No encontramos la configuración automáticamente; escribe los servidores a mano (tu proveedor te los da).",
@@ -583,7 +691,6 @@ fn finish(email: &EmailAddress, parts: Vec<Partial>, timed_out: bool) -> Discove
             "Algunas fuentes no respondieron a tiempo; el resultado puede estar incompleto.",
         ));
     }
-    let kind = candidates.first().map(|c| c.kind).unwrap_or_default();
     // Para un dominio propio sin DAV conocido, el «well-known» de RFC 6764 es la mejor suposición.
     if kind == AccountKind::Generic && !candidates.is_empty() {
         let wk =
@@ -600,6 +707,7 @@ fn finish(email: &EmailAddress, parts: Vec<Partial>, timed_out: bool) -> Discove
         caldav,
         carddav,
         timed_out,
+        exchange,
     }
 }
 

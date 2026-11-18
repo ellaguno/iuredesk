@@ -122,6 +122,8 @@ base64 = "0.22"
 md-5 = "0.10"
 # ews: NTLMv2 propio (MS-NLMP) para Exchange local
 md4 = "0.10"
+# ews: Kerberos propio (aes-cts-hmac-sha1-96, string2key con PBKDF2)
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 hmac = "0.12"
 # oauth: azar para PKCE, abrir el navegador del sistema, URL, cancelación (Rust puro)
 getrandom = "0.2"

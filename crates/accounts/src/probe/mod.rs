@@ -10,6 +10,8 @@
 
 mod conn;
 mod ews;
+
+pub use ews::discover_exchange;
 mod imap;
 mod pop3;
 mod smtp;
@@ -82,6 +84,14 @@ pub enum ProbeError {
     Io(String),
     #[error("protocolo no válido para esta prueba")]
     WrongProtocol,
+    #[error("Autodiscover de Exchange no dio la configuración: {0}")]
+    AutodiscoverFailed(String),
+    #[error("la hora del equipo no coincide con la del dominio")]
+    ClockSkew,
+    #[error("la contraseña caducó")]
+    PasswordExpired,
+    #[error("cuenta bloqueada o desactivada")]
+    AccountLocked,
 }
 
 impl ProbeError {
@@ -136,6 +146,22 @@ impl ProbeError {
             ProbeError::Protocol(_) | ProbeError::Io(_) => pick(
                 "The server answered something unexpected. Check the server name and port.".into(),
                 "El servidor respondió algo inesperado. Revisa el nombre del servidor y el puerto.".into(),
+            ),
+            ProbeError::AutodiscoverFailed(_) => pick(
+                "Your organization's Exchange did not give us its settings. Ask IT for the Exchange server address (EWS) and use “Set up manually”.".into(),
+                "El Exchange de tu organización no nos dio su configuración. Pide a TI la dirección del servidor de Exchange (EWS) y usa «Configurar manualmente».".into(),
+            ),
+            ProbeError::ClockSkew => pick(
+                "This computer's clock is more than 5 minutes off from your organization's. Set the date and time automatically and try again.".into(),
+                "La hora de este equipo difiere más de 5 minutos de la de tu organización. Pon la fecha y la hora automáticas e inténtalo de nuevo.".into(),
+            ),
+            ProbeError::PasswordExpired => pick(
+                "Your password expired. Change it (on a work computer or the organization's web page) and use the new one here.".into(),
+                "Tu contraseña caducó. Cámbiala (en un equipo del trabajo o en la página web de tu organización) y usa la nueva aquí.".into(),
+            ),
+            ProbeError::AccountLocked => pick(
+                "Your account is locked or disabled. Ask your organization's IT to unlock it.".into(),
+                "Tu cuenta está bloqueada o desactivada. Pide a TI de tu organización que la desbloquee.".into(),
             ),
             ProbeError::WrongProtocol => pick(
                 "This test does not apply to that protocol.".into(),

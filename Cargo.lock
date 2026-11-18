@@ -3730,6 +3730,7 @@ name = "iuredesk-engine"
 version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "dirs",
@@ -3766,6 +3767,7 @@ dependencies = [
 name = "iuredesk-ews"
 version = "0.1.0-beta.1"
 dependencies = [
+ "aes",
  "base64 0.22.1",
  "chrono",
  "getrandom 0.2.17",
@@ -3773,9 +3775,11 @@ dependencies = [
  "iuredesk-dav",
  "md-5",
  "md4",
+ "pbkdf2",
  "proptest",
  "quick-xml 0.41.0",
  "reqwest",
+ "sha1",
  "sha2",
  "thiserror 2.0.21",
  "tokio",

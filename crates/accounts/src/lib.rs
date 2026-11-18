@@ -21,7 +21,7 @@ pub mod store;
 
 pub use iuredesk_autoconfig as autoconfig;
 pub use iurefficient::{IurefficientStatus, SharedSession, iurefficient_session};
-pub use probe::{ProbeError, ProbeOptions, ProbeReport, test_incoming, test_outgoing};
+pub use probe::{ProbeError, ProbeOptions, ProbeReport, discover_exchange, test_incoming, test_outgoing};
 pub use secrets::{KeyringStore, MemoryStore, SecretPurpose, SecretStore};
 pub use store::AccountStore;
 
