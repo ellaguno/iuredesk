@@ -318,6 +318,19 @@ se enriquece:
   se aceptan, se mantiene una capa propia en `iure-doc`. Se fija la versión exacta y se actualiza
   con el corpus como red.
 
+#### Medido en la primera entrega (2026-11-17)
+
+`DocEditor` como un solo `TextEdit` con estilo al teclear: una nota normal (< 20 KB) se repinta
+en ~3 ms; 250 KB (~100 páginas) en ~40 ms al teclear (~20 ms de estilo + ~19 ms de glifos de egui,
+que vuelve a maquetar todo el texto en cada tecla). Para la meta de < 8 ms con 100 páginas el
+editor de IureEditor 2.0 debe ser **por bloques**: un campo por bloque, caché por bloque y solo lo
+visible en pantalla; la selección entre bloques se resuelve por encima.
+
+Hecho en la cuarta entrega (`iure_doc_ui::show_blocks`, ya en las notas de IureDesk): 250 KB
+cuestan **~1,1 ms por tecla** (rehacer el bloque editado y dibujar lo visible) y 19 ms al abrir.
+Falta, para la paridad con un solo campo: selección que cruce bloques y deshacer de todo el
+documento.
+
 #### Aceptación
 
 - Corpus de documentos reales de IureEditor: abrir y guardar sin tocar → archivo idéntico.

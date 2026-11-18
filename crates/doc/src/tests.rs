@@ -148,9 +148,31 @@ fn hostile_input_is_bounded() {
     assert_eq!(d.to_markdown(), many, "lo que sobra se conserva");
 }
 
+#[test]
+fn chunks_are_the_top_level_blocks() {
+    let md = "\n# Título\n\nUno\ndos\n\n- a\n\n- b\n\n```\nx\n\ny\n```\n";
+    let parts: Vec<&str> = chunks(md).into_iter().filter_map(|r| md.get(r)).collect();
+    assert_eq!(parts, ["\n# Título\n\n", "Uno\ndos\n\n", "- a\n\n- b\n\n", "```\nx\n\ny\n```\n"]);
+    assert!(chunks("").is_empty());
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
     /// Leer y escribir sin cambios nunca altera el archivo.
+    #[test]
+    fn chunks_cover_the_text(md in "(\\PC|#|> |- |\\* |1\\. |```|\\[ \\] |\\| |---|\\$\\$|<!-- iure:x \\{\\} -->|\n|  ){0,300}") {
+        let ch = chunks(&md);
+        let mut at = 0;
+        for r in &ch {
+            prop_assert_eq!(r.start, at);
+            prop_assert!(r.end > r.start);
+            at = r.end;
+        }
+        prop_assert_eq!(at, md.len());
+        let joined: String = ch.iter().filter_map(|r| md.get(r.clone())).collect();
+        prop_assert_eq!(joined, md);
+    }
+
     #[test]
     fn round_trip_is_lossless(md in "(\\PC|#|> |- |\\* |1\\. |```|\\[ \\] |\\| |---|\\$\\$|<!-- iure:x \\{\\} -->|\n|  ){0,300}") {
         prop_assert_eq!(Document::parse(&md).to_markdown(), md);

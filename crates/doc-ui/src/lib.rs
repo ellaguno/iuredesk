@@ -40,6 +40,9 @@ use egui::{Color32, FontFamily, FontId, Id, Key, Modifiers, Stroke, Ui};
 use iure_doc::edit::{self, Edit};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag};
 
+mod blocks;
+pub use blocks::show as show_blocks;
+
 /// Colores y letra del editor.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditorStyle {
@@ -365,6 +368,28 @@ fn editor_key(ui: &Ui, text: &str, sel: (usize, usize)) -> Option<Edit> {
 /// El editor. `id` identifica su estado (cursor, deshacer) entre cuadros.
 pub fn show(ui: &mut Ui, id: Id, text: &mut String, hint: &str) -> Output {
     let style = EditorStyle::from_ui(ui);
+    let (changed, out) = field(ui, id, text, hint, 16, &style, style_key(&style));
+    Output { changed, response: out.response.response }
+}
+
+/// Huella del estilo (parte de la llave de la caché del dibujo).
+pub(crate) fn style_key(style: &EditorStyle) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!("{style:?}").hash(&mut h);
+    h.finish()
+}
+
+/// Un campo con estilo al teclear y las teclas del editor; `true` si el texto cambió.
+pub(crate) fn field(
+    ui: &mut Ui,
+    id: Id,
+    text: &mut String,
+    hint: &str,
+    rows: usize,
+    style: &EditorStyle,
+    style_key: u64,
+) -> (bool, egui::text_edit::TextEditOutput) {
     let mut changed = false;
     if ui.memory(|m| m.has_focus(id))
         && let Some(mut state) = TextEditState::load(ui.ctx(), id)
@@ -400,14 +425,14 @@ pub fn show(ui: &mut Ui, id: Id, text: &mut String, hint: &str) -> Output {
         buf.as_str().hash(&mut h);
         reveal.hash(&mut h);
         wrap.to_bits().hash(&mut h);
-        format!("{style:?}").hash(&mut h);
+        style_key.hash(&mut h);
         let key = h.finish();
         if let Some((k, g)) = ui.data(|d| d.get_temp::<(u64, Arc<egui::Galley>)>(cache_id))
             && k == key
         {
             return g;
         }
-        let g = ui.fonts_mut(|f| f.layout_job(layout_job(buf.as_str(), &style, wrap, reveal.clone())));
+        let g = ui.fonts_mut(|f| f.layout_job(layout_job(buf.as_str(), style, wrap, reveal.clone())));
         ui.data_mut(|d| d.insert_temp(cache_id, (key, Arc::clone(&g))));
         g
     };
@@ -415,13 +440,18 @@ pub fn show(ui: &mut Ui, id: Id, text: &mut String, hint: &str) -> Output {
         .id(id)
         .hint_text(hint)
         .desired_width(f32::INFINITY)
-        .desired_rows(16)
+        .desired_rows(rows)
         .frame(egui::Frame::NONE)
         .lock_focus(true)
         .layouter(&mut layouter)
         .show(ui);
     changed |= out.response.changed();
-    Output { changed, response: out.response.response }
+    (changed, out)
+}
+
+/// El último dibujo de un campo (para saber en qué fila está el cursor).
+pub(crate) fn cached_galley(ui: &Ui, id: Id) -> Option<Arc<egui::Galley>> {
+    ui.data(|d| d.get_temp::<(u64, Arc<egui::Galley>)>(id.with("galley"))).map(|(_, g)| g)
 }
 
 #[cfg(test)]
@@ -516,10 +546,23 @@ mod perf {
             bold_family: FontFamily::Proportional,
             body_family: FontFamily::Proportional,
         };
+        let tf = std::time::Instant::now();
+        let _f = formats(&text);
+        eprintln!("solo formats: {:.1} ms", tf.elapsed().as_secs_f64() * 1000.0);
         let t0 = std::time::Instant::now();
         let job = layout_job(&text, &s, 800.0, Some(0..10));
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         eprintln!("100 páginas ({} KB, {} tramos): {ms:.1} ms", text.len() / 1024, job.sections.len());
+        // Lo que hace egui con ese trabajo: los glifos de todo el texto (al teclear, otra vez).
+        let ctx = egui::Context::default();
+        let mut glyph_ms = 0.0;
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let t = std::time::Instant::now();
+            let g = ui.fonts_mut(|f| f.layout_job(job.clone()));
+            glyph_ms = t.elapsed().as_secs_f64() * 1000.0;
+            eprintln!("glifos de egui: {glyph_ms:.1} ms ({} filas)", g.rows.len());
+        });
+        out.textures_delta.clear();
         assert!(ms < 2_000.0, "{ms} ms");
     }
 }

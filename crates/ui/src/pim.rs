@@ -714,24 +714,21 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             let saved_body = notes.iter().find(|n| n.id == id).map(|n| n.body.clone()).unwrap_or_default();
             let wide = ui.available_width() >= 980.0;
             let mut changed = false;
+            // Por bloques (con su propio desplazamiento): teclear en una nota larga rehace solo el
+            // bloque editado.
             let mut editor = |ui: &mut egui::Ui, body: &mut String| {
-                egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-editor").show(ui, |ui| {
-                    let out = iure_doc_ui::show(
-                        ui,
-                        egui::Id::unique(("note-editor", id)),
-                        body,
-                        pick(
-                            "Write here… (# title, - list, **bold**)",
-                            "Escribe aquí… (# título, - lista, **negrita**)",
-                        ),
-                    );
-                    crate::widgets::named(
-                        &out.response,
-                        egui::Role::MultilineTextInput,
-                        pick("Note text", "Texto de la nota"),
-                    );
-                    changed |= out.changed;
-                });
+                let out = iure_doc_ui::show_blocks(
+                    ui,
+                    egui::Id::unique(("note-editor", id)),
+                    body,
+                    pick("Write here… (# title, - list, **bold**)", "Escribe aquí… (# título, - lista, **negrita**)"),
+                );
+                crate::widgets::named(
+                    &out.response,
+                    egui::Role::MultilineTextInput,
+                    pick("Note text", "Texto de la nota"),
+                );
+                changed |= out.changed;
             };
             if wide {
                 ui.columns(2, |cols| {

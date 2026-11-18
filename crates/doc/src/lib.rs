@@ -287,6 +287,13 @@ impl Document {
     }
 }
 
+/// Trozos de primer nivel que cubren el texto entero, en orden: cada uno es un bloque con el espacio
+/// que lo sigue (el primero, además, con lo que va antes). Concatenados dan el texto byte a byte;
+/// texto vacío, ninguno. Para editores por bloques, que editan cada trozo por separado.
+pub fn chunks(md: &str) -> Vec<std::ops::Range<usize>> {
+    parse::chunks(md)
+}
+
 /// ¿El texto de una lista empieza con el marcador alterno (`*` en viñetas, `1)` en numeradas)?
 fn uses_alt_marker(src: &str) -> bool {
     let t = src.trim_start();

@@ -3544,6 +3544,7 @@ dependencies = [
  "egui_kittest",
  "iure-doc",
  "iurefficient-ui",
+ "proptest",
  "pulldown-cmark",
 ]
 

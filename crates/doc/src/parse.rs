@@ -45,6 +45,25 @@ fn top_level(md: &str) -> Vec<Range<usize>> {
     out
 }
 
+/// Trozos de primer nivel que cubren el texto entero, en orden y sin huecos (ver [`crate::chunks`]).
+pub(crate) fn chunks(md: &str) -> Vec<Range<usize>> {
+    if md.is_empty() {
+        return Vec::new();
+    }
+    if md.len() > MAX_BYTES {
+        return std::iter::once(0..md.len()).collect();
+    }
+    // El primero empieza en 0: lleva lo que va antes del primer bloque.
+    let mut starts = vec![0usize];
+    for r in top_level(md).into_iter().skip(1) {
+        let last = starts.last().copied().unwrap_or(0);
+        if r.start > last && md.is_char_boundary(r.start) && starts.len() < MAX_BLOCKS {
+            starts.push(r.start);
+        }
+    }
+    starts.iter().enumerate().map(|(i, &s)| s..starts.get(i + 1).copied().unwrap_or(md.len())).collect()
+}
+
 pub(crate) fn parse(md: &str) -> Document {
     if md.len() > MAX_BYTES {
         return Document { prefix: String::new(), nodes: vec![raw_node(md)] };
