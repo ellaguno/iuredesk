@@ -391,8 +391,25 @@ pub fn show(ui: &mut Ui, id: Id, text: &mut String, hint: &str) -> Output {
     } else {
         None
     };
+    // Caché del dibujo: si no cambian el texto, la línea del cursor, el ancho ni el estilo (lo
+    // normal mientras el cursor parpadea o se desplaza la vista), no se vuelve a calcular.
+    let cache_id = id.with("galley");
     let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| -> Arc<egui::Galley> {
-        ui.fonts_mut(|f| f.layout_job(layout_job(buf.as_str(), &style, wrap, reveal.clone())))
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        buf.as_str().hash(&mut h);
+        reveal.hash(&mut h);
+        wrap.to_bits().hash(&mut h);
+        format!("{style:?}").hash(&mut h);
+        let key = h.finish();
+        if let Some((k, g)) = ui.data(|d| d.get_temp::<(u64, Arc<egui::Galley>)>(cache_id))
+            && k == key
+        {
+            return g;
+        }
+        let g = ui.fonts_mut(|f| f.layout_job(layout_job(buf.as_str(), &style, wrap, reveal.clone())));
+        ui.data_mut(|d| d.insert_temp(cache_id, (key, Arc::clone(&g))));
+        g
     };
     let out = egui::TextEdit::multiline(text)
         .id(id)
@@ -477,5 +494,32 @@ mod tests {
             let covered: usize = job.sections.iter().map(|x| x.byte_range.end.0 - x.byte_range.start.0).sum();
             assert_eq!(covered, t.len(), "{t:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod perf {
+    use super::*;
+
+    /// Unas 100 páginas: cuánto tarda pintar el estilo (se mide; el límite es holgado en depuración).
+    #[test]
+    fn hundred_pages_layout_time() {
+        let page = "## Sección\n\nTexto con **negrita**, *cursiva*, `código` y [enlace](https://x.mx).\n\n- uno\n- [ ] dos\n  - tres\n\n> cita\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```rust\nfn f() {}\n```\n\n";
+        // ~250 KB: unas 100 páginas de texto con formato.
+        let text = page.repeat(100 * 15);
+        let s = EditorStyle {
+            text: Color32::BLACK,
+            muted: Color32::GRAY,
+            accent: Color32::BLUE,
+            code_bg: Color32::LIGHT_GRAY,
+            size: 14.0,
+            bold_family: FontFamily::Proportional,
+            body_family: FontFamily::Proportional,
+        };
+        let t0 = std::time::Instant::now();
+        let job = layout_job(&text, &s, 800.0, Some(0..10));
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        eprintln!("100 páginas ({} KB, {} tramos): {ms:.1} ms", text.len() / 1024, job.sections.len());
+        assert!(ms < 2_000.0, "{ms} ms");
     }
 }
