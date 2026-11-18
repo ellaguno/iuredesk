@@ -31,6 +31,7 @@ mod iure;
 mod iure_badge;
 mod mail;
 mod meeting;
+mod note_diagrams;
 mod note_preview;
 mod onboarding;
 mod opened;
