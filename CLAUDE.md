@@ -58,6 +58,9 @@ Accesible (AccessKit, teclado completo). Ver PLAN.md §6.
 - Apps hermanas (IureEditor, IureDav, IureTranscribe, IureVoz, IureProject, IureOCR) por frontera de
   proceso: deep links, MCP, socket de IureVoz. Se ofrecen solo si están instaladas.
 - UI compartida: `../iurefficient-ui` (crate `iurefficient-ui`), egui **0.37** en toda la suite.
+- Documento y editor de la suite (`iure-doc`, `iure-doc-ui`/DocEditor): repositorio propio
+  `ellaguno/iure-doc`, por etiqueta fija. Para cambiarlo a la vez que IureDesk, `[patch]` por ruta en
+  un `.cargo/config.toml` local (ver su README); al terminar, etiqueta nueva y subir la de aquí.
 
 ## Puerta de calidad
 Antes de cada commit: `cargo xtask ci` (fmt, clippy -D warnings, pruebas, layers, purity, licenses,

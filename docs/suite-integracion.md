@@ -395,9 +395,10 @@ documento.
 1. **Renderizador canónico**: el de Rust (`mermaid-svg` + dibujo propio de mapas). IureEditor lo
    adoptará con la 2.0; mientras tanto S1.3 queda opcional.
 2. **IureProject solo por MCP** (no se enlazan sus crates; se mantiene la frontera de proceso).
-3. **Dónde vive `iure-doc`**: empieza como crate del workspace de IureDesk (`crates/doc`, sin
-   dependencias de IureDesk); se muda a su propio repositorio cuando lo use una segunda app.
-   (Elección del agente; el dueño puede cambiarla.)
+3. **Dónde vive `iure-doc`**: empezó como crate del workspace de IureDesk (`crates/doc` y
+   `crates/doc-ui`); desde 2026-11-18 tiene repositorio propio,
+   [`ellaguno/iure-doc`](https://github.com/ellaguno/iure-doc) (decisión del dueño), y las apps lo
+   usan por etiqueta fija (`v0.1.0`).
 4. **IureEditor 2.0 en Rust + egui, por pasos**: `iure-doc` → `DocEditor` en las notas de
    IureDesk → redactor → exportar → IureEditor 2.0. IureEditor Tauri sigue hasta la paridad.
 5. **IureTranscribe con interfaz egui** y whisper.cpp en proceso aparte: **ya** (plan en su repo).

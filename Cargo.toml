@@ -2,8 +2,6 @@
 resolver = "3"
 members = [
     "crates/model",
-    "crates/doc",
-    "crates/doc-ui",
     "crates/store",
     "crates/autoconfig",
     "crates/accounts",
@@ -43,8 +41,6 @@ repository = "https://github.com/ellaguno/iuredesk"
 [workspace.dependencies]
 # internos
 iuredesk-model = { path = "crates/model" }
-iure-doc = { path = "crates/doc" }
-iure-doc-ui = { path = "crates/doc-ui" }
 iuredesk-store = { path = "crates/store" }
 iuredesk-autoconfig = { path = "crates/autoconfig" }
 iuredesk-accounts = { path = "crates/accounts" }
@@ -74,6 +70,9 @@ iuredesk-ui = { path = "crates/ui" }
 iurefficient-connect = { git = "https://github.com/ellaguno/iurefficient-connect", tag = "v0.9.1", default-features = false }
 # ui-kit compartido con IureProject (PLAN.md D11). Para desarrollo local: [patch] en .cargo/config.toml.
 iurefficient-ui = { git = "https://github.com/ellaguno/iurefficient-ui", branch = "main" }
+# Documento de la suite y su editor (S1.11, S1.12): repositorio propio, etiqueta fija.
+iure-doc = { git = "https://github.com/ellaguno/iure-doc", tag = "v0.1.0" }
+iure-doc-ui = { git = "https://github.com/ellaguno/iure-doc", tag = "v0.1.0" }
 
 # base (todo Rust puro; ver docs/excepciones.md)
 thiserror = "2"

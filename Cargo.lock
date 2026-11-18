@@ -3529,22 +3529,21 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "iure-doc"
-version = "0.1.0-beta.1"
+version = "0.1.0"
+source = "git+https://github.com/ellaguno/iure-doc?tag=v0.1.0#20e558df39f16ce8ebff658a3d2145ae8e0a03cf"
 dependencies = [
- "proptest",
  "pulldown-cmark",
  "serde_json",
 ]
 
 [[package]]
 name = "iure-doc-ui"
-version = "0.1.0-beta.1"
+version = "0.1.0"
+source = "git+https://github.com/ellaguno/iure-doc?tag=v0.1.0#20e558df39f16ce8ebff658a3d2145ae8e0a03cf"
 dependencies = [
  "egui",
- "egui_kittest",
  "iure-doc",
  "iurefficient-ui",
- "proptest",
  "pulldown-cmark",
 ]
 
