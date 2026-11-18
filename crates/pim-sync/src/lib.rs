@@ -33,6 +33,18 @@
 //! `PATCH` solo con los campos cambiados y `If-Match`; las respuestas a invitaciones van por
 //! `/accept`, `/decline`, `/tentativelyAccept` (el servidor manda el correo al organizador).
 //!
+//! # Exchange Web Services (Exchange Server local, F8.4)
+//! Mismo planteamiento que Graph (es el mismo buzón de Exchange por otra puerta): las apariciones
+//! de cada calendario en la ventana móvil salen de `FindItem` con `CalendarView` (el servidor
+//! expande las series) y se comparan por `ChangeKey`; las nuevas o cambiadas se piden con
+//! `GetItem`. Cada elemento se traduce al JSON de Graph ([`map::ews`]) y se reutiliza todo lo de
+//! Graph (modelo, `RRULE`, parche con solo lo cambiado, series «toda» y «este y los
+//! siguientes»). Subir es `UpdateItem` solo con los campos cambiados y el `ChangeKey` (si cambió en
+//! el servidor: fusión a tres bandas como con el 412); las invitaciones, cancelaciones y
+//! respuestas las manda el servidor. Los contactos (la carpeta de contactos del buzón) bajan
+//! incrementales con `SyncFolderItems`; la libreta global de la organización se consulta con
+//! [`PimSyncHandle::directory_search`] (`ResolveNames`).
+//!
 //! # Para la interfaz
 //! - Leer apariciones: [`occurrences_between`] (reemplaza la expansión ingenua del motor).
 //! - Editar: [`PimSyncHandle::save_event`], [`PimSyncHandle::rsvp`], … (o las funciones de
@@ -52,6 +64,7 @@ pub mod account;
 mod caldav;
 mod engine;
 pub mod error;
+mod ews;
 mod gmeet;
 mod graph;
 mod gtasks;

@@ -10,6 +10,7 @@ mod accounts;
 mod assist_glue;
 mod cal;
 mod contacts;
+mod directory;
 mod folders;
 mod images;
 mod invites;
@@ -254,6 +255,11 @@ pub enum EngineJob {
     Discovery(std::result::Result<iuredesk_autoconfig::Discovery, Text>),
     /// Prueba de conexión (y secreto ya guardado) de la cuenta en curso.
     Probe(std::result::Result<(), Text>),
+    /// Resultados de la libreta global para un texto (F8.4).
+    Directory {
+        query: String,
+        result: Vec<iuredesk_model::Mailbox>,
+    },
     /// Exchange de la organización por Autodiscover (F8.3): la cuenta con el servidor que
     /// funcionó, o el fallo y si conviene pasar a «Configurar manualmente».
     ExchangeProbe(std::result::Result<Box<Account>, (Text, bool)>),
@@ -454,6 +460,8 @@ pub struct Session {
     /// Avisos para la UI que no salen de un comando.
     notices: Vec<Notice>,
     pim: pim::Pim,
+    /// Libreta global de la organización (F8.4).
+    directory: directory::Directory,
     /// Último error de calendario/contactos avisado (no se repite en cada pasada).
     pim_last_error: Option<Text>,
     /// Iurefficient (F3.1).
@@ -537,6 +545,7 @@ impl Session {
             pending_read: None,
             notices: Vec::new(),
             pim: pim::Pim::default(),
+            directory: directory::Directory::default(),
             pim_last_error: None,
             iure: iure::Iure::default(),
             cal: cal::CalState::default(),
@@ -1866,6 +1875,10 @@ impl Session {
             }
             EngineJob::Discovery(r) => self.wizard_on_discovery(id, r),
             EngineJob::Probe(r) => self.wizard_on_probe(id, r, false),
+            EngineJob::Directory { query, result } => {
+                self.on_directory(query, result);
+                None
+            }
             EngineJob::ExchangeProbe(r) => self.wizard_on_exchange(id, r),
             EngineJob::OAuth(r) => self.wizard_on_oauth(id, r),
             EngineJob::ManualProbe { incoming, outgoing, saved } => {

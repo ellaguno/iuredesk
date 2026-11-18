@@ -203,7 +203,8 @@ impl Session {
         cd.account = Some(account);
     }
 
-    /// Direcciones sugeridas para lo que se está escribiendo (contactos).
+    /// Direcciones sugeridas para lo que se está escribiendo: contactos y, después, lo que ya
+    /// haya dado la libreta global de la organización ([`Session::directory_lookup`]).
     pub fn suggest_addresses(&self, text: &str, limit: usize) -> Vec<Mailbox> {
         let needle = text.trim().to_lowercase();
         if needle.is_empty() {
@@ -226,6 +227,14 @@ impl Session {
             }
             if out.len() >= limit {
                 break;
+            }
+        }
+        for m in self.directory_matches(&needle) {
+            if out.len() >= limit {
+                break;
+            }
+            if !out.iter().any(|x| x.addr.eq_ignore_ascii_case(&m.addr)) {
+                out.push(m);
             }
         }
         out.truncate(limit);

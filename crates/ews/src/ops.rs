@@ -130,15 +130,15 @@ pub enum MessageDisposition {
     SendAndSaveCopy,
 }
 
-fn t<'a>(e: &'a Element, name: &str) -> Option<&'a Element> {
+pub(crate) fn t<'a>(e: &'a Element, name: &str) -> Option<&'a Element> {
     e.child(T, name)
 }
 
-fn t_text(e: &Element, name: &str, max: usize) -> Option<String> {
+pub(crate) fn t_text(e: &Element, name: &str, max: usize) -> Option<String> {
     t(e, name).map(|c| clip(c.text_trim(), max)).filter(|s| !s.is_empty())
 }
 
-fn t_bool(e: &Element, name: &str) -> Option<bool> {
+pub(crate) fn t_bool(e: &Element, name: &str) -> Option<bool> {
     t(e, name).map(|c| c.text_trim().eq_ignore_ascii_case("true"))
 }
 
@@ -163,14 +163,14 @@ fn addrs(e: &Element, name: &str) -> Vec<Addr> {
 }
 
 /// Id y change key de un `<t:ItemId>` o `<t:FolderId>` hijo.
-fn ids(e: &Element, name: &str) -> Option<(String, Option<String>)> {
+pub(crate) fn ids(e: &Element, name: &str) -> Option<(String, Option<String>)> {
     let c = t(e, name)?;
     let id = c.attr("Id").filter(|i| !i.is_empty() && i.len() <= 2_000)?;
     Some((id.to_string(), c.attr("ChangeKey").map(str::to_string)))
 }
 
 /// Carpeta desde `<t:Folder>` (o `t:CalendarFolder`…).
-fn folder(e: &Element) -> Option<FolderInfo> {
+pub(crate) fn folder(e: &Element) -> Option<FolderInfo> {
     let (id, change_key) = ids(e, "FolderId")?;
     Some(FolderInfo {
         id,
@@ -218,11 +218,11 @@ pub fn item(e: &Element) -> Option<ItemInfo> {
 }
 
 /// Los elementos dentro de `<m:Items>` de un mensaje de respuesta.
-fn items_of(m: &Element) -> Vec<&Element> {
+pub(crate) fn items_of(m: &Element) -> Vec<&Element> {
     m.child(M, "Items").map(|i| i.children.iter().collect()).unwrap_or_default()
 }
 
-fn field_uris(fields: &[&str]) -> String {
+pub(crate) fn field_uris(fields: &[&str]) -> String {
     fields.iter().map(|f| format!(r#"<t:FieldURI FieldURI="{f}"/>"#)).collect()
 }
 

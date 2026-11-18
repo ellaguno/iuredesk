@@ -63,6 +63,21 @@ pub enum PimError {
     /// No se pudo arrancar el runtime de fondo.
     #[error("runtime: {0}")]
     Runtime(String),
+    #[error("ews: {0}")]
+    Ews(iuredesk_ews::EwsError),
+}
+
+impl From<iuredesk_ews::EwsError> for PimError {
+    fn from(e: iuredesk_ews::EwsError) -> Self {
+        use iuredesk_ews::EwsError as E;
+        match e {
+            E::Unauthorized => Self::Unauthorized,
+            E::Network(n) => Self::Network(n),
+            e if iuredesk_ews::calendar::is_conflict(&e) => Self::Conflict,
+            e if e.is_not_found() => Self::NotFound(e.to_string()),
+            e => Self::Ews(e),
+        }
+    }
 }
 
 /// Resultado del crate.
@@ -77,6 +92,7 @@ impl PimError {
                 matches!(e, iuredesk_dav::Error::Network(_) | iuredesk_dav::Error::Http { status: 500..=599 | 429, .. })
             }
             Self::Graph { status, .. } => *status >= 500 || *status == 429,
+            Self::Ews(e) => e.is_transient(),
             Self::OAuth(e) => matches!(e, iuredesk_oauth::Error::Http(_)),
             _ => false,
         }
@@ -88,6 +104,7 @@ impl PimError {
             Self::Unauthorized | Self::NoPassword | Self::MissingAccess { .. } => true,
             Self::Dav(iuredesk_dav::Error::Unauthorized | iuredesk_dav::Error::InsufficientScope(_)) => true,
             Self::Graph { status: 401, .. } => true,
+            Self::Ews(e) => e.needs_reauth(),
             Self::OAuth(e) => e.needs_reconsent(),
             _ => false,
         }
@@ -141,6 +158,18 @@ impl PimError {
             Self::Store(_) => pick(
                 "IureDesk could not save calendar data on this computer.",
                 "IureDesk no pudo guardar los datos del calendario en este equipo.",
+            ),
+            Self::Ews(iuredesk_ews::EwsError::ServerBusy { .. }) => pick(
+                "Your organization's Exchange is busy right now; we will retry.",
+                "El Exchange de tu organización está ocupado en este momento; lo intentaremos de nuevo.",
+            ),
+            Self::Ews(iuredesk_ews::EwsError::Domain(iuredesk_ews::DomainIssue::ClockSkew)) => pick(
+                "This computer's clock is more than 5 minutes off from your organization's. Set the date and time automatically.",
+                "La hora de este equipo difiere más de 5 minutos de la de tu organización. Pon la fecha y la hora automáticas.",
+            ),
+            Self::Ews(iuredesk_ews::EwsError::Domain(iuredesk_ews::DomainIssue::Locked)) => pick(
+                "Your organization's account is locked or disabled. Ask IT to unlock it.",
+                "Tu cuenta de la organización está bloqueada o desactivada. Pide a TI que la desbloquee.",
             ),
             Self::Graph { status, .. } if *status >= 500 || *status == 429 => pick(
                 "Microsoft 365 is busy right now; we will retry.",
