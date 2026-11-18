@@ -726,12 +726,17 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                         std::sync::Arc::new(crate::note_diagrams::NoteDiagrams::new(ui, mindmap_layout)),
                         std::sync::Arc::new(iure_doc_ui::LocalImages::new(notes_dir.clone())),
                     ]));
-                let out = iure_doc_ui::show_blocks_with(
+                // Pegar de la web, Word o Google Docs pega su Markdown (el HTML del portapapeles).
+                let hooks = iure_doc_ui::Hooks {
+                    diagrams: Some(diagrams),
+                    paste: Some(std::sync::Arc::new(iure_doc_ui::SystemClipboard)),
+                };
+                let out = iure_doc_ui::show_blocks_hooks(
                     ui,
                     egui::Id::unique(("note-editor", id)),
                     body,
                     pick("Write here… (# title, - list, **bold**)", "Escribe aquí… (# título, - lista, **negrita**)"),
-                    Some(diagrams),
+                    hooks,
                 );
                 crate::widgets::named(
                     &out.response,

@@ -3529,18 +3529,20 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "iure-doc"
-version = "0.5.1"
-source = "git+https://github.com/ellaguno/iure-doc?tag=v0.5.1#c34348ca3145f53613c5c739e6b0230cd10b98cf"
+version = "0.6.0"
+source = "git+https://github.com/ellaguno/iure-doc?tag=v0.6.0#059b12d79fbe94a3f5170df499f10bc8c9b498bc"
 dependencies = [
+ "html5ever",
  "pulldown-cmark",
  "serde_json",
 ]
 
 [[package]]
 name = "iure-doc-ui"
-version = "0.5.1"
-source = "git+https://github.com/ellaguno/iure-doc?tag=v0.5.1#c34348ca3145f53613c5c739e6b0230cd10b98cf"
+version = "0.6.0"
+source = "git+https://github.com/ellaguno/iure-doc?tag=v0.6.0#059b12d79fbe94a3f5170df499f10bc8c9b498bc"
 dependencies = [
+ "arboard",
  "egui",
  "image",
  "iure-doc",
