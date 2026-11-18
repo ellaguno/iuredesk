@@ -870,7 +870,7 @@ fn map_send_error(e: &EwsError, host: &str) -> SendError {
     let kind = match e {
         EwsError::Network(_) => SendErrorKind::Network,
         EwsError::ServerBusy { .. } => SendErrorKind::TemporarilyRejected,
-        EwsError::Unauthorized | EwsError::Auth(_) => SendErrorKind::Auth,
+        EwsError::Unauthorized | EwsError::Auth(_) | EwsError::Domain(_) => SendErrorKind::Auth,
         EwsError::TooLarge => SendErrorKind::TooLarge,
         EwsError::Soap { code, .. } if code.contains("TooLarge") || code.contains("SizeExceeded") => {
             SendErrorKind::TooLarge

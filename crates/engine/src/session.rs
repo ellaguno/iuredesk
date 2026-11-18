@@ -254,6 +254,9 @@ pub enum EngineJob {
     Discovery(std::result::Result<iuredesk_autoconfig::Discovery, Text>),
     /// Prueba de conexión (y secreto ya guardado) de la cuenta en curso.
     Probe(std::result::Result<(), Text>),
+    /// Exchange de la organización por Autodiscover (F8.3): la cuenta con el servidor que
+    /// funcionó, o el fallo y si conviene pasar a «Configurar manualmente».
+    ExchangeProbe(std::result::Result<Box<Account>, (Text, bool)>),
     OAuth(std::result::Result<(), crate::onboarding::OAuthFailure>),
     /// «Probar conexión» de «Configurar manualmente»: cada servidor por separado y, si los dos
     /// funcionan, el guardado de la contraseña.
@@ -1863,6 +1866,7 @@ impl Session {
             }
             EngineJob::Discovery(r) => self.wizard_on_discovery(id, r),
             EngineJob::Probe(r) => self.wizard_on_probe(id, r, false),
+            EngineJob::ExchangeProbe(r) => self.wizard_on_exchange(id, r),
             EngineJob::OAuth(r) => self.wizard_on_oauth(id, r),
             EngineJob::ManualProbe { incoming, outgoing, saved } => {
                 self.wizard_on_manual(id, incoming, outgoing, saved)
@@ -2207,6 +2211,13 @@ impl Session {
     /// Prueba la conexión con la contraseña escrita y, si funciona, guarda la cuenta.
     pub fn wizard_test_and_save(&mut self) {
         let Some(w) = self.wizard.as_ref() else { return };
+        if w.reauth.is_none()
+            && let Some(d) = w.discovery.as_ref().filter(|d| d.kind == iuredesk_model::account::AccountKind::Exchange)
+        {
+            let d = d.clone();
+            self.wizard_exchange(&d);
+            return;
+        }
         let reauth = w.reauth.clone();
         let cand = w.discovery.as_ref().and_then(|d| d.best()).cloned();
         if cand.is_none() && reauth.is_none() {
@@ -2270,6 +2281,97 @@ impl Session {
             w.step = WizardStep::Working;
             w.message = None;
             w.job = Some(job);
+        }
+    }
+
+    /// «Exchange de tu empresa» (F8.3): con el correo y la contraseña, la URL de EWS conocida o la
+    /// que dé Autodiscover; la primera que funciona se guarda con la contraseña.
+    fn wizard_exchange(&mut self, d: &iuredesk_autoconfig::Discovery) {
+        let Some(w) = self.wizard.as_ref() else { return };
+        let aid = match w.reserved.map(Ok).unwrap_or_else(|| self.store.new_account_id()) {
+            Ok(a) => a,
+            Err(e) => {
+                if let Some(w) = self.wizard.as_mut() {
+                    w.message = Some(Notice::error(Text::new(
+                        format!("Could not prepare the account: {e}"),
+                        format!("No se pudo preparar la cuenta: {e}"),
+                    )));
+                }
+                return;
+            }
+        };
+        let (email, name, password) = (w.email.trim().to_string(), w.name.clone(), w.password.clone());
+        let autodiscover = d.exchange.as_ref().map(|h| h.autodiscover.clone()).unwrap_or_default();
+        let hint = crate::onboarding::exchange_candidate(d)
+            .map(|c| c.incoming.host.clone())
+            .or_else(|| d.exchange.as_ref().and_then(|h| h.ews_url.clone()));
+        let secrets = Arc::clone(&self.secrets);
+        let key = new_account_key(aid);
+        let job = self.bg.spawn(async move {
+            let r = async {
+                let opts = iuredesk_accounts::ProbeOptions::default();
+                let found = tokio::time::timeout(
+                    std::time::Duration::from_secs(90),
+                    iuredesk_accounts::discover_exchange(&email, &email, &password, &autodiscover, hint.as_deref(), opts),
+                )
+                .await
+                .unwrap_or(Err(iuredesk_accounts::ProbeError::Timeout));
+                let server = found.map_err(|e| {
+                    // Lo que no es la contraseña se arregla con el servidor o el usuario a mano.
+                    let manual = !matches!(e, iuredesk_accounts::ProbeError::AuthFailed(_));
+                    let mut t = crate::onboarding::probe_text(&e);
+                    if !manual {
+                        t = Text::new(
+                            format!("{} If your organization uses DOMAIN\\user, use “Set up manually”.", t.en),
+                            format!("{} Si tu organización usa DOMINIO\\usuario, usa «Configurar manualmente».", t.es),
+                        );
+                    }
+                    (t, manual)
+                })?;
+                let account = crate::onboarding::exchange_account(key, &name, &email, server);
+                let (id, pw) = (account.id.clone(), password.clone());
+                tokio::task::spawn_blocking(move || secrets.set(&id, SecretPurpose::Incoming, &pw))
+                    .await
+                    .map_err(|e| (Text::new(e.to_string(), e.to_string()), false))?
+                    .map_err(|e| {
+                        (
+                            Text::new(
+                                format!("The connection works, but the password could not be saved in the system keyring: {e}"),
+                                format!("La conexión funciona, pero no se pudo guardar la contraseña en el llavero del sistema: {e}"),
+                            ),
+                            false,
+                        )
+                    })?;
+                Ok(Box::new(account))
+            }
+            .await;
+            JobOutput::Engine(EngineJob::ExchangeProbe(r))
+        });
+        if let Some(w) = self.wizard.as_mut() {
+            w.reserved = Some(aid);
+            w.saved = None;
+            w.step = WizardStep::Working;
+            w.message = None;
+            w.job = Some(job);
+        }
+    }
+
+    fn wizard_on_exchange(&mut self, id: JobId, r: std::result::Result<Box<Account>, (Text, bool)>) -> Option<Notice> {
+        let w = self.wizard.as_mut().filter(|w| w.job == Some(id))?;
+        match r {
+            Ok(account) => {
+                w.saved = Some(*account);
+                self.wizard_on_probe(id, Ok(()), false)
+            }
+            Err((t, true)) => {
+                // Al formulario manual con Exchange ya elegido: falta el servidor o el usuario.
+                self.wizard_manual();
+                if let Some(w) = self.wizard.as_mut() {
+                    w.message = Some(Notice::error(t));
+                }
+                None
+            }
+            Err((t, false)) => self.wizard_on_probe(id, Err(t), false),
         }
     }
 

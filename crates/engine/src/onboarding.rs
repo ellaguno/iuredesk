@@ -90,6 +90,10 @@ impl Wizard {
     /// Nombre del proveedor para la tarjeta («Gmail», «Fastmail», «example.com»).
     pub fn provider_name(&self) -> String {
         let Some(d) = &self.discovery else { return String::new() };
+        if d.kind == AccountKind::Exchange {
+            let name = if crate::lang::spanish() { "Exchange de tu empresa" } else { "Your company's Exchange" };
+            return format!("{name} · {}", d.domain);
+        }
         if let Some(p) = d.best().and_then(|c| c.provider.clone()) {
             return p;
         }
@@ -105,7 +109,15 @@ impl Wizard {
 
     /// Servidor entrante detectado («imap.gmail.com:993»).
     pub fn server_summary(&self) -> Option<String> {
-        let c = self.discovery.as_ref()?.best()?;
+        let d = self.discovery.as_ref()?;
+        if d.kind == AccountKind::Exchange {
+            // La URL de EWS, si ya se conoce; si no, la da Autodiscover con la contraseña.
+            return Some(match exchange_candidate(d) {
+                Some(c) => format!("Exchange {}", c.incoming.host),
+                None => "Exchange (Autodiscover)".into(),
+            });
+        }
+        let c = d.best()?;
         Some(format!("{} {}:{}", protocol_name(c.incoming.protocol), c.incoming.host, c.incoming.port))
     }
 
@@ -183,6 +195,7 @@ pub fn known_provider_discovery(email: &str) -> Option<Discovery> {
         caldav: None,
         carddav: None,
         timed_out: false,
+        exchange: None,
     })
 }
 
@@ -288,8 +301,29 @@ pub fn port_after_change(old: (Protocol, Security), new: (Protocol, Security), p
 }
 
 /// ¿El descubrimiento obliga a configurar a mano? (Nada, o solo propuestas de baja confianza.)
+/// Un Exchange encontrado por Autodiscover no: la URL de EWS la da Autodiscover con la contraseña.
 pub fn needs_manual(d: &Discovery) -> bool {
-    d.best().is_none_or(|c| c.confidence() == Confidence::Low)
+    d.exchange.is_none() && d.best().is_none_or(|c| c.confidence() == Confidence::Low)
+}
+
+/// El candidato de Exchange (EWS) del descubrimiento, si lo hay.
+pub fn exchange_candidate(d: &Discovery) -> Option<&Candidate> {
+    d.candidates.iter().find(|c| c.incoming.protocol == Protocol::Ews)
+}
+
+/// La cuenta de Exchange con el servidor que funcionó (Autodiscover, F8.3).
+pub fn exchange_account(id: String, name: &str, email: &str, server: ServerConfig) -> Account {
+    let cand = Candidate {
+        kind: AccountKind::Exchange,
+        provider: None,
+        incoming: server.clone(),
+        outgoing: Some(server),
+        source: Source::ExchangeAutodiscover,
+        score: 100,
+        caldav_url: None,
+        carddav_url: None,
+    };
+    build_account(id, name, email, &cand, AuthMethod::Password)
 }
 
 /// Formulario manual propuesto: el mejor candidato que haya (aunque sea una suposición o la
@@ -306,38 +340,60 @@ pub fn manual_setup(email: &str, discovery: Option<&Discovery>) -> ManualSetup {
         username: email.to_string(),
     };
     let best = discovery.and_then(|d| d.best()).filter(|c| !matches!(c.incoming.auth, AuthMethod::OAuth2 { .. }));
-    let (mut incoming, mut outgoing, hint) = match best {
-        Some(c) => {
-            let out =
-                c.outgoing.clone().unwrap_or_else(|| server(Protocol::Smtp, c.incoming.host.clone(), Security::Tls));
-            let hint = match (c.source, &c.provider) {
-                (Source::Guess, _) => Text::new(
-                    "We guessed these servers from your domain. Check them with your provider before testing.",
-                    "Propusimos estos servidores a partir de tu dominio. Confírmalos con tu proveedor antes de probar.",
-                ),
-                (_, Some(p)) => Text::new(
-                    format!("Proposed servers for {p}. Change anything your provider tells you."),
-                    format!("Servidores propuestos para {p}. Cambia lo que tu proveedor te indique."),
-                ),
-                _ => Text::new(
-                    "We found these servers. Change anything your provider tells you.",
-                    "Encontramos estos servidores. Cambia lo que tu proveedor te indique.",
-                ),
-            };
-            (c.incoming.clone(), out, Some(hint))
-        }
-        None => (
-            server(Protocol::Imap, format!("mail.{domain}"), Security::Tls),
-            server(Protocol::Smtp, format!("mail.{domain}"), Security::Tls),
+    // Exchange (F8.3): el servidor de EWS que se conozca o `mail.<dominio>`; TI tiene la dirección.
+    let exchange = discovery.filter(|d| d.kind == AccountKind::Exchange);
+    let exchange_server = exchange.map(|d| {
+        let s = exchange_candidate(d).map(|c| c.incoming.clone());
+        s.unwrap_or_else(|| server(Protocol::Ews, format!("mail.{domain}"), Security::Tls))
+    });
+    let best = match exchange_server {
+        Some(_) => None,
+        None => best,
+    };
+    let (mut incoming, mut outgoing, hint) = match (exchange_server, best) {
+        (Some(s), _) => (
+            s.clone(),
+            s,
             Some(Text::new(
-                format!(
-                    "We couldn't find the servers of {domain}. Many providers use mail.{domain}; your provider can confirm the data."
-                ),
-                format!(
-                    "No encontramos los servidores de {domain}. Muchos proveedores usan mail.{domain}; tu proveedor puede confirmarte los datos."
-                ),
+                "Your organization uses Exchange. If the server or the user name is different (DOMAIN\\user), IT can tell you.",
+                "Tu organización usa Exchange. Si el servidor o el usuario son otros (DOMINIO\\usuario), TI te los puede dar.",
             )),
         ),
+        (None, best) => match best {
+            Some(c) => {
+                let out = c
+                    .outgoing
+                    .clone()
+                    .unwrap_or_else(|| server(Protocol::Smtp, c.incoming.host.clone(), Security::Tls));
+                let hint = match (c.source, &c.provider) {
+                    (Source::Guess, _) => Text::new(
+                        "We guessed these servers from your domain. Check them with your provider before testing.",
+                        "Propusimos estos servidores a partir de tu dominio. Confírmalos con tu proveedor antes de probar.",
+                    ),
+                    (_, Some(p)) => Text::new(
+                        format!("Proposed servers for {p}. Change anything your provider tells you."),
+                        format!("Servidores propuestos para {p}. Cambia lo que tu proveedor te indique."),
+                    ),
+                    _ => Text::new(
+                        "We found these servers. Change anything your provider tells you.",
+                        "Encontramos estos servidores. Cambia lo que tu proveedor te indique.",
+                    ),
+                };
+                (c.incoming.clone(), out, Some(hint))
+            }
+            None => (
+                server(Protocol::Imap, format!("mail.{domain}"), Security::Tls),
+                server(Protocol::Smtp, format!("mail.{domain}"), Security::Tls),
+                Some(Text::new(
+                    format!(
+                        "We couldn't find the servers of {domain}. Many providers use mail.{domain}; your provider can confirm the data."
+                    ),
+                    format!(
+                        "No encontramos los servidores de {domain}. Muchos proveedores usan mail.{domain}; tu proveedor puede confirmarte los datos."
+                    ),
+                )),
+            ),
+        },
     };
     for s in [&mut incoming, &mut outgoing] {
         s.auth = AuthMethod::Password;
@@ -702,6 +758,7 @@ mod tests {
                 source: Source::Srv,
             }),
             timed_out: false,
+            exchange: None,
         };
         assert!(needs_manual(&d));
         let m = manual_setup("ana@example.com", Some(&d));

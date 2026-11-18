@@ -614,3 +614,133 @@ fn microsoft_org_settings_drive_the_sign_in() {
     s.set_microsoft_org("", "").unwrap();
     assert!(s.prefs.microsoft_org.is_empty());
 }
+
+/// Exchange falso (F8.3): Autodiscover POX y EWS con Basic `ana@contoso.com:secreto`.
+/// `ews` = Autodiscover da la URL de EWS; si no, responde un error de Autodiscover.
+fn fake_exchange(ews: bool) -> String {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        use base64::Engine as _;
+        let good = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode("ana@contoso.com:secreto"));
+        for c in l.incoming().take(40) {
+            let Ok(mut c) = c else { continue };
+            let mut r = BufReader::new(c.try_clone().unwrap());
+            let (mut len, mut auth, mut first) = (0usize, String::new(), String::new());
+            loop {
+                let mut line = String::new();
+                if r.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if first.is_empty() {
+                    first = line.clone();
+                }
+                let lower = line.to_ascii_lowercase();
+                if let Some(v) = lower.strip_prefix("content-length:") {
+                    len = v.trim().parse().unwrap_or(0);
+                }
+                if lower.starts_with("authorization:") {
+                    auth = line["authorization:".len()..].trim().to_string();
+                }
+            }
+            let mut body = vec![0u8; len];
+            let _ = r.read_exact(&mut body);
+            let (status, body) = if auth != good {
+                (401, String::new())
+            } else if first.contains("/autodiscover/autodiscover.xml") {
+                if ews {
+                    (
+                        200,
+                        format!(
+                            r#"<?xml version="1.0"?><Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/responseschema/2006"><Response xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a"><Account><Action>settings</Action><Protocol><Type>EXPR</Type><EwsUrl>http://127.0.0.1:{port}/EWS/Exchange.asmx</EwsUrl></Protocol></Account></Response></Autodiscover>"#
+                        ),
+                    )
+                } else {
+                    (200, r#"<Autodiscover xmlns="a"><Response><Error><ErrorCode>500</ErrorCode><Message>The email address can't be found.</Message></Error></Response></Autodiscover>"#.to_string())
+                }
+            } else {
+                (200, r#"<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><m:SyncFolderHierarchyResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"><m:ResponseMessages><m:SyncFolderHierarchyResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode><m:SyncState>S1</m:SyncState><m:IncludesLastFolderInRange>true</m:IncludesLastFolderInRange><m:Changes/></m:SyncFolderHierarchyResponseMessage></m:ResponseMessages></m:SyncFolderHierarchyResponse></s:Body></s:Envelope>"#.to_string())
+            };
+            let extra = if status == 401 { "WWW-Authenticate: Basic realm=\"x\"\r\n" } else { "" };
+            let _ = write!(
+                c,
+                "HTTP/1.1 {status} X\r\nContent-Type: text/xml\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+/// Lo que encontraría el descubrimiento de contoso.com: un Exchange sin la URL de EWS.
+fn exchange_discovery(base: &str) -> iuredesk_autoconfig::Discovery {
+    iuredesk_autoconfig::Discovery {
+        email: "ana@contoso.com".into(),
+        domain: "contoso.com".into(),
+        kind: AccountKind::Exchange,
+        candidates: Vec::new(),
+        notes: Vec::new(),
+        caldav: None,
+        carddav: None,
+        timed_out: false,
+        exchange: Some(iuredesk_autoconfig::ExchangeHint {
+            ews_url: None,
+            autodiscover: vec![format!("{base}/autodiscover/autodiscover.xml")],
+        }),
+    }
+}
+
+/// F8.3: «Exchange de tu empresa» con correo y contraseña: Autodiscover da la URL de EWS, se prueba
+/// y se guarda la cuenta (Exchange, EWS de ida y vuelta, contraseña en el llavero). Contraseña
+/// equivocada: se queda en la tarjeta y sugiere DOMINIO\usuario; Autodiscover sin EWS: al
+/// formulario manual con Exchange ya elegido.
+#[test]
+fn exchange_of_your_company_with_autodiscover() {
+    let base = fake_exchange(true);
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, secrets) = session(dir.path(), &[]);
+    s.wizard_begin();
+    s.wizard.as_mut().unwrap().email = "ana@contoso.com".into();
+    s.wizard_apply_discovery(exchange_discovery(&base));
+    assert_eq!(step(&s), Some(WizardStep::Provider));
+    assert!(s.wizard.as_ref().unwrap().provider_name().contains("contoso.com"));
+    assert!(!iuredesk_engine::onboarding::needs_manual(&exchange_discovery(&base)));
+
+    s.wizard.as_mut().unwrap().password = "otra".into();
+    s.wizard_test_and_save();
+    wait(&mut s, "contraseña rechazada", |s| step(s) != Some(WizardStep::Working));
+    let w = s.wizard.as_ref().unwrap();
+    assert_eq!(w.step, WizardStep::Provider);
+    assert!(format!("{:?}", w.message).contains("DOMINIO"), "{:?}", w.message);
+
+    s.wizard.as_mut().unwrap().password = "secreto".into();
+    s.wizard_test_and_save();
+    wait(&mut s, "alta de Exchange", |s| step(s) != Some(WizardStep::Working));
+    let w = s.wizard.as_ref().unwrap();
+    assert_eq!(w.step, WizardStep::Done, "{:?}", w.message);
+    let a = w.saved.clone().unwrap();
+    assert_eq!(a.kind, AccountKind::Exchange);
+    assert_eq!(a.incoming.protocol, Protocol::Ews);
+    assert_eq!(a.incoming.host, format!("{base}/EWS/Exchange.asmx"));
+    assert_eq!(a.outgoing.protocol, Protocol::Ews, "envía por el mismo servicio");
+    assert_eq!(a.incoming.username, "ana@contoso.com");
+    assert_eq!(secrets.get(&a.id, SecretPurpose::Incoming).unwrap().as_deref(), Some("secreto"));
+
+    // Autodiscover sin EWS: formulario manual con Exchange.
+    let base = fake_exchange(false);
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _) = session(dir.path(), &[]);
+    s.wizard_begin();
+    s.wizard.as_mut().unwrap().email = "ana@contoso.com".into();
+    s.wizard_apply_discovery(exchange_discovery(&base));
+    s.wizard.as_mut().unwrap().password = "secreto".into();
+    s.wizard_test_and_save();
+    wait(&mut s, "Autodiscover sin EWS", |s| step(s) != Some(WizardStep::Working));
+    let w = s.wizard.as_ref().unwrap();
+    assert_eq!(w.step, WizardStep::Manual, "{:?}", w.message);
+    assert!(format!("{:?}", w.message).contains("Configurar manualmente"), "{:?}", w.message);
+    let m = w.manual.as_ref().unwrap();
+    assert_eq!(m.incoming.protocol, Protocol::Ews);
+    assert_eq!(m.incoming.host, "mail.contoso.com");
+    assert_eq!(w.password, "secreto", "lo escrito se conserva");
+}

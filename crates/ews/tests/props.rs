@@ -61,3 +61,33 @@ proptest! {
         prop_assert_eq!(root.text, s);
     }
 }
+
+proptest! {
+    /// Respuestas del KDC y de Autodiscover: bytes cualquiera nunca tumban a quien las lee.
+    #[test]
+    fn kdc_and_autodiscover_replies_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..2048)) {
+        use iuredesk_ews::kerberos::{self, der};
+        let _ = kerberos::parse_reply(&bytes);
+        let _ = kerberos::parse_enc_rep(&bytes);
+        let _ = kerberos::etype_info2(&bytes);
+        if let Ok((t, _)) = der::read(&bytes) {
+            let _ = der::fields(t);
+            let _ = t.int();
+            let _ = t.string();
+        }
+        let _ = iuredesk_ews::autodiscover::parse(&bytes);
+    }
+
+    /// DER con forma de KDC pero campos alterados: error, nunca pánico.
+    #[test]
+    fn mutated_kdc_errors_never_panic(code in any::<i64>(), cut in 0usize..200, flip in any::<u8>()) {
+        use iuredesk_ews::kerberos::der::{app, ctx, gstr, int, octets, seq};
+        let mut b = app(30, seq(&[ctx(0, int(5)), ctx(1, int(30)), ctx(6, int(code)), ctx(7, gstr("X.COM")), ctx(12, octets(&[0x30, 0x02, 0x30, 0x00]))]));
+        if let Some(x) = b.get_mut(cut) {
+            *x ^= flip;
+        }
+        let _ = iuredesk_ews::kerberos::parse_reply(&b);
+        b.truncate(cut);
+        let _ = iuredesk_ews::kerberos::parse_reply(&b);
+    }
+}

@@ -16,11 +16,16 @@ struct FakeHttp {
 
 impl FakeHttp {
     fn page(mut self, url: &str, body: &str) -> Self {
-        self.pages.insert(url.into(), HttpResponse { status: 200, location: None, body: body.into() });
+        self.pages.insert(url.into(), HttpResponse { status: 200, body: body.into(), ..Default::default() });
         self
     }
     fn redirect(mut self, url: &str, to: &str) -> Self {
-        self.pages.insert(url.into(), HttpResponse { status: 302, location: Some(to.into()), body: String::new() });
+        self.pages.insert(url.into(), HttpResponse { status: 302, location: Some(to.into()), ..Default::default() });
+        self
+    }
+    fn unauthorized(mut self, url: &str, schemes: &[&str]) -> Self {
+        let auth_schemes = schemes.iter().map(|s| s.to_string()).collect();
+        self.pages.insert(url.into(), HttpResponse { status: 401, auth_schemes, ..Default::default() });
         self
     }
     fn slow(mut self, url: &str) -> Self {
@@ -316,4 +321,83 @@ fn base_domain_and_url_host() {
     assert_eq!(url_host("https://user@Host.Example.com:443?x").as_deref(), Some("host.example.com"));
     assert_eq!(url_host("http://outlook.office365.com/"), None);
     assert_eq!(url_host("https://bad host/"), None);
+}
+
+const POX: &str = "https://autodiscover.contoso.com/autodiscover/autodiscover.xml";
+const V2: &str = "https://autodiscover.contoso.com/autodiscover/autodiscover.json/v1.0/ana%40contoso.com?Protocol=EWS";
+
+#[test]
+fn exchange_v2_gives_the_ews_url() {
+    let http = FakeHttp::default()
+        .page(V2, r#"{"Protocol":"EWS","Url":"https://mail.contoso.com/EWS/Exchange.asmx"}"#)
+        .unauthorized(POX, &["negotiate", "ntlm"]);
+    // Un IMAP adivinado no le gana a Exchange.
+    let dns = FakeDns::default().host("mail.contoso.com");
+    let d = Discoverer::new(http, dns);
+    let r = run(&d, "ana@contoso.com").unwrap();
+    assert_eq!(r.kind, AccountKind::Exchange);
+    let best = r.best().unwrap();
+    assert_eq!(best.source, Source::ExchangeAutodiscover);
+    assert_eq!(best.incoming.protocol, Protocol::Ews);
+    assert_eq!(best.incoming.host, "https://mail.contoso.com/EWS/Exchange.asmx");
+    assert_eq!(best.outgoing.as_ref().map(|s| s.protocol), Some(Protocol::Ews), "envía por el mismo servicio");
+    assert_eq!(best.incoming.username, "ana@contoso.com");
+    let hint = r.exchange.unwrap();
+    assert_eq!(hint.autodiscover, [POX]);
+    assert!(!r.notes.iter().any(|n| n.es.contains("suposición")));
+}
+
+#[test]
+fn exchange_pox_alone_is_enough_to_know() {
+    let http = FakeHttp::default().unauthorized("https://contoso.com/autodiscover/autodiscover.xml", &["ntlm"]);
+    let dns = FakeDns::default().host("mail.contoso.com");
+    let d = Discoverer::new(http, dns);
+    let r = run(&d, "ana@contoso.com").unwrap();
+    assert_eq!(r.kind, AccountKind::Exchange);
+    let hint = r.exchange.unwrap();
+    assert_eq!(hint.ews_url, None);
+    assert_eq!(hint.autodiscover, ["https://contoso.com/autodiscover/autodiscover.xml"]);
+    assert!(!r.notes.iter().any(|n| n.es.contains("escribe los servidores a mano") || n.es.contains("suposición")));
+    assert!(r.notes.iter().any(|n| n.es.contains("usa Exchange")));
+}
+
+#[test]
+fn exchange_srv_only_inside_the_domain() {
+    let inside = FakeDns::default().srv("_autodiscover._tcp.contoso.com", "ad.corp.contoso.com", 443);
+    let http =
+        FakeHttp::default().unauthorized("https://ad.corp.contoso.com/autodiscover/autodiscover.xml", &["negotiate"]);
+    let r = run(&Discoverer::new(http, inside), "ana@contoso.com").unwrap();
+    assert_eq!(r.kind, AccountKind::Exchange);
+    // Un SRV hacia otro dominio no se usa (el DNS no está autenticado y ahí iría la contraseña).
+    let outside = FakeDns::default().srv("_autodiscover._tcp.contoso.com", "autodiscover.evil.example", 443);
+    let http =
+        FakeHttp::default().unauthorized("https://autodiscover.evil.example/autodiscover/autodiscover.xml", &["ntlm"]);
+    let d = Discoverer::new(http, outside);
+    let r = run(&d, "ana@contoso.com").unwrap();
+    assert_eq!(r.exchange, None);
+    assert!(d.http.calls.lock().unwrap().iter().all(|u| !u.contains("evil")));
+}
+
+#[test]
+fn hybrid_mailbox_in_the_cloud_is_microsoft_365() {
+    let http =
+        FakeHttp::default().page(V2, r#"{"Protocol":"EWS","Url":"https://outlook.office365.com/EWS/Exchange.asmx"}"#);
+    let r = run(&Discoverer::new(http, FakeDns::default()), "ana@contoso.com").unwrap();
+    assert_eq!(r.kind, AccountKind::Microsoft365);
+    assert_eq!(r.exchange, None);
+}
+
+#[test]
+fn basic_only_autodiscover_is_not_exchange_and_m365_mx_wins() {
+    // Un hospedaje con «autodiscover.xml» de imitación (solo Basic) no es Exchange.
+    let http = FakeHttp::default().unauthorized(POX, &["basic"]);
+    let r = run(&Discoverer::new(http, FakeDns::default().host("mail.contoso.com")), "ana@contoso.com").unwrap();
+    assert_eq!(r.kind, AccountKind::Generic);
+    assert_eq!(r.exchange, None);
+    // MX en Microsoft 365 (buzón en la nube) gana aunque quede un Exchange local para el híbrido.
+    let http = FakeHttp::default().unauthorized(POX, &["negotiate"]);
+    let dns = FakeDns::default().mx("contoso.com", &[(0, "contoso-com.mail.protection.outlook.com")]);
+    let r = run(&Discoverer::new(http, dns), "ana@contoso.com").unwrap();
+    assert_eq!(r.kind, AccountKind::Microsoft365);
+    assert_eq!(r.exchange, None);
 }

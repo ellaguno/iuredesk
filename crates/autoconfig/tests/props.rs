@@ -42,3 +42,15 @@ proptest! {
         let _ = base_domain(&target);
     }
 }
+
+proptest! {
+    /// Autodiscover v2 (JSON del servidor del dominio): nada lo hace caer y solo da URL https.
+    #[test]
+    fn autodiscover_v2_never_panics(s in "\\PC{0,400}", url in "\\PC{0,200}") {
+        let _ = iuredesk_autoconfig::exchange::parse_v2(&s);
+        let json = format!(r#"{{"Protocol":"EWS","Url":{}}}"#, serde_json::Value::String(url));
+        if let Some(u) = iuredesk_autoconfig::exchange::parse_v2(&json) {
+            prop_assert!(u.starts_with("https://"));
+        }
+    }
+}

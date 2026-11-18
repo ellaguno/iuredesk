@@ -47,6 +47,7 @@ sha2 = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macros"] }
 
 [dev-dependencies]
+base64 = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 iuredesk-imap = { workspace = true, features = ["test-server"] }

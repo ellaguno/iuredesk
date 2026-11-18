@@ -205,6 +205,18 @@ impl SyncError {
                 "Exchange rejected the password. Enter it again (it may have changed or expired).",
                 "Exchange rechazó la contraseña. Escríbela de nuevo (puede que haya cambiado o caducado).",
             ),
+            SyncError::Ews(iuredesk_ews::EwsError::Domain(iuredesk_ews::DomainIssue::ClockSkew)) => pick(
+                "This computer's clock is more than 5 minutes off from your organization's. Set the date and time automatically.",
+                "La hora de este equipo difiere más de 5 minutos de la de tu organización. Pon la fecha y la hora automáticas.",
+            ),
+            SyncError::Ews(iuredesk_ews::EwsError::Domain(iuredesk_ews::DomainIssue::PasswordExpired)) => pick(
+                "Your organization's password expired. Change it and enter the new one.",
+                "La contraseña de tu organización caducó. Cámbiala y escribe la nueva.",
+            ),
+            SyncError::Ews(iuredesk_ews::EwsError::Domain(iuredesk_ews::DomainIssue::Locked)) => pick(
+                "Your organization's account is locked or disabled. Ask IT to unlock it.",
+                "Tu cuenta de la organización está bloqueada o desactivada. Pide a TI que la desbloquee.",
+            ),
             SyncError::Ews(iuredesk_ews::EwsError::Http { status: 403 }) => pick(
                 "Exchange Web Services is turned off for this account. Ask your IT department to enable it.",
                 "Exchange Web Services está desactivado para esta cuenta. Pide a tu área de TI que lo active.",
