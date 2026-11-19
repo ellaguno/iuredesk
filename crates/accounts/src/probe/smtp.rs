@@ -8,6 +8,19 @@ use lettre::{AsyncSmtpTransport, Tokio1Executor};
 
 use super::{ProbeError, ProbeOptions, ProbeReport, classify_auth_failure, clip};
 
+/// Parámetros TLS de SMTP: las raíces de Mozilla (lo de siempre en `lettre`) y además las del
+/// sistema (CA internas de empresa, ver [`iuredesk_net::native_roots`]).
+pub fn smtp_tls_parameters(host: &str) -> Result<TlsParameters, lettre::transport::smtp::Error> {
+    let mut b = TlsParameters::builder(host.to_string());
+    for der in iuredesk_net::native_roots() {
+        // Uno que lettre no entienda se omite: no tumba el envío.
+        if let Ok(c) = lettre::transport::smtp::client::Certificate::from_der(der.clone()) {
+            b = b.add_root_certificate(c);
+        }
+    }
+    b.build_rustls()
+}
+
 /// Traduce un error de lettre a uno amable.
 pub(crate) fn map_error(e: &lettre::transport::smtp::Error, host: &str) -> ProbeError {
     let text = clip(&e.to_string());
@@ -64,7 +77,7 @@ pub(super) async fn probe(
     let tls = match cfg.security {
         Security::Plain => Tls::None,
         Security::Tls | Security::StartTls => {
-            let params = TlsParameters::new(cfg.host.clone()).map_err(|e| ProbeError::Tls(clip(&e.to_string())))?;
+            let params = smtp_tls_parameters(&cfg.host).map_err(|e| ProbeError::Tls(clip(&e.to_string())))?;
             if cfg.security == Security::Tls { Tls::Wrapper(params) } else { Tls::Required(params) }
         }
     };

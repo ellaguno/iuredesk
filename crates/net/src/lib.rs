@@ -117,10 +117,34 @@ impl AsyncWrite for Stream {
     }
 }
 
-/// Configuración TLS por omisión: raíces de Mozilla (`webpki-roots`), proveedor `ring`, TLS 1.2+.
-pub fn tls_config() -> Result<Arc<ClientConfig>, NetError> {
+/// Tope de certificados del sistema que se aceptan (un almacén normal tiene ~150).
+const MAX_NATIVE_ROOTS: usize = 2_000;
+
+/// Certificados raíz del sistema operativo (DER), leídos una sola vez: además de las CA públicas,
+/// las **CA internas** que TI instala en los equipos de la empresa (un Exchange local con
+/// certificado propio, F8.5). Si no se pueden leer, lista vacía: quedan las de Mozilla.
+pub fn native_roots() -> &'static [Vec<u8>] {
+    static ROOTS: std::sync::OnceLock<Vec<Vec<u8>>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| {
+        rustls_native_certs::load_native_certs().certs.into_iter().take(MAX_NATIVE_ROOTS).map(|c| c.to_vec()).collect()
+    })
+}
+
+/// Raíces de confianza: las de Mozilla (`webpki-roots`) y las del sistema ([`native_roots`]).
+pub fn root_store() -> rustls::RootCertStore {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    // Las que no se entiendan se omiten (no tumban la conexión).
+    let _ = roots.add_parsable_certificates(
+        native_roots().iter().map(|d| rustls::pki_types::CertificateDer::from(d.as_slice()).into_owned()),
+    );
+    roots
+}
+
+/// Configuración TLS por omisión: raíces de Mozilla y del sistema ([`root_store`]), proveedor
+/// `ring`, TLS 1.2+.
+pub fn tls_config() -> Result<Arc<ClientConfig>, NetError> {
+    let roots = root_store();
     let cfg = ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_safe_default_protocol_versions()
         .map_err(|e| NetError::Tls(e.to_string()))?

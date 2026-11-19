@@ -12,6 +12,7 @@ mod conn;
 mod ews;
 
 pub use ews::discover_exchange;
+pub use smtp::smtp_tls_parameters;
 mod imap;
 mod pop3;
 mod smtp;

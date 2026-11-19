@@ -13,8 +13,10 @@ tokio = { workspace = true, features = ["net", "io-util", "time"] }
 rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }
+rustls-native-certs = { workspace = true }
 
 [dev-dependencies]
+rcgen = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "net", "io-util"] }
 
 [lints]
