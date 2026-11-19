@@ -161,6 +161,16 @@ pub struct AttachmentMeta {
     pub blob: Option<BlobHash>,
 }
 
+impl AttachmentMeta {
+    /// `true` si se muestra como adjunto (clip y lista). Solo se ocultan las imágenes que van
+    /// dentro del cuerpo (en línea o con `Content-ID`); un PDF con `Content-ID` o marcado «en
+    /// línea» (Apple Mail lo hace) sigue siendo un adjunto.
+    pub fn is_listed(&self) -> bool {
+        let image = self.mime_type.trim().to_ascii_lowercase().starts_with("image/");
+        !(image && (self.inline || self.content_id.is_some()))
+    }
+}
+
 /// Sobre de un mensaje: todo lo necesario para listar, ordenar, enhebrar y buscar sin abrir el
 /// correo crudo.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -342,6 +352,21 @@ pub fn normalize_subject(subject: &str) -> (String, bool) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_body_images_are_hidden_from_the_attachment_list() {
+        let a = |mime: &str, cid: Option<&str>, inline: bool| AttachmentMeta {
+            mime_type: mime.into(),
+            content_id: cid.map(Into::into),
+            inline,
+            ..AttachmentMeta::default()
+        };
+        assert!(a("application/pdf", Some("x@y"), false).is_listed());
+        assert!(a("application/pdf", None, true).is_listed());
+        assert!(a("image/png", None, false).is_listed());
+        assert!(!a("image/png", Some("logo"), false).is_listed());
+        assert!(!a("IMAGE/JPEG", None, true).is_listed());
+    }
+
     use super::*;
 
     #[test]

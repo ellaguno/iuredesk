@@ -1806,7 +1806,7 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
         let items: Vec<Item> = env
             .attachments
             .iter()
-            .filter(|a| a.content_id.is_none())
+            .filter(|a| a.is_listed())
             .map(|a| Item {
                 name: a.filename.clone(),
                 size: usize::try_from(a.size).unwrap_or(usize::MAX),

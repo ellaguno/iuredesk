@@ -172,7 +172,7 @@ pub fn envelope_from_fetch(f: &FetchData, folder: FolderId) -> Option<MessageEnv
                 blob: None,
             })
             .collect();
-        env.has_attachments = env.attachments.iter().any(|a| !a.inline);
+        env.has_attachments = env.attachments.iter().any(AttachmentMeta::is_listed);
     }
     env.clamp();
     Some(env)
@@ -267,7 +267,7 @@ pub fn envelope_from_raw(raw: &[u8], folder: FolderId, received: DateTime<Utc>) 
     env.date = plausible(date, received);
     let body = body_of(&m);
     env.preview = body.preview;
-    env.has_attachments = body.attachments.iter().any(|a| !a.inline);
+    env.has_attachments = body.attachments.iter().any(AttachmentMeta::is_listed);
     env.attachments = body.attachments;
     env.clamp();
     (env, body.body_text)
@@ -306,7 +306,7 @@ pub fn preview_from_partial(header: &[u8], text: &[u8]) -> String {
 pub fn enrich(env: &mut MessageEnvelope, body: ParsedBody) {
     env.preview = body.preview;
     if !body.attachments.is_empty() || env.attachments.is_empty() {
-        env.has_attachments = body.attachments.iter().any(|a| !a.inline);
+        env.has_attachments = body.attachments.iter().any(AttachmentMeta::is_listed);
         env.attachments = body.attachments;
     }
     env.clamp();
