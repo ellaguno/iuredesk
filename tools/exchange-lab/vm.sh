@@ -59,7 +59,10 @@ VBoxManage modifyvm "$VM" --memory "$RAM_MB" --cpus "$CPUS" --firmware efi --vra
   --graphicscontroller vboxsvga --ioapic on --rtcuseutc on \
   --nic1 nat --nic2 hostonly --hostonlyadapter2 "$IF" --clipboard-mode bidirectional
 VBoxManage createmedium disk --filename "$BASE/$VM/$VM.vdi" --size "$DISK_MB" --format VDI --variant Standard
-VBoxManage storagectl "$VM" --name SATA --add sata --controller IntelAhci --portcount 4
+# Caché de E/S del anfitrión: si el anfitrión está ocupado (p. ej. compilando), sin ella las
+# escrituras tardan tanto que Windows da el disco por muerto («AHCI#0: Port 0 reset») y la
+# instalación se queda congelada.
+VBoxManage storagectl "$VM" --name SATA --add sata --controller IntelAhci --portcount 4 --hostiocache on
 VBoxManage storageattach "$VM" --storagectl SATA --port 0 --device 0 --type hdd --medium "$BASE/$VM/$VM.vdi"
 # Carpeta compartida con los scripts (\\VBOXSVR\lab, montada en Z:).
 VBoxManage sharedfolder add "$VM" --name lab --hostpath "$LAB" --automount --auto-mount-point 'Z:'
