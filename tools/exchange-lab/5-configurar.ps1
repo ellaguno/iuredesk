@@ -5,9 +5,13 @@ Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
 $server = $env:COMPUTERNAME
 try { Add-DnsServerResourceRecordA -ZoneName iuredesk.test -Name autodiscover -IPv4Address 192.168.56.10 -ErrorAction Stop } catch { }
 
-# Certificado propio con los nombres que usa IureDesk (el anfitrión lo agrega a sus raíces).
-$cert = New-ExchangeCertificate -FriendlyName 'IureDesk lab' -SubjectName 'cn=ex1.iuredesk.test' `
-    -DomainName ex1.iuredesk.test, autodiscover.iuredesk.test, iuredesk.test -PrivateKeyExportable $true -Force
+# Certificado propio con los nombres que usa IureDesk (el anfitrión lo agrega a sus raíces). Si el
+# paso ya corrió, se reutiliza (se puede volver a correr).
+$cert = Get-ExchangeCertificate | Where-Object FriendlyName -eq 'IureDesk lab' | Select-Object -First 1
+if (-not $cert) {
+    $cert = New-ExchangeCertificate -FriendlyName 'IureDesk lab' -SubjectName 'cn=ex1.iuredesk.test' `
+        -DomainName ex1.iuredesk.test, autodiscover.iuredesk.test, iuredesk.test -PrivateKeyExportable $true -Force
+}
 Enable-ExchangeCertificate -Thumbprint $cert.Thumbprint -Services IIS -Force
 $raw = (Get-Item "Cert:\LocalMachine\My\$($cert.Thumbprint)").RawData
 $b64 = [Convert]::ToBase64String($raw) -replace '(.{64})', "`$1`n"

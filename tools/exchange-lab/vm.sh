@@ -29,7 +29,8 @@ mkdir -p "$LAB"
 cp "$HERE"/*.ps1 "$HERE/README.md" "$LAB/"
 echo "carpeta del laboratorio: $LAB"
 
-# Contraseñas de laboratorio: aleatorias, solo en este equipo.
+# Contraseñas de laboratorio: aleatorias, solo en este equipo. Sin el nombre del usuario: la
+# política de complejidad de Active Directory rechaza una contraseña que lo contenga.
 ENV="$LAB/lab.env"
 if [ ! -f "$ENV" ]; then
   gen() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 14; }
@@ -37,8 +38,8 @@ if [ ! -f "$ENV" ]; then
   cat >"$ENV" <<VARS
 # Laboratorio de Exchange de IureDesk (F8.5). Solo para la VM de pruebas; no subir a git.
 ADMIN_PASSWORD=Lab-$(gen)-1a
-ANA_PASSWORD=Ana-$(gen)-2b
-BEA_PASSWORD=Bea-$(gen)-3c
+ANA_PASSWORD=Lab-$(gen)-7x
+BEA_PASSWORD=Lab-$(gen)-8y
 VARS
   echo "contraseñas de laboratorio en $ENV"
 fi
