@@ -64,8 +64,16 @@ VBoxManage storageattach "$VM" --storagectl SATA --port 0 --device 0 --type hdd 
 # Carpeta compartida con los scripts (\\VBOXSVR\lab, montada en Z:).
 VBoxManage sharedfolder add "$VM" --name lab --hostpath "$LAB" --automount --auto-mount-point 'Z:'
 
+# Las ediciones de evaluación no llevan clave, y un <ProductKey> vacío (lo pone la plantilla de
+# VirtualBox aunque no haya clave) hace fallar a Setup con «cannot find the Microsoft Software
+# License Terms»: se usa una copia de la plantilla sin ese bloque.
+TEMPLATE="$LAB/autounattend-sin-clave.xml"
+sed '/<ProductKey>/,/<\/ProductKey>/d' /usr/share/virtualbox/UnattendedTemplates/win_nt6_unattended.xml >"$TEMPLATE"
+grep -q ProductKey "$TEMPLATE" && { echo "no se pudo quitar <ProductKey> de la plantilla" >&2; exit 1; }
+
 # Windows Server 2022 Standard (escritorio), desatendido, con Guest Additions.
 VBoxManage unattended install "$VM" --iso="$WIN_ISO" --user=Administrator --password="$ADMIN_PASSWORD" \
+  --script-template="$TEMPLATE" \
   --full-user-name="Laboratorio IureDesk" --hostname=ex1.iuredesk.test --install-additions \
   --image-index=2 --locale=en_US --country=MX --time-zone="Central Standard Time (Mexico)" --post-install-command="shutdown /r /t 5"
 # La ISO de Exchange en la segunda unidad (la de Windows la pone «unattended»).
