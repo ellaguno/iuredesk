@@ -71,6 +71,8 @@ notices, assets). Mensajes de commit con el id de tarea de `docs/gaps.md` (p. ej
   `IUREDESK_DATA_DIR=/ruta` usa esa carpeta para almacén, cuentas y preferencias (probar una cuenta
   real sin tocar la instalación normal).
 - E2e con IMAP y SMTP falsos: `cargo test -p iuredesk-engine --test live -- --ignored`.
+- E2e con las apps hermanas de verdad (IureProject e IureEditor 2.0 por MCP):
+  `IUREPROJECT_BIN=…/iureproject IUREDITOR2_BIN=…/iureditor2 cargo test -p iuredesk-integrations --test live_sisters -- --ignored`.
 - Captura sin pantalla: `cargo run -p iuredesk-ui --example ui_shot -- /tmp/shot.png [--dark] [--compose]`.
   Para trabajo de UI, mira la captura antes de dar algo por terminado.
 

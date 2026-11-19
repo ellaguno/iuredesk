@@ -131,7 +131,9 @@ impl Handler for Fake {
                 let mut added = self.added.lock().unwrap_or_else(|e| e.into_inner());
                 let uids: Vec<u64> = (0..items.len() as u64).map(|i| 40 + i).collect();
                 added.extend(items);
-                Ok(Reply::Data(json!({"uids": uids})))
+                // Como IureProject: el JSON en texto y una línea de resumen (sin structuredContent).
+                let text = format!("{}\n\n{} tareas; fin 2026-11-23 17:00", json!({"uids": uids}), added.len());
+                Ok(Reply::Raw(json!({"content": [{"type": "text", "text": text}], "isError": false})))
             }
             "task_set_hyperlink" => {
                 self.added.lock().unwrap_or_else(|e| e.into_inner()).push(json!({"hyperlink": a}));
