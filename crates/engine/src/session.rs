@@ -1201,7 +1201,8 @@ impl Session {
             "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
                 !self.contact_selection.is_empty()
             }
-            "mail.archive" | "mail.delete" | "mail.toggle_read" | "mail.toggle_flag" | "mail.move" => self.has_target(),
+            "mail.archive" | "mail.delete" | "mail.toggle_read" | "mail.mark_read" | "mail.mark_unread"
+            | "mail.toggle_flag" | "mail.move" => self.has_target(),
             "undo" => !self.undo.is_empty(),
             b if rules_glue::needs_target(b) => self.has_target(),
             _ => command::find(base).is_some(),
@@ -1287,6 +1288,8 @@ impl Session {
             "mail.archive" => self.archive(),
             "mail.delete" => self.delete(),
             "mail.toggle_read" => self.toggle_read(),
+            "mail.mark_read" => self.mark_read(true),
+            "mail.mark_unread" => self.mark_read(false),
             "mail.toggle_flag" => self.toggle_flag(),
             "mail.move" => match arg.and_then(|a| a.parse::<u64>().ok()) {
                 Some(f) => self.move_to(FolderId(f)),
@@ -1547,6 +1550,17 @@ impl Session {
         };
         // Al marcar como no leído, el mensaje no debe volver a leerse solo al seguir enfocado.
         self.set_flags_with(&ids, text, |f| Flags { seen: any_unread, ..f })
+    }
+
+    /// Marca los mensajes como leídos (`true`) o no leídos.
+    fn mark_read(&mut self, seen: bool) -> Result<Outcome> {
+        let ids = self.targets();
+        let text = if seen {
+            Text::new("Marked as read", "Marcado como leído")
+        } else {
+            Text::new("Marked as unread", "Marcado como no leído")
+        };
+        self.set_flags_with(&ids, text, |f| Flags { seen, ..f })
     }
 
     fn toggle_flag(&mut self) -> Result<Outcome> {

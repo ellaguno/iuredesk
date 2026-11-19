@@ -181,6 +181,9 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::Mail,
         "read unread leido",
     ),
+    // Explícitos (para varios mensajes a la vez, donde «alternar» no dice qué pasará).
+    c("mail.mark_read", "Mark as read", "Marcar como leído", "check", Group::Mail, "read leido visto"),
+    c("mail.mark_unread", "Mark as unread", "Marcar como no leído", "mail", Group::Mail, "unread no leido nuevo"),
     c(
         "mail.toggle_flag",
         "Flag / unflag",

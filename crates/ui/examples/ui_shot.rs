@@ -719,6 +719,20 @@ fn main() -> Result<(), String> {
         }
         later(&mut harness);
     }
+    // `--bulk`: tres correos marcados con sus casillas (barra de acciones en lote).
+    if args.iter().any(|a| a == "--bulk") {
+        use egui_kittest::kittest::{NodeT, Queryable};
+        for n in [0usize, 1, 3] {
+            let node = harness
+                .query_all_by_role(egui::accesskit::Role::CheckBox)
+                .filter(|c| c.accesskit_node().label().is_some_and(|l| l.starts_with("Seleccionar")))
+                .nth(n);
+            if let Some(node) = node {
+                node.click();
+            }
+            later(&mut harness);
+        }
+    }
     // S1.12: `--note-edit` muestra la nota en el DocEditor (Markdown con estilo al teclear).
     if args.iter().any(|a| a == "--note-edit") {
         let ctx = harness.ctx.clone();

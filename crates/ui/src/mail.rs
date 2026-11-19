@@ -686,6 +686,71 @@ fn outbox_view(app: &mut DeskApp, ui: &mut Ui) {
     }
 }
 
+/// Barra de acciones con varios mensajes seleccionados: cuántos, seleccionar todo o nada, y lo que
+/// se hace con todos a la vez (marcar leídos o no leídos, archivar, eliminar, mover y más).
+fn bulk_bar(app: &mut DeskApp, ui: &mut Ui, rows: &[ListRow]) {
+    let ctx = ui.ctx().clone();
+    let c = theme::colors(ui);
+    let n = app.mail.list.selection.len();
+    let key_of = |i: usize| rows.get(i).map_or(u64::MAX - i as u64, |r| r.id.get());
+    let mut select_all = false;
+    let mut clear = false;
+    let mut cmd: Option<&str> = None;
+    egui::Frame::new().fill(c.selection_inactive).inner_margin(egui::Margin::symmetric(12, 6)).show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(format!("{n} {}", pick("selected", "seleccionados"))).strong().color(c.text));
+            if n < rows.len()
+                && ui.small_button(pick("Select all", "Seleccionar todo")).on_hover_text("Ctrl+A").clicked()
+            {
+                select_all = true;
+            }
+            if ui.small_button(pick("Clear selection", "Quitar selección")).on_hover_text("Esc").clicked() {
+                clear = true;
+            }
+            ui.separator();
+            for (id, en, es) in [
+                ("mail.mark_read", "Mark read", "Marcar leídos"),
+                ("mail.mark_unread", "Mark unread", "Marcar no leídos"),
+                ("mail.archive", "Archive", "Archivar"),
+                ("mail.delete", "Delete", "Eliminar"),
+                ("mail.move", "Move…", "Mover…"),
+            ] {
+                if ui.small_button(pick(en, es)).clicked() {
+                    cmd = Some(id);
+                }
+            }
+            ui.menu_button(pick("More", "Más"), |ui| {
+                for (id, en, es) in [
+                    ("mail.toggle_flag", "Flag / unflag", "Marcar / quitar seguimiento"),
+                    ("mail.snooze", "Snooze…", "Posponer…"),
+                    ("mail.label", "Label…", "Etiquetar…"),
+                    ("mail.category", "Category…", "Categoría…"),
+                ] {
+                    if ui.button(pick(en, es)).clicked() {
+                        cmd = Some(id);
+                        ui.close();
+                    }
+                }
+            });
+        });
+    });
+    if select_all {
+        app.mail.list.selection.select_all(rows.len(), &key_of);
+    }
+    // Esc quita la selección (si no se está escribiendo en un campo).
+    let esc = ui.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input();
+    if clear || esc {
+        app.mail.list.selection.clear();
+    }
+    if select_all || clear || esc {
+        let ids: Vec<MessageId> = app.mail.list.selection.keys().map(MessageId).collect();
+        app.session.set_selection(ids, None);
+    }
+    if let Some(id) = cmd {
+        app.run(&ctx, id);
+    }
+}
+
 fn message_list(app: &mut DeskApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let c = theme::colors(ui);
@@ -747,6 +812,10 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             });
         });
     });
+    // Varios mensajes seleccionados: sus acciones, a la vista.
+    if app.mail.list.selection.len() >= 2 {
+        bulk_bar(app, ui, &rows);
+    }
     crate::rules_ui::category_tabs(app, ui);
     hairline(ui);
 
@@ -802,7 +871,8 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
     let DeskApp { session, mail, panes, .. } = app;
     let rows_for_key = std::sync::Arc::clone(&rows);
     let key_of = move |i: usize| rows_for_key.get(i).map_or(u64::MAX - i as u64, |r| r.id.get());
-    let mut lv = ListView::new("mail-list", &mut mail.columns, rows.len()).label(list_label);
+    // Casillas: seleccionar varios sin teclas (Ctrl/Mayús+clic y Ctrl+A también sirven).
+    let mut lv = ListView::new("mail-list", &mut mail.columns, rows.len()).label(list_label).checkboxes(true);
     if density != DensityPref::Dense {
         let h = if density == DensityPref::Comfortable { 62.0 } else { 48.0 };
         lv = lv.row_height(h).header(false);
@@ -1140,8 +1210,8 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCar
         if n > 1 {
             EmptyState::new(Icon::Mail, &format!("{n} {}", pick("messages selected", "mensajes seleccionados")))
                 .body(pick(
-                    "Archive, delete or move them all at once from the toolbar or with Ctrl+K.",
-                    "Archívalos, elimínalos o muévelos juntos desde la barra o con Ctrl+K.",
+                    "Mark them read, archive, delete or move them all at once from the bar above the list, or with Ctrl+K.",
+                    "Márcalos como leídos, archívalos, elimínalos o muévelos juntos desde la barra sobre la lista, o con Ctrl+K.",
                 ))
                 .show(ui);
         } else {
