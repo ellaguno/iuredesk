@@ -7,7 +7,9 @@ Kerberos, correo, calendario, contactos, tareas y disponibilidad.
 - VM `iuredesk-ex1`: 4 CPU, 12 GB (`RAM_MB=16384 vm.sh …` para más), disco de 150 GB dinámico.
 - Red: NAT (internet para descargar requisitos) y solo-anfitrión `192.168.56.10`.
 - Nombres: `ex1.iuredesk.test` (EWS), `autodiscover.iuredesk.test`, reino Kerberos `IUREDESK.TEST`.
-- Contraseñas: aleatorias, en `tools/exchange-lab/lab.env` (fuera de git; la VM lo lee de `Z:\`).
+- Carpeta de trabajo: `~/VirtualBox VMs/iuredesk-ex1/lab` (fuera del proyecto y de MEGA; `LAB_DIR=…`
+  para otra). `vm.sh` copia ahí los scripts; la VM la ve como `Z:\`. Ahí quedan las contraseñas
+  aleatorias (`lab.env`) y el certificado (`iuredesk-lab.crt`).
 - Buzones: `ana@iuredesk.test` y `bea@iuredesk.test`.
 
 Las versiones de evaluación funcionan 180 días sin clave.
@@ -22,7 +24,8 @@ tools/exchange-lab/vm.sh ~/Descargas/<windows-server-2022>.iso ~/Descargas/<exch
 ```
 
 Windows se instala solo (20–40 min, varios reinicios) y entra como `Administrator` con la
-contraseña `ADMIN_PASSWORD` de `lab.env`.
+contraseña `ADMIN_PASSWORD` de `lab.env`. Si cambias un script en el proyecto, cópialo de nuevo a la
+carpeta de trabajo.
 
 ## 2–5. Dentro de la VM
 
@@ -50,7 +53,7 @@ echo "192.168.56.10 ex1.iuredesk.test autodiscover.iuredesk.test iuredesk.test" 
 ```
 
 ```bash
-sudo cp tools/exchange-lab/iuredesk-lab.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates
+sudo cp ~/"VirtualBox VMs/iuredesk-ex1/lab/iuredesk-lab.crt" /usr/local/share/ca-certificates/ && sudo update-ca-certificates
 ```
 
 IureDesk confía en las raíces del sistema además de las de Mozilla (lo mismo que necesita un

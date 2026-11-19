@@ -2,12 +2,15 @@
 # Crea la VM de laboratorio de Exchange (F8.5) en VirtualBox con instalación desatendida de
 # Windows Server 2022. Uso:
 #   tools/exchange-lab/vm.sh <ISO de Windows Server 2022> <ISO de Exchange>
-# Genera (una vez) las contraseñas de laboratorio en tools/exchange-lab/lab.env (fuera de git).
+# Copia los scripts a una carpeta de trabajo fuera del proyecto (y fuera de MEGA: ahí van las
+# contraseñas y el certificado), por omisión ~/VirtualBox VMs/iuredesk-ex1/lab, que la VM ve como Z:.
+# Genera (una vez) las contraseñas de laboratorio en <carpeta>/lab.env.
 set -euo pipefail
 
 VM=iuredesk-ex1
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BASE="$HOME/VirtualBox VMs"
+LAB="${LAB_DIR:-$BASE/$VM/lab}"
 WIN_ISO="${1:?falta la ISO de Windows Server 2022}"
 EX_ISO="${2:?falta la ISO de Exchange}"
 RAM_MB="${RAM_MB:-12288}"
@@ -21,8 +24,13 @@ if VBoxManage showvminfo "$VM" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Carpeta de trabajo con los scripts (se actualizan si cambian en el proyecto).
+mkdir -p "$LAB"
+cp "$HERE"/*.ps1 "$HERE/README.md" "$LAB/"
+echo "carpeta del laboratorio: $LAB"
+
 # Contraseñas de laboratorio: aleatorias, solo en este equipo.
-ENV="$HERE/lab.env"
+ENV="$LAB/lab.env"
 if [ ! -f "$ENV" ]; then
   gen() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 14; }
   umask 077
@@ -54,7 +62,7 @@ VBoxManage createmedium disk --filename "$BASE/$VM/$VM.vdi" --size "$DISK_MB" --
 VBoxManage storagectl "$VM" --name SATA --add sata --controller IntelAhci --portcount 4
 VBoxManage storageattach "$VM" --storagectl SATA --port 0 --device 0 --type hdd --medium "$BASE/$VM/$VM.vdi"
 # Carpeta compartida con los scripts (\\VBOXSVR\lab, montada en Z:).
-VBoxManage sharedfolder add "$VM" --name lab --hostpath "$HERE" --automount --auto-mount-point 'Z:'
+VBoxManage sharedfolder add "$VM" --name lab --hostpath "$LAB" --automount --auto-mount-point 'Z:'
 
 # Windows Server 2022 Standard (escritorio), desatendido, con Guest Additions.
 VBoxManage unattended install "$VM" --iso="$WIN_ISO" --user=Administrator --password="$ADMIN_PASSWORD" \
@@ -68,5 +76,5 @@ cat <<MSG
 
 La VM $VM se está instalando sola (20–40 min, varios reinicios). Cuando veas el escritorio,
 sigue tools/exchange-lab/README.md desde el paso 2 (dentro de la VM, PowerShell como
-administrador, scripts en Z:\\).
+administrador, scripts en Z:\\). Contraseñas y certificado: $LAB
 MSG
