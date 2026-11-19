@@ -108,8 +108,46 @@ fn resumen_de_planes_de_iureproject() {
     assert_eq!(o.upcoming_milestones[0].name, "Audiencia");
     assert!(r[1].overview.as_ref().unwrap_err().es.contains("no pudo leer"), "{:?}", r[1].overview);
     assert!(r[2].overview.as_ref().unwrap_err().es.contains("ya no está"), "{:?}", r[2].overview);
+    // El expediente de Iurefficient del plan (panel del caso).
+    assert_eq!(o.case.as_ref().map(|c| c.number.as_str()), Some("LAB-2026-0012"));
     // Sin IureProject: invitación, no error.
     assert!(matches!(Suite::empty().project_overviews(&[a]).unwrap(), Outcome::NotInstalled(_)));
+}
+
+/// «Correo → tarea del plan»: abrir, agregar con notas, fecha y responsable, enlazar el correo y
+/// guardar; si IureProject guardó entre tanto, se pide intentar de nuevo.
+#[test]
+fn tarea_de_un_correo_en_un_plan() {
+    let dir = tempfile::tempdir().unwrap();
+    let plan = dir.path().join("Caso Ramírez.iurp");
+    std::fs::write(&plan, b"plan").unwrap();
+    let s = fake_suite(SisterApp::Project);
+    let task = iuredesk_integrations::NewProjectTask {
+        name: "Responder a Altamira".into(),
+        notes: "De: Ana <ana@altamira.mx>".into(),
+        deadline: Some("2026-11-25".into()),
+        resource: Some("Laura".into()),
+        link: Some(("iuredesk://message/m1@x".into(), "Correo de Ana".into())),
+    };
+    let t = s.add_project_task(&plan, &task).unwrap().ready().unwrap();
+    assert_eq!((t.uid, t.name.as_str()), (40, "Responder a Altamira"));
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("Caso Ramírez.iurp.agregado.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved[0]["deadline"], "2026-11-25");
+    assert_eq!(saved[0]["resource"], "Laura");
+    assert_eq!(saved[1]["hyperlink"]["address"], "iuredesk://message/m1@x");
+    assert_eq!(saved[1]["hyperlink"]["uid"], 40);
+    // Sin nombre: se dice, no se llama.
+    let empty = iuredesk_integrations::NewProjectTask { name: "  ".into(), ..task.clone() };
+    let Outcome::NotAvailable(e) = s.add_project_task(&plan, &empty).unwrap() else { panic!("sin nombre") };
+    assert!(e.es.contains("nombre"));
+    // El plan se acaba de guardar en IureProject.
+    let busy = dir.path().join("ocupado.iurp");
+    std::fs::write(&busy, b"plan").unwrap();
+    let Outcome::NotAvailable(e) = s.add_project_task(&busy, &task).unwrap() else { panic!("debía fallar") };
+    assert!(e.es.contains("inténtalo de nuevo"), "{e:?}");
+    assert!(matches!(Suite::empty().add_project_task(&plan, &task).unwrap(), Outcome::NotInstalled(_)));
 }
 
 #[test]

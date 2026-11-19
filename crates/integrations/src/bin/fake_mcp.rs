@@ -25,6 +25,8 @@ struct Fake {
     status_calls: Mutex<u32>,
     /// Plan abierto con `file_open` (como IureProject).
     plan: Mutex<String>,
+    /// Tareas agregadas y vínculos del plan abierto (se escriben junto al plan con `file_save`).
+    added: Mutex<Vec<Value>>,
     /// Grabación en curso (como IureTranscribe): en pausa o no.
     recording: Mutex<Option<bool>>,
 }
@@ -52,6 +54,9 @@ impl Handler for Fake {
             "dictar",
             "file_open",
             "project_overview",
+            "task_add_list",
+            "task_set_hyperlink",
+            "file_save",
             "start_recording",
             "recording_status",
             "pause_recording",
@@ -118,6 +123,30 @@ impl Handler for Fake {
                     return Err(CallError::Tool(anyhow::anyhow!("no es un plan válido")));
                 }
                 *self.plan.lock().unwrap_or_else(|e| e.into_inner()) = path.to_string();
+                self.added.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                Ok(Reply::Data(json!({"ok": true})))
+            }
+            "task_add_list" => {
+                let items = a.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
+                let mut added = self.added.lock().unwrap_or_else(|e| e.into_inner());
+                let uids: Vec<u64> = (0..items.len() as u64).map(|i| 40 + i).collect();
+                added.extend(items);
+                Ok(Reply::Data(json!({"uids": uids})))
+            }
+            "task_set_hyperlink" => {
+                self.added.lock().unwrap_or_else(|e| e.into_inner()).push(json!({"hyperlink": a}));
+                Ok(Reply::Data(json!({"ok": true})))
+            }
+            // Como IureProject cuando su ventana guardó el plan entre tanto.
+            "file_save" => {
+                let plan = self.plan.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                if plan.contains("ocupado") {
+                    return Err(CallError::Tool(anyhow::anyhow!(
+                        "otro programa cambió {plan} desde que se abrió; vuelve a abrirlo (o guarda con force)"
+                    )));
+                }
+                let added = self.added.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let _ = std::fs::write(format!("{plan}.agregado.json"), Value::Array(added).to_string());
                 Ok(Reply::Data(json!({"ok": true})))
             }
             "project_overview" => {
@@ -127,6 +156,7 @@ impl Handler for Fake {
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 Ok(Reply::Data(json!({
+                    "case": {"id": "c-7", "number": "LAB-2026-0012", "title": "Despido injustificado", "client": "Ramírez"},
                     "name": name, "as_of": "2026-11-17", "finish": "2027-01-29T17:00:00", "percent_complete": 42.5,
                     "tasks": 12, "done": 4, "in_progress": 3, "not_started": 5, "late": 1, "critical": 2,
                     "late_tasks": [{"uid": 7, "name": "Peritaje", "finish": "2026-11-10T17:00:00", "percent_complete": 30, "critical": true}],
@@ -196,6 +226,7 @@ fn main() {
     std::process::exit(serve(Fake {
         status_calls: Mutex::new(0),
         plan: Mutex::new(String::new()),
+        added: Mutex::new(Vec::new()),
         recording: Mutex::new(None),
     }));
 }

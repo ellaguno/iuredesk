@@ -1172,6 +1172,7 @@ fn message_menu(app: &mut DeskApp, resp: &egui::Response) {
     let snooze = app.session.snooze_menu();
     let snoozed = app.session.focused().is_some_and(|m| app.session.is_snoozed(m));
     let mut extra: Option<String> = None;
+    let project = app.suite.hub.installed(iuredesk_engine::iuredesk_integrations::SisterApp::Project);
     egui::Popup::context_menu(resp).show(|ui| {
         for (id, ic, en, es) in [
             ("mail.reply", Icon::Reply, "Reply", "Responder"),
@@ -1188,6 +1189,12 @@ fn message_menu(app: &mut DeskApp, resp: &egui::Response) {
                 chosen = Some(id);
                 ui.close();
             }
+        }
+        if project
+            && icons::menu_item(ui, Some(Icon::Gantt), pick("Task in a project…", "Tarea en un proyecto…")).clicked()
+        {
+            chosen = Some("suite.project_task");
+            ui.close();
         }
         crate::rules_ui::context_items(ui, &snooze, snoozed, &mut extra);
     });
@@ -1348,6 +1355,7 @@ fn action_bar(app: &mut DeskApp, ui: &mut Ui) {
     let snoozed = app.session.focused().is_some_and(|m| app.session.is_snoozed(m));
     let draft = app.session.focused().is_some_and(|m| app.session.is_draft(m));
     let mut extra: Option<String> = None;
+    let project = app.suite.hub.installed(iuredesk_engine::iuredesk_integrations::SisterApp::Project);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         let narrow = ui.available_width() < 520.0;
@@ -1403,6 +1411,13 @@ fn action_bar(app: &mut DeskApp, ui: &mut Ui) {
                     fire = Some(id);
                     ui.close();
                 }
+            }
+            if project
+                && icons::menu_item(ui, Some(Icon::Gantt), pick("Task in a project…", "Tarea en un proyecto…"))
+                    .clicked()
+            {
+                fire = Some("suite.project_task");
+                ui.close();
             }
             crate::rules_ui::more_items(ui, snoozed, &mut extra);
         });

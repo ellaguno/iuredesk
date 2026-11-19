@@ -255,3 +255,47 @@ fn projects_card_only_with_iureproject() {
     settle(&mut h);
     assert!(h.query_by_label("Seguir un plan…").is_some(), "invita a seguir un plan");
 }
+
+/// Los hitos próximos de los planes seguidos se ven en el calendario como días completos de solo
+/// lectura; pulsar uno abre su plan en IureProject.
+#[test]
+fn project_milestones_in_the_calendar() {
+    use iuredesk_engine::iuredesk_integrations::{ProjectOverview, ProjectStatus, ProjectTask, SisterApp, Suite};
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let plans = tempfile::tempdir().unwrap();
+    let plan = plans.path().join("Caso Ramírez.iurp");
+    std::fs::write(&plan, b"plan").unwrap();
+    let launches = Arc::new(Launches::default());
+    let mut a = app(dir.path());
+    a.set_suite(
+        Suite::empty().with_app(SisterApp::Project, "/opt/iureproject/iureproject").with_opener(launches.clone()),
+    );
+    let hito = ProjectTask {
+        uid: 9,
+        name: "Audiencia".into(),
+        finish: Some("2026-10-22T17:00:00".into()),
+        percent_complete: 0,
+        critical: true,
+    };
+    let o = ProjectOverview { name: "Caso Ramírez".into(), upcoming_milestones: vec![hito], ..Default::default() };
+    a.set_projects_for_tests(
+        vec![plan.to_string_lossy().into_owned()],
+        vec![ProjectStatus { file: plan.clone(), overview: Ok(o) }],
+    );
+    a.session.module = Module::Calendar;
+    let mut h = harness(a);
+    settle(&mut h);
+    let label = "Hito · Audiencia — Caso Ramírez";
+    assert!(h.query_by_label(label).is_some(), "el hito en la semana");
+    h.get_by_label(label).click();
+    settle(&mut h);
+    assert!(h.query_by_label("Guardar").is_none(), "no abre el editor de eventos");
+    let start = Instant::now();
+    while launches.0.lock().unwrap().is_empty() && start.elapsed() < Duration::from_secs(10) {
+        h.run_steps(1);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let l = launches.0.lock().unwrap().join("\n");
+    assert!(l.contains("Caso Ramírez.iurp"), "{l}");
+}

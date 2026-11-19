@@ -48,7 +48,7 @@ pub use error::{IntegrationError, Result};
 pub use mcp_client::{McpClient, McpOptions, ServerInfo, ToolInfo, ToolResult};
 pub use ocr::{OcrOptions, OcrResult};
 pub use opener::{Opener, SystemOpener};
-pub use project::{ProjectOverview, ProjectStatus, ProjectTask};
+pub use project::{AddedTask, NewProjectTask, ProjectCase, ProjectOverview, ProjectStatus, ProjectTask};
 pub use recording::{Recorded, Recording, RecordingStatus};
 pub use suite::{AppStatus, InstallHint, Outcome, SisterApp, Suite, Text};
 pub use transcribe::{JobState, Transcript, TranscriptFile, TranscriptionJob};

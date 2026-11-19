@@ -47,8 +47,9 @@ fn installed(app: &DeskApp) -> bool {
     app.suite.hub.installed(SisterApp::Project)
 }
 
-/// Pide el estado si hace falta (lista nueva, nunca leído o viejo).
-fn ensure(app: &mut DeskApp) {
+/// Pide el estado si hace falta (lista nueva, nunca leído o viejo). También desde el calendario
+/// (los hitos se ven ahí).
+pub(crate) fn ensure(app: &mut DeskApp) {
     let files = app.session.prefs.projects.clone();
     let p = &mut app.today.projects;
     if files.is_empty() || !installed_flag(&app.suite) {
@@ -118,6 +119,105 @@ pub fn unfollow(app: &mut DeskApp, path: &str) {
     app.session.prefs.projects.retain(|p| p != path);
     app.today.projects.data.retain(|s| s.file.to_string_lossy() != path);
     app.session.save_prefs();
+}
+
+/// Los planes seguidos que pertenecen al expediente `case_id` de Iurefficient (IureProject lo
+/// guarda en el plan): archivo y una línea de estado («Caso Ramírez · 43 % · 1 atrasada · próximo
+/// hito: Audiencia, 30 nov»), para la tarjeta del caso en el panel de contexto.
+pub(crate) fn plans_for_case(app: &DeskApp, case_id: &str) -> Vec<(PathBuf, String)> {
+    if case_id.is_empty() || !installed(app) {
+        return Vec::new();
+    }
+    app.today
+        .projects
+        .data
+        .iter()
+        .filter_map(|s| {
+            let o = s.overview.as_ref().ok()?;
+            (o.case.as_ref()?.id == case_id).then(|| (s.file.clone(), status_line(o)))
+        })
+        .take(3)
+        .collect()
+}
+
+/// «Caso Ramírez · 43 % · 1 atrasada · próximo hito: Audiencia, 30 nov».
+fn status_line(o: &iuredesk_engine::iuredesk_integrations::ProjectOverview) -> String {
+    let mut line = format!("{} · {:.0} %", o.name, o.percent_complete);
+    if o.late > 0 {
+        line.push_str(&format!(" · {} {}", o.late, pick("late", "atrasadas")));
+    }
+    if let Some(m) = o.upcoming_milestones.first() {
+        let when = m.finish.as_deref().map(short_date).unwrap_or_default();
+        line.push_str(&format!(
+            " · {} {}{}",
+            pick("next milestone:", "próximo hito:"),
+            m.name,
+            if when.is_empty() { String::new() } else { format!(", {when}") }
+        ));
+    }
+    line
+}
+
+/// Calendario ficticio de los hitos de IureProject (no existe: nadie lo edita ni lo arrastra).
+pub(crate) const MILESTONES_CALENDAR: iuredesk_model::CalendarId = iuredesk_model::CalendarId(u64::MAX);
+/// Ids de los hitos: arriba de cualquier evento real.
+const MILESTONE_ID: u64 = 0xFFFF_0000_0000_0000;
+/// Color de los hitos en el calendario (violeta, distinto de los calendarios).
+const MILESTONE_COLOR: u32 = 0x7c4dff;
+
+/// Los hitos próximos de los planes que se siguen, como días completos de solo lectura en el
+/// calendario («Hito · Audiencia — Caso Ramírez»). Pulsar uno abre el plan en IureProject.
+pub(crate) fn with_milestones(
+    app: &DeskApp,
+    mut occ: Vec<iuredesk_engine::calendar::Occurrence>,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Vec<iuredesk_engine::calendar::Occurrence> {
+    if !installed(app) {
+        return occ;
+    }
+    let zone = app.session.zone();
+    for (pi, st) in app.today.projects.data.iter().enumerate().take(MAX_PROJECTS) {
+        let Ok(o) = &st.overview else { continue };
+        for (mi, m) in o.upcoming_milestones.iter().enumerate().take(64) {
+            let Some(day) =
+                m.finish.as_deref().and_then(|f| f.get(..10)).and_then(|d| d.parse::<chrono::NaiveDate>().ok())
+            else {
+                continue;
+            };
+            let Some(next) = day.succ_opt() else { continue };
+            let (start, end) = (zone.day_start(day), zone.day_start(next));
+            if end <= from || start >= to {
+                continue;
+            }
+            occ.push(iuredesk_engine::calendar::Occurrence {
+                id: iuredesk_model::EventId(MILESTONE_ID | ((pi as u64) << 16) | mi as u64),
+                summary: format!("{} · {} — {}", pick("Milestone", "Hito"), m.name, o.name),
+                location: String::new(),
+                start,
+                end,
+                all_day: true,
+                days: Some((day, next)),
+                color: MILESTONE_COLOR,
+                tentative: false,
+                recurring: false,
+                calendar: MILESTONES_CALENDAR,
+                recurrence_id: None,
+                busy: false,
+                cancelled: false,
+            });
+        }
+    }
+    occ
+}
+
+/// El plan de un hito del calendario (si `o` es uno).
+pub(crate) fn milestone_plan(app: &DeskApp, o: &iuredesk_engine::calendar::Occurrence) -> Option<PathBuf> {
+    if o.calendar != MILESTONES_CALENDAR {
+        return None;
+    }
+    let pi = usize::try_from((o.id.0 >> 16) & 0xFFFF).ok()?;
+    app.today.projects.data.get(pi).map(|s| s.file.clone())
 }
 
 /// `AAAA-MM-DD…` → «10 nov».

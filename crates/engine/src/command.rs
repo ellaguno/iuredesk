@@ -603,6 +603,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         "import importar migrar pst mbox",
     ),
     c(
+        "suite.project_task",
+        "Create a task in a project… (IureProject)",
+        "Crear tarea en un proyecto… (IureProject)",
+        "check",
+        Group::App,
+        "tarea task proyecto project plan iureproject gantt pendiente",
+    ),
+    c(
         "suite.read_aloud",
         "Read message aloud (IureVoz)",
         "Leer el mensaje en voz alta (IureVoz)",

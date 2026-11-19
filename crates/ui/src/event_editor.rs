@@ -93,6 +93,11 @@ pub(crate) fn open(app: &mut DeskApp, draft: EventDraft) {
 
 /// Abre una aparición (clic en un evento).
 pub(crate) fn open_occurrence(app: &mut DeskApp, o: &Occurrence) {
+    // Un hito de IureProject: se abre su plan.
+    if let Some(plan) = crate::today_projects::milestone_plan(app, o) {
+        app.suite.hub.run(iuredesk_engine::suite::SuiteAction::OpenProject(plan));
+        return;
+    }
     if let Some(d) = app.session.draft_for(o) {
         app.calendar.editor.quick = None;
         let ro = !app.session.can_edit(d.calendar);

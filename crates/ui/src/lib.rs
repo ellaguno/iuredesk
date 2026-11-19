@@ -36,6 +36,7 @@ mod note_preview;
 mod onboarding;
 mod opened;
 mod pim;
+mod project_task_ui;
 mod reader;
 mod recording_ui;
 mod reminders;

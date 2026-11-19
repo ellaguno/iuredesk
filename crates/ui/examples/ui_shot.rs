@@ -409,6 +409,61 @@ fn main() -> Result<(), String> {
         use iuredesk_engine::iuredesk_integrations::{SisterApp, Suite};
         app.set_suite(Suite::empty().with_app(SisterApp::Editor, "/opt/iureditor/iureditor"));
     }
+    // Hitos de IureProject en el calendario: `--milestones` (con el módulo calendario).
+    if args.iter().any(|a| a == "--milestones") {
+        use iuredesk_engine::iuredesk_integrations::{ProjectOverview, ProjectStatus, ProjectTask, SisterApp, Suite};
+        app.set_suite(Suite::empty().with_app(SisterApp::Project, "/opt/iureproject/iureproject"));
+        let hito = |uid, name: &str, finish: &str| ProjectTask {
+            uid,
+            name: name.into(),
+            finish: Some(finish.into()),
+            percent_complete: 0,
+            critical: true,
+        };
+        let o = ProjectOverview {
+            name: "Caso Ramírez".into(),
+            upcoming_milestones: vec![
+                hito(9, "Audiencia", "2026-10-22T17:00:00"),
+                hito(10, "Entrega de pruebas", "2026-10-28T17:00:00"),
+            ],
+            ..Default::default()
+        };
+        app.set_projects_for_tests(
+            vec!["/casos/Caso Ramírez.iurp".into()],
+            vec![ProjectStatus { file: "/casos/Caso Ramírez.iurp".into(), overview: Ok(o) }],
+        );
+    }
+    // El plan de IureProject del caso en el panel de contexto: `--case-plan`.
+    if args.iter().any(|a| a == "--case-plan") {
+        use iuredesk_engine::iuredesk_integrations::{
+            ProjectCase, ProjectOverview, ProjectStatus, ProjectTask, SisterApp, Suite,
+        };
+        app.set_suite(Suite::empty().with_app(SisterApp::Project, "/opt/iureproject/iureproject"));
+        let o = ProjectOverview {
+            case: Some(ProjectCase { id: "c-241/2026".into(), number: "241/2026".into(), ..Default::default() }),
+            name: "Arrendamiento Altamira".into(),
+            percent_complete: 42.5,
+            late: 1,
+            upcoming_milestones: vec![ProjectTask {
+                uid: 9,
+                name: "Audiencia".into(),
+                finish: Some("2026-11-30T17:00:00".into()),
+                percent_complete: 0,
+                critical: true,
+            }],
+            ..Default::default()
+        };
+        app.set_projects_for_tests(
+            vec!["/casos/Arrendamiento Altamira.iurp".into()],
+            vec![ProjectStatus { file: "/casos/Arrendamiento Altamira.iurp".into(), overview: Ok(o) }],
+        );
+    }
+    // «Correo → tarea del plan» (IureProject): `--project-task`.
+    if args.iter().any(|a| a == "--project-task") {
+        use iuredesk_engine::iuredesk_integrations::{SisterApp, Suite};
+        app.set_suite(Suite::empty().with_app(SisterApp::Project, "/opt/iureproject/iureproject"));
+        app.set_projects_for_tests(vec!["/casos/Caso Ramírez.iurp".into(), "/casos/Mudanza.iurp".into()], vec![]);
+    }
     if args.iter().any(|a| a == "--compose") {
         // `--secure`: clave propia y de los destinatarios (Autocrypt mutuo) → «Cifrar» se enciende.
         if args.iter().any(|a| a == "--secure")
@@ -717,6 +772,11 @@ fn main() -> Result<(), String> {
         if let Some(n) = harness.query_all_by_label_contains("Adjunto ").next() {
             n.click_secondary();
         }
+        later(&mut harness);
+    }
+    if args.iter().any(|a| a == "--project-task") {
+        let ctx = harness.ctx.clone();
+        harness.state_mut().run(&ctx, "suite.project_task");
         later(&mut harness);
     }
     // `--bulk`: tres correos marcados con sus casillas (barra de acciones en lote).
