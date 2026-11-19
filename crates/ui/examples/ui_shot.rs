@@ -179,6 +179,18 @@ fn main() -> Result<(), String> {
         session.prefs.text_scale_pct = p;
     }
     session.prefs.crisp_text = args.iter().any(|a| a == "--crisp");
+    // UX-18: columnas plegadas (`--collapse folders,list,reading`); UX-17: `--hide-second-account`.
+    if let Some(c) = flag("--collapse") {
+        session.prefs.folders_collapsed = c.contains("folders");
+        session.prefs.list_collapsed = c.contains("list");
+        session.prefs.reading_collapsed = c.contains("reading");
+    }
+    if args.iter().any(|a| a == "--hide-second-account")
+        && let Some(l) = session.account_labels().get(1).cloned()
+    {
+        session.prefs.hidden_accounts.push(l.id.0);
+        session.rebuild_rows();
+    }
     // `--ms-org`: Microsoft 365 de una organización con su propio registro (F8.1).
     if args.iter().any(|a| a == "--ms-org") {
         session.prefs.microsoft_org = iuredesk_engine::MicrosoftOrg {

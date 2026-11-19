@@ -134,7 +134,12 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
     }
     let focus = app.mail.focus;
     if !focus {
-        split::left(ui, "folders", PaneKind::Sidebar, 244.0, 190.0..=380.0, |ui| folders(app, ui));
+        if app.session.prefs.folders_collapsed {
+            let tip = pick("Show accounts and folders", "Mostrar cuentas y carpetas");
+            pane_rail(app, ui, "folders-rail", false, Icon::Folder, tip, "view.toggle_folders");
+        } else {
+            split::left(ui, "folders", PaneKind::Sidebar, 244.0, 190.0..=380.0, |ui| folders(app, ui));
+        }
     }
     folder_dialog(app, &ctx);
 
@@ -164,6 +169,19 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
     }
     let inline = if has_context && !side { Some((&card, iure.as_ref())) } else { None };
     if focus {
+        split::center(ui, PaneKind::Detail, |ui| reading_pane(app, ui, inline));
+        return;
+    }
+    // UX-18: la lista o la lectura plegadas: la otra ocupa todo.
+    if app.session.prefs.reading_collapsed {
+        let tip = pick("Show the reading pane", "Mostrar el panel de lectura");
+        pane_rail(app, ui, "reading-rail", true, Icon::Mail, tip, "view.toggle_reading");
+        split::center(ui, PaneKind::Content, |ui| message_list(app, ui));
+        return;
+    }
+    if app.session.prefs.list_collapsed {
+        let tip = pick("Show the message list", "Mostrar la lista de correos");
+        pane_rail(app, ui, "list-rail", false, Icon::List, tip, "view.toggle_list");
         split::center(ui, PaneKind::Detail, |ui| reading_pane(app, ui, inline));
         return;
     }
@@ -205,6 +223,55 @@ fn remember_reading_width(app: &mut DeskApp, ctx: &egui::Context, w: f32) {
     app.mail.reading_w = Some(w);
 }
 
+/// UX-18: pliega o despliega una columna del correo. La lista y la lectura nunca se pliegan las
+/// dos: plegar una despliega la otra.
+fn toggle_pane(app: &mut DeskApp, id: &str) {
+    let p = &mut app.session.prefs;
+    match id {
+        "view.toggle_folders" => p.folders_collapsed = !p.folders_collapsed,
+        "view.toggle_list" => {
+            p.list_collapsed = !p.list_collapsed;
+            if p.list_collapsed {
+                p.reading_collapsed = false;
+            }
+        }
+        "view.toggle_reading" => {
+            p.reading_collapsed = !p.reading_collapsed;
+            if p.reading_collapsed {
+                p.list_collapsed = false;
+            }
+        }
+        _ => return,
+    }
+    app.session.save_prefs();
+}
+
+/// Ancho del riel de una columna plegada.
+const PANE_RAIL: f32 = 30.0;
+
+/// El riel de una columna plegada: un botón para desplegarla (y su nombre en la ayuda).
+fn pane_rail(app: &mut DeskApp, ui: &mut Ui, id: &str, right: bool, ic: Icon, tip: &str, cmd: &'static str) {
+    let ctx = ui.ctx().clone();
+    let frame = split::frame(ui, PaneKind::Sidebar).inner_margin(egui::Margin::symmetric(2, 8));
+    let panel = if right { egui::Panel::right(id.to_string()) } else { egui::Panel::left(id.to_string()) };
+    let mut go = false;
+    panel.frame(frame).resizable(false).exact_size(PANE_RAIL).show(ui, |ui| {
+        ui.vertical_centered(|ui| {
+            if icons::icon_button(ui, if right { Icon::ChevronLeft } else { Icon::ChevronRight }, tip, true).clicked() {
+                go = true;
+            }
+            ui.add_space(4.0);
+            let r = icons::icon_button(ui, ic, tip, true);
+            if r.clicked() {
+                go = true;
+            }
+        });
+    });
+    if go {
+        app.run(&ctx, cmd);
+    }
+}
+
 /// UX-3: comandos de la vista que solo sabe hacer la UI.
 pub(crate) fn view_command(app: &mut DeskApp, ctx: &egui::Context, id: &str) {
     match id {
@@ -212,6 +279,11 @@ pub(crate) fn view_command(app: &mut DeskApp, ctx: &egui::Context, id: &str) {
             if let Some(m) = app.session.focused() {
                 crate::reader::open(app, m);
             }
+        }
+        "view.toggle_folders" | "view.toggle_list" | "view.toggle_reading" => {
+            app.session.module = iuredesk_engine::Module::Mail;
+            app.mail.focus = false;
+            toggle_pane(app, id);
         }
         "view.reading_focus" => {
             app.session.module = iuredesk_engine::Module::Mail;
@@ -248,8 +320,32 @@ fn context_card(app: &mut DeskApp, id: MessageId) -> ContextCard {
 fn folders(app: &mut DeskApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     ui.add_space(6.0);
-    if wide_primary(ui, Icon::Plus, pick("New message", "Nuevo mensaje")).clicked() {
+    // «Nuevo mensaje» y, a su derecha, el botón para plegar la columna (UX-18). Con medidas
+    // exactas: pedir más ancho que el disponible hacía crecer la columna en cada cuadro.
+    let h = theme::density(ui.ctx()).control_height() + 6.0;
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
+    let left = Rect::from_min_max(row.min, pos2((row.right() - 32.0).max(row.left()), row.bottom()));
+    let right = Rect::from_min_max(pos2(row.right() - 28.0, row.top()), row.max);
+    let new = ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+        wide_primary(ui, Icon::Plus, pick("New message", "Nuevo mensaje"))
+    });
+    if new.inner.clicked() {
         app.run(&ctx, "mail.new");
+    }
+    let collapse = {
+        let c = theme::colors(ui);
+        let b = Rect::from_center_size(right.center(), vec2(24.0, 24.0));
+        let r = ui.interact(b, ui.scope_id().with("hide-folders"), Sense::click());
+        if r.hovered() {
+            ui.painter().rect_filled(b, 5.0, c.hover);
+        }
+        icons::paint(ui.painter(), b.shrink(5.0), Icon::ChevronLeft, c.text_muted, c.accent);
+        let label = pick("Hide accounts and folders", "Ocultar cuentas y carpetas");
+        iurefficient_ui::a11y::button(&r, label);
+        r.on_hover_text(label).clicked()
+    };
+    if collapse {
+        app.run(&ctx, "view.toggle_folders");
     }
     ui.add_space(6.0);
     if app.session.prefs.show_today {
@@ -326,9 +422,14 @@ fn folders(app: &mut DeskApp, ui: &mut Ui) {
         }
         let rows = app.session.accounts_overview();
         for l in labels {
-            let open = app.mail.expanded_accounts.contains(&l.id);
-            let head = account_header(ui, &l.name, &l.email, open);
-            if head.clicked() {
+            // UX-17: el ojo cerrado oculta la cuenta (sus carpetas y sus correos en las vistas de
+            // todas las cuentas).
+            let visible = app.session.account_visible(l.id);
+            let open = visible && app.mail.expanded_accounts.contains(&l.id);
+            let (head, eye) = account_header(ui, &l.name, &l.email, open, visible);
+            if eye {
+                app.session.toggle_account_visible(l.id);
+            } else if head.clicked() && visible {
                 if open {
                     app.mail.expanded_accounts.remove(&l.id);
                 } else {
@@ -463,8 +564,9 @@ fn folders(app: &mut DeskApp, ui: &mut Ui) {
     });
 }
 
-/// Encabezado plegable de una cuenta.
-fn account_header(ui: &mut Ui, name: &str, email: &str, open: bool) -> egui::Response {
+/// Encabezado plegable de una cuenta, con su ojo (UX-17). Devuelve el encabezado y si se pulsó el
+/// ojo.
+fn account_header(ui: &mut Ui, name: &str, email: &str, open: bool, visible: bool) -> (egui::Response, bool) {
     let c = theme::colors(ui);
     let d = theme::density(ui.ctx());
     let h = d.row_height().max(26.0);
@@ -472,6 +574,33 @@ fn account_header(ui: &mut Ui, name: &str, email: &str, open: bool) -> egui::Res
     if resp.hovered() {
         ui.painter().rect_filled(rect, 6.0, c.hover);
     }
+    // El ojo, a la derecha (como en Blender): abierto se ve, cerrado se oculta.
+    let eye_rect = Rect::from_center_size(pos2(rect.right() - 14.0, rect.center().y), vec2(22.0, 22.0));
+    let eye = ui.interact(eye_rect, resp.id.with("eye"), Sense::click());
+    if eye.hovered() {
+        ui.painter().rect_filled(eye_rect, 4.0, c.hover);
+    }
+    icons::paint(
+        ui.painter(),
+        eye_rect.shrink(4.0),
+        if visible { Icon::Eye } else { Icon::EyeOff },
+        if visible { c.text_muted } else { c.text_muted.gamma_multiply(0.7) },
+        c.accent,
+    );
+    let tip = if visible {
+        pick(
+            "Hide this account (its folders and its mail in «all accounts» views)",
+            "Ocultar esta cuenta (sus carpetas y sus correos en las vistas de todas las cuentas)",
+        )
+    } else {
+        pick("Show this account", "Mostrar esta cuenta")
+    };
+    let eye = eye.on_hover_text(tip);
+    iurefficient_ui::a11y::toggle(
+        &eye,
+        &format!("{} {}", pick("Visible:", "Visible:"), if email.is_empty() { name } else { email }),
+        visible,
+    );
     let ir = Rect::from_center_size(pos2(rect.left() + 12.0, rect.center().y), vec2(12.0, 12.0));
     icons::paint(
         ui.painter(),
@@ -482,10 +611,11 @@ fn account_header(ui: &mut Ui, name: &str, email: &str, open: bool) -> egui::Res
     );
     let font = theme::bold_font(ui.ctx(), d.small_size() + 0.5);
     let label = if email.is_empty() { name } else { email };
-    let g = iurefficient_ui::widgets::text::elided(ui, label, font, c.text, rect.width() - 30.0);
-    ui.painter().galley(pos2(rect.left() + 24.0, rect.center().y - g.size().y / 2.0), g, c.text);
+    let ink = if visible { c.text } else { c.text_muted };
+    let g = iurefficient_ui::widgets::text::elided(ui, label, font, ink, rect.width() - 54.0);
+    ui.painter().galley(pos2(rect.left() + 24.0, rect.center().y - g.size().y / 2.0), g, ink);
     iurefficient_ui::a11y::toggle(&resp, &format!("{name} <{email}>"), open);
-    resp
+    (resp, eye.clicked())
 }
 
 fn today_panel(app: &mut DeskApp, ui: &mut Ui) {
@@ -772,6 +902,7 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
     let conversations = app.session.prefs.conversations && app.session.search_query().is_empty();
 
     // Encabezado: carpeta, total, conversaciones y densidad.
+    let mut collapse_list = false;
     egui::Frame::new().inner_margin(egui::Margin { left: 14, right: 10, top: 10, bottom: 8 }).show(ui, |ui| {
         ui.horizontal(|ui| {
             let n = rows.len();
@@ -786,6 +917,17 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
+                // UX-18: plegar la lista (la lectura ocupa su lugar).
+                if icons::icon_button(
+                    ui,
+                    Icon::ChevronLeft,
+                    pick("Hide the message list", "Ocultar la lista de correos"),
+                    true,
+                )
+                .clicked()
+                {
+                    collapse_list = true;
+                }
                 crate::rules_ui::iure_filter_button(app, ui);
                 let conv_on = app.session.prefs.conversations;
                 let r = icons::icon_button(
@@ -812,6 +954,9 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             });
         });
     });
+    if collapse_list {
+        app.run(&ctx, "view.toggle_list");
+    }
     // Varios mensajes seleccionados: sus acciones, a la vista.
     if app.mail.list.selection.len() >= 2 {
         bulk_bar(app, ui, &rows);
@@ -1213,6 +1358,25 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCar
     let ctx = ui.ctx().clone();
     let c = theme::colors(ui);
     let Some(id) = app.session.focused() else {
+        // UX-18: sin mensaje también se puede plegar la lectura.
+        if !app.mail.focus {
+            let mut hide = false;
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    hide = icons::icon_button(
+                        ui,
+                        Icon::ChevronRight,
+                        pick("Hide the reading pane", "Ocultar el panel de lectura"),
+                        true,
+                    )
+                    .clicked();
+                });
+            });
+            if hide {
+                app.run(&ctx, "view.toggle_reading");
+                return;
+            }
+        }
         let n = app.session.selection().len();
         if n > 1 {
             EmptyState::new(Icon::Mail, &format!("{n} {}", pick("messages selected", "mensajes seleccionados")))
@@ -1291,6 +1455,18 @@ fn reading_pane(app: &mut DeskApp, ui: &mut Ui, inline_card: Option<(&ContextCar
             };
             if icons::icon_button(ui, ic, &tip(label, "view.reading_focus"), true).clicked() {
                 view_cmd = Some("view.reading_focus");
+            }
+            // UX-18: plegar la lectura (la lista ocupa su lugar).
+            if !app.mail.focus
+                && icons::icon_button(
+                    ui,
+                    Icon::ChevronRight,
+                    pick("Hide the reading pane", "Ocultar el panel de lectura"),
+                    true,
+                )
+                .clicked()
+            {
+                view_cmd = Some("view.toggle_reading");
             }
         });
     });
