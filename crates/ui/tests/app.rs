@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use chrono::{TimeZone, Utc};
 use egui::{Key, Modifiers, vec2};
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use iuredesk_accounts::MemoryStore;
 use iuredesk_engine::{DensityPref, OfflineTransport, Session, SessionConfig, ShortcutScheme, ThemePref, Zone};
 use iuredesk_model::{AccountId, Folder, FolderRole, MessageId};
@@ -346,7 +346,11 @@ fn list_scrolling_over_100k_rows_stays_cheap() {
     let first = h.state().session.rows()[0].id;
     // El cuerpo de la lista recibe el foco con un clic en la primera fila.
     let subject = h.state_mut().session.envelope(first).unwrap().subject.clone();
-    h.query_all_by_label_contains(&subject).next().unwrap().click();
+    // (La fila, no su casilla «Seleccionar …».)
+    h.query_all_by_label_contains(&subject)
+        .find(|n| n.accesskit_node().role() != egui::accesskit::Role::CheckBox)
+        .unwrap()
+        .click();
     h.run();
     assert_eq!(h.state().mail_cursor(), Some(0));
     let t = Instant::now();

@@ -84,6 +84,14 @@ fn canonical_escapes(s: &str) -> String {
             i = i.saturating_add(3);
             continue;
         }
+        // Un `%` suelto (sin dos dígitos hexadecimales) se escribe `%25`: copiado tal cual, junto a
+        // lo decodificado después formaría un escape nuevo (`%%33` → `%3`) y normalizar dos veces
+        // daría otra URL.
+        if c == b'%' {
+            out.push_str("%25");
+            i = i.saturating_add(1);
+            continue;
+        }
         // Sigue el texto tal cual (UTF-8 incluido): se copia el carácter entero.
         let ch = s.get(i..).and_then(|t| t.chars().next()).unwrap_or('\u{FFFD}');
         out.push(ch);
@@ -190,6 +198,16 @@ mod tests {
         assert_ne!(n("https://h/cal/a"), n("http://h/cal/a"));
         assert_ne!(n("https://h:8443/cal"), n("https://h/cal"));
         assert_ne!(n("https://h/a%2Fb"), n("https://h/a/b"));
+    }
+
+    /// Regresión (propiedades): un `%` suelto delante de un escape formaba uno nuevo al decodificar
+    /// (`/%%330` → `/%30` → `/0`) y normalizar no era idempotente.
+    #[test]
+    fn lone_percent_signs_are_escaped() {
+        let n = normalize_collection_url("https://A/%%330");
+        assert_eq!(n.as_deref(), Some("https://a/%2530"));
+        assert_eq!(normalize_collection_url("https://a/%2530"), n);
+        assert_eq!(normalize_collection_url("https://a/100%").as_deref(), Some("https://a/100%25"));
     }
 
     #[test]

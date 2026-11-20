@@ -92,9 +92,17 @@ pub struct ToolResult {
 }
 
 impl ToolResult {
-    /// Los datos: `structuredContent` o, si no vino, el texto interpretado como JSON.
+    /// Los datos: `structuredContent` o, si no vino, el texto interpretado como JSON. IureProject
+    /// manda el JSON y después una línea para leer («1 tareas; fin …»): vale el JSON del principio.
     pub fn data(&self) -> Option<Value> {
-        self.structured.clone().or_else(|| serde_json::from_str(&self.text).ok())
+        self.structured.clone().or_else(|| {
+            serde_json::from_str(&self.text)
+                .ok()
+                .or_else(|| {
+                    serde_json::Deserializer::from_str(self.text.trim_start()).into_iter::<Value>().next()?.ok()
+                })
+                .filter(|v| v.is_object() || v.is_array())
+        })
     }
 
     /// Convierte `isError` en [`IntegrationError::Tool`].
@@ -359,6 +367,19 @@ pub(crate) fn read_capped(r: impl Read, max: u64) -> std::io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regresión (prueba en vivo con IureProject): el JSON seguido de un resumen en texto.
+    #[test]
+    fn data_with_a_trailing_summary_line() {
+        let r = |text: &str| ToolResult { text: text.into(), structured: None, is_error: false };
+        assert_eq!(
+            r("{\n  \"uid\": 1,\n  \"id\": 1\n}\n\n1 tareas; fin 2026-11-23 17:00").data(),
+            Some(serde_json::json!({"uid": 1, "id": 1}))
+        );
+        assert_eq!(r("{\"uids\": [40]}").data(), Some(serde_json::json!({"uids": [40]})));
+        assert_eq!(r("Hecho.").data(), None);
+        assert_eq!(r("42 tareas").data(), None, "un número suelto no son datos");
+    }
 
     #[test]
     fn lineas_acotadas() {

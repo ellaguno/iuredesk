@@ -260,6 +260,17 @@ pub struct Prefs {
     /// UX-3: panel contextual (Iurefficient, contacto) plegado a un riel delgado.
     #[serde(default)]
     pub context_collapsed: bool,
+    /// UX-17: cuentas ocultas con el ojo del panel de carpetas (ids): sus carpetas no se despliegan
+    /// y sus correos no salen en las vistas de todas las cuentas ni en las búsquedas.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_accounts: Vec<u64>,
+    /// UX-18: columnas del correo plegadas a un riel (cuentas y carpetas, lista, lectura).
+    #[serde(default)]
+    pub folders_collapsed: bool,
+    #[serde(default)]
+    pub list_collapsed: bool,
+    #[serde(default)]
+    pub reading_collapsed: bool,
     /// UX-3: dónde va el panel contextual.
     #[serde(default)]
     pub context_layout: ContextLayout,
@@ -476,6 +487,10 @@ impl Default for Prefs {
             reading_width: None,
             reading_zoom_pct: default_reading_zoom(),
             context_collapsed: false,
+            hidden_accounts: Vec::new(),
+            folders_collapsed: false,
+            list_collapsed: false,
+            reading_collapsed: false,
             context_layout: ContextLayout::Auto,
             reader_size: None,
             remote_images: crate::remote_images::RemoteImages::Ask,

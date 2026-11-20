@@ -29,11 +29,22 @@ pub struct SuiteUi {
     ocr: Option<(String, String)>,
     picking: Option<(Picked, Receiver<Option<PathBuf>>)>,
     agents_asked: bool,
+    /// «Correo → tarea del plan»: el formulario abierto y el último plan usado.
+    pub(crate) project_task: Option<crate::project_task_ui::Form>,
+    pub(crate) last_plan: Option<String>,
 }
 
 impl SuiteUi {
     pub fn new(session: &Session) -> Self {
-        SuiteUi { hub: SuiteHub::new(session), hint: None, ocr: None, picking: None, agents_asked: false }
+        SuiteUi {
+            hub: SuiteHub::new(session),
+            hint: None,
+            ocr: None,
+            picking: None,
+            agents_asked: false,
+            project_task: None,
+            last_plan: None,
+        }
     }
 
     /// El diálogo de instalación está abierto.
@@ -113,6 +124,7 @@ pub fn frame(app: &mut DeskApp, ctx: &Context) {
     }
     hint_dialog(app, ctx);
     ocr_window(app, ctx);
+    crate::project_task_ui::window(app, ctx);
     crate::recording_ui::pill(app, ctx);
 }
 

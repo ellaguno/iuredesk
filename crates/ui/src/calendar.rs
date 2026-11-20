@@ -55,6 +55,8 @@ fn hour_height(ui: &Ui) -> f32 {
 }
 
 pub fn show(app: &mut DeskApp, ui: &mut Ui) {
+    // Los hitos de los planes de IureProject que se siguen (se leen en segundo plano).
+    crate::today_projects::ensure(app);
     let today = app.session.today();
     let anchor = app.session.cal_anchor();
     split::left(ui, "cal-side", PaneKind::Sidebar, 244.0, 200.0..=360.0, |ui| sidebar(app, ui, anchor, today));
@@ -314,7 +316,8 @@ fn week_view(app: &mut DeskApp, ui: &mut Ui, mon: NaiveDate, days: i64, today: N
     let now = app.session.now();
     let from = zone.day_start(mon);
     let to = zone.day_start(mon + Duration::days(days));
-    let occ: Vec<Occurrence> = app.session.visible_occurrences(from, to);
+    let occ = app.session.visible_occurrences(from, to);
+    let occ: Vec<Occurrence> = crate::today_projects::with_milestones(app, occ, from, to);
     let second: Option<iuredesk_engine::chrono_tz::Tz> =
         app.session.prefs.secondary_tz.as_deref().and_then(|t| t.parse().ok());
     let gutter = if second.is_some() { 104.0 } else { 62.0 };
@@ -776,7 +779,8 @@ fn month_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDat
     let (start, _) = visible_range(CalView::Month, anchor);
     let from = zone.day_start(start);
     let to = zone.day_start(start + Duration::days(42));
-    let occ: Vec<Occurrence> = app.session.visible_occurrences(from, to);
+    let occ = app.session.visible_occurrences(from, to);
+    let occ: Vec<Occurrence> = crate::today_projects::with_milestones(app, occ, from, to);
     let rect = ui.available_rect_before_wrap();
     let head_h = 26.0;
     let cw = rect.width() / 7.0;
@@ -887,6 +891,7 @@ fn agenda_view(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDa
     let from = zone.day_start(start);
     let to = zone.day_start(start + Duration::days(days));
     let occ = app.session.visible_occurrences(from, to);
+    let occ = crate::today_projects::with_milestones(app, occ, from, to);
     let now = app.session.now();
     let mut groups: Vec<(NaiveDate, Vec<&Occurrence>)> = Vec::new();
     for k in 0..days {

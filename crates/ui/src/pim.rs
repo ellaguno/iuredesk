@@ -737,6 +737,9 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                     paste: Some(std::sync::Arc::new(iure_doc_ui::SystemClipboard)),
                     // Subraya lo mal escrito; clic derecho: sugerencias, agregar, ignorar.
                     spell: Some(speller.clone()),
+                    // Imágenes pegadas o soltadas: en `img/` de la carpeta de notas (donde la vista
+                    // previa las busca).
+                    images: Some(std::sync::Arc::new(iure_doc_ui::FolderImages::new(notes_dir.clone(), "img"))),
                 };
                 let out = iure_doc_ui::show_blocks_hooks(
                     ui,

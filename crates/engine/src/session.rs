@@ -678,9 +678,33 @@ impl Session {
         c
     }
 
-    /// No leídos de un favorito (todas las cuentas).
+    /// UX-17: ¿la cuenta se ve (ojo abierto)?
+    pub fn account_visible(&self, a: AccountId) -> bool {
+        !self.prefs.hidden_accounts.contains(&a.0)
+    }
+
+    /// UX-17: abre o cierra el ojo de una cuenta. Si la carpeta abierta era suya, se vuelve a la
+    /// bandeja de todas las cuentas.
+    pub fn toggle_account_visible(&mut self, a: AccountId) {
+        if self.account_visible(a) {
+            self.prefs.hidden_accounts.push(a.0);
+            if let FolderSel::Folder(f) = self.folder
+                && self.folder(f).is_some_and(|f| f.account == a)
+            {
+                self.folder = FolderSel::Unified(FolderRole::Inbox);
+            }
+        } else {
+            self.prefs.hidden_accounts.retain(|x| *x != a.0);
+        }
+        self.save_prefs();
+        self.rebuild_rows();
+    }
+
+    /// No leídos de un favorito (las cuentas que se ven).
     pub fn unified_unread(&mut self, role: FolderRole) -> u64 {
-        let ids: Vec<FolderId> = self.folders.iter().filter(|f| f.role == role).map(|f| f.id).collect();
+        let hidden = self.prefs.hidden_accounts.clone();
+        let ids: Vec<FolderId> =
+            self.folders.iter().filter(|f| f.role == role && !hidden.contains(&f.account.0)).map(|f| f.id).collect();
         ids.into_iter().map(|f| self.count(f).unread).sum()
     }
 
@@ -746,9 +770,16 @@ impl Session {
     /// Carpetas que forman la vista actual.
     fn view_folders(&self) -> Vec<FolderId> {
         match self.folder {
-            FolderSel::Unified(role) => self.folders.iter().filter(|f| f.role == role).map(|f| f.id).collect(),
+            FolderSel::Unified(role) => self
+                .folders
+                .iter()
+                .filter(|f| f.role == role && self.account_visible(f.account))
+                .map(|f| f.id)
+                .collect(),
             FolderSel::Folder(id) => vec![id],
-            FolderSel::Flagged => self.folders.iter().map(|f| f.id).collect(),
+            FolderSel::Flagged => {
+                self.folders.iter().filter(|f| self.account_visible(f.account)).map(|f| f.id).collect()
+            }
             FolderSel::Outbox => Vec::new(),
         }
     }
@@ -775,12 +806,14 @@ impl Session {
         }
         if self.folder == FolderSel::Flagged {
             let store = Arc::clone(&self.store);
+            let hidden = self.prefs.hidden_accounts.clone();
             self.loading = true;
             self.rows_job = Some(self.bg.spawn_blocking(move || {
                 let rows = store
                     .search("is:flagged", 1_000)
                     .unwrap_or_default()
                     .into_iter()
+                    .filter(|e| !hidden.contains(&e.account.0))
                     .map(|e| ListRow { id: e.id, count: 1 })
                     .collect();
                 JobOutput::Engine(EngineJob::Rows { generation, rows })
@@ -1201,7 +1234,8 @@ impl Session {
             "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
                 !self.contact_selection.is_empty()
             }
-            "mail.archive" | "mail.delete" | "mail.toggle_read" | "mail.toggle_flag" | "mail.move" => self.has_target(),
+            "mail.archive" | "mail.delete" | "mail.toggle_read" | "mail.mark_read" | "mail.mark_unread"
+            | "mail.toggle_flag" | "mail.move" => self.has_target(),
             "undo" => !self.undo.is_empty(),
             b if rules_glue::needs_target(b) => self.has_target(),
             _ => command::find(base).is_some(),
@@ -1280,6 +1314,20 @@ impl Session {
             "mail.reply" | "mail.reply_all" | "mail.forward" => self.reply_like(base),
             "mail.edit_draft" => self.edit_draft_focused(),
             "mail.new_folder" | "mail.rename_folder" | "mail.delete_folder" => self.run_folder_command(base, arg),
+            "mail.toggle_account_visible" => {
+                let Some(a) = arg.and_then(|a| a.trim_start_matches("acct:").parse::<u64>().ok()).map(AccountId) else {
+                    return Ok(Outcome::Notice(Notice::info(
+                        "Use the eye next to the account in the folder pane.",
+                        "Usa el ojo junto a la cuenta en el panel de carpetas.",
+                    )));
+                };
+                if !self.folders.iter().any(|f| f.account == a) {
+                    return Err(EngineError::Invalid(format!("cuenta desconocida: {}", a.0)));
+                }
+                self.toggle_account_visible(a);
+                Ok(Outcome::Done)
+            }
+            "view.toggle_folders" | "view.toggle_list" | "view.toggle_reading" => Ok(Outcome::View(base.to_string())),
             "notes.delete" => self.run_delete_note(arg),
             "notes.open_editor" => Ok(Outcome::Assist("notes.open_editor".into())),
             "notes.toggle_edit" => Ok(Outcome::Assist("notes.toggle_edit".into())),
@@ -1287,6 +1335,8 @@ impl Session {
             "mail.archive" => self.archive(),
             "mail.delete" => self.delete(),
             "mail.toggle_read" => self.toggle_read(),
+            "mail.mark_read" => self.mark_read(true),
+            "mail.mark_unread" => self.mark_read(false),
             "mail.toggle_flag" => self.toggle_flag(),
             "mail.move" => match arg.and_then(|a| a.parse::<u64>().ok()) {
                 Some(f) => self.move_to(FolderId(f)),
@@ -1547,6 +1597,17 @@ impl Session {
         };
         // Al marcar como no leído, el mensaje no debe volver a leerse solo al seguir enfocado.
         self.set_flags_with(&ids, text, |f| Flags { seen: any_unread, ..f })
+    }
+
+    /// Marca los mensajes como leídos (`true`) o no leídos.
+    fn mark_read(&mut self, seen: bool) -> Result<Outcome> {
+        let ids = self.targets();
+        let text = if seen {
+            Text::new("Marked as read", "Marcado como leído")
+        } else {
+            Text::new("Marked as unread", "Marcado como no leído")
+        };
+        self.set_flags_with(&ids, text, |f| Flags { seen, ..f })
     }
 
     fn toggle_flag(&mut self) -> Result<Outcome> {
@@ -1851,6 +1912,13 @@ impl Session {
                     return None;
                 }
                 self.loading = false;
+                // UX-17: las cuentas ocultas tampoco salen al buscar (salvo dentro de su carpeta).
+                let result = result.map(|mut envs| {
+                    if !matches!(self.folder, FolderSel::Folder(_)) {
+                        envs.retain(|e| self.account_visible(e.account));
+                    }
+                    envs
+                });
                 match result {
                     Ok(envs) => {
                         self.rows = Arc::new(envs.iter().map(|e| ListRow { id: e.id, count: 1 }).collect());

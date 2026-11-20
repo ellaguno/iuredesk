@@ -181,6 +181,9 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::Mail,
         "read unread leido",
     ),
+    // Explícitos (para varios mensajes a la vez, donde «alternar» no dice qué pasará).
+    c("mail.mark_read", "Mark as read", "Marcar como leído", "check", Group::Mail, "read leido visto"),
+    c("mail.mark_unread", "Mark as unread", "Marcar como no leído", "mail", Group::Mail, "unread no leido nuevo"),
     c(
         "mail.toggle_flag",
         "Flag / unflag",
@@ -259,6 +262,38 @@ pub const COMMANDS: &[CommandSpec] = &[
         "maximize",
         Group::View,
         "focus expand maximize reading full enfocar ampliar maximizar lectura",
+    ),
+    c(
+        "view.toggle_folders",
+        "Show / hide accounts and folders",
+        "Mostrar / ocultar cuentas y carpetas",
+        "folder",
+        Group::View,
+        "collapse sidebar column columna plegar ocultar cuentas carpetas panel",
+    ),
+    c(
+        "view.toggle_list",
+        "Show / hide the message list",
+        "Mostrar / ocultar la lista de correos",
+        "list",
+        Group::View,
+        "collapse column columna plegar ocultar lista correos",
+    ),
+    c(
+        "view.toggle_reading",
+        "Show / hide the reading pane",
+        "Mostrar / ocultar el panel de lectura",
+        "mail",
+        Group::View,
+        "collapse column columna plegar ocultar lectura vista correo",
+    ),
+    c(
+        "mail.toggle_account_visible",
+        "Show / hide an account",
+        "Mostrar / ocultar una cuenta",
+        "eye",
+        Group::Mail,
+        "account cuenta ocultar mostrar filtro ojo visible",
     ),
     c(
         "view.context_panel",
@@ -598,6 +633,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         "plus",
         Group::App,
         "import importar migrar pst mbox",
+    ),
+    c(
+        "suite.project_task",
+        "Create a task in a project… (IureProject)",
+        "Crear tarea en un proyecto… (IureProject)",
+        "check",
+        Group::App,
+        "tarea task proyecto project plan iureproject gantt pendiente",
     ),
     c(
         "suite.read_aloud",

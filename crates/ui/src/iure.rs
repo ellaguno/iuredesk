@@ -44,6 +44,8 @@ enum Act {
     Unlink(String, String),
     Retry,
     OpenWeb,
+    /// El plan de IureProject del caso.
+    OpenProject(std::path::PathBuf),
 }
 
 fn card(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
@@ -125,6 +127,8 @@ fn deal_line(d: &DealCard) -> String {
 
 /// Tarjetas de Iurefficient del mensaje (dentro del panel contextual o en línea).
 pub fn panel(app: &mut DeskApp, ui: &mut Ui, id: MessageId, p: &IurePanel) {
+    // Los planes de IureProject que se siguen (para la tarjeta del caso).
+    crate::today_projects::ensure(app);
     let c = theme::colors(ui);
     let mut act: Option<Act> = None;
     ui.horizontal(|ui| {
@@ -238,6 +242,8 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui, id: MessageId, p: &IurePanel) {
             });
         }
         for case in ctx.cases.iter().take(3) {
+            // S1.6: los planes de IureProject de este expediente (de los que se siguen).
+            let plans = crate::today_projects::plans_for_case(app, &case.id);
             card(ui, |ui| {
                 ui.horizontal(|ui| {
                     badge(ui, pick("Case", "Caso"), BadgeKind::Accent);
@@ -245,6 +251,17 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui, id: MessageId, p: &IurePanel) {
                 });
                 if let Some(s) = &case.subtitle {
                     ui.label(small(ui, s));
+                }
+                for (file, line) in &plans {
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::hover());
+                        iurefficient_ui::icons::paint(ui.painter(), r, Icon::Gantt, c.text_muted, c.accent);
+                        ui.add(egui::Label::new(small(ui, line)).wrap());
+                    });
+                    if ui.small_button(pick("Open in IureProject", "Abrir en IureProject")).clicked() {
+                        act = Some(Act::OpenProject(file.clone()));
+                    }
                 }
             });
         }
@@ -329,6 +346,7 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui, id: MessageId, p: &IurePanel) {
                 crate::open_url(&u);
             }
         }
+        Act::OpenProject(file) => app.suite.hub.run(iuredesk_engine::suite::SuiteAction::OpenProject(file)),
     }
 }
 

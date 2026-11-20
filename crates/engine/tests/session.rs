@@ -545,3 +545,47 @@ fn large_inbox_classifies_categories_in_background() {
     let total: usize = s.category_counts().iter().map(|c| c.0).sum();
     assert!(total >= 1_000, "recuentos por categoría tras clasificar: {total}");
 }
+
+/// UX-17: el ojo de una cuenta la quita de las vistas de todas las cuentas (lista, no leídos,
+/// marcados, búsqueda) sin tocar sus correos; abrirlo la devuelve. Se recuerda en las preferencias.
+#[test]
+fn hidden_accounts_leave_the_all_accounts_views() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    settle(&mut s);
+    let labels = s.account_labels().to_vec();
+    assert!(labels.len() >= 2, "el buzón de ejemplo tiene dos cuentas");
+    let hide = labels[1].id;
+    let rows = |s: &mut Session| s.rows().len();
+    let account_of = |s: &mut Session, id: MessageId| s.envelope(id).map(|e| e.account);
+    let total = rows(&mut s);
+    let unread = s.unified_unread(FolderRole::Inbox);
+    s.run(&format!("mail.toggle_account_visible:{}", hide.0)).unwrap();
+    settle(&mut s);
+    assert!(!s.account_visible(hide) && s.prefs.hidden_accounts == vec![hide.0]);
+    let ids: Vec<MessageId> = s.rows().iter().map(|r| r.id).collect();
+    assert!(ids.len() < total, "la bandeja de todas las cuentas se achica");
+    assert!(ids.iter().all(|&m| account_of(&mut s, m) != Some(hide)), "nada de la cuenta oculta");
+    assert!(s.unified_unread(FolderRole::Inbox) <= unread);
+    // Marcados y búsqueda tampoco la muestran.
+    s.select_folder(FolderSel::Flagged);
+    settle(&mut s);
+    let ids: Vec<MessageId> = s.rows().iter().map(|r| r.id).collect();
+    assert!(ids.iter().all(|&m| account_of(&mut s, m) != Some(hide)));
+    s.select_folder(FolderSel::Unified(FolderRole::Inbox));
+    s.set_search("a");
+    settle(&mut s);
+    let ids: Vec<MessageId> = s.rows().iter().map(|r| r.id).collect();
+    assert!(ids.iter().all(|&m| account_of(&mut s, m) != Some(hide)), "búsqueda");
+    s.set_search("");
+    // Abrir el ojo la devuelve.
+    s.run(&format!("mail.toggle_account_visible:{}", hide.0)).unwrap();
+    settle(&mut s);
+    assert!(s.account_visible(hide));
+    assert_eq!(rows(&mut s), total);
+    // Sin cuenta o con una que no existe: aviso o error, nada cambia.
+    assert!(matches!(s.run("mail.toggle_account_visible"), Ok(Outcome::Notice(_))));
+    assert!(s.run("mail.toggle_account_visible:999999").is_err());
+    // Plegar columnas es de la interfaz: el motor la avisa.
+    assert!(matches!(s.run("view.toggle_list"), Ok(Outcome::View(v)) if v == "view.toggle_list"));
+}

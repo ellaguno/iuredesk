@@ -3568,8 +3568,8 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "iure-doc"
-version = "0.10.0"
-source = "git+https://github.com/ellaguno/iure-doc?tag=v0.10.0#72d9d8132930893adce4798d515d17d1df033b06"
+version = "0.15.0"
+source = "git+https://github.com/ellaguno/iure-doc?tag=v0.15.0#7744c144978ceb7c351c51a2d077aab8efaefaca"
 dependencies = [
  "html5ever",
  "pulldown-cmark",
@@ -3578,8 +3578,8 @@ dependencies = [
 
 [[package]]
 name = "iure-doc-ui"
-version = "0.10.0"
-source = "git+https://github.com/ellaguno/iure-doc?tag=v0.10.0#72d9d8132930893adce4798d515d17d1df033b06"
+version = "0.15.0"
+source = "git+https://github.com/ellaguno/iure-doc?tag=v0.15.0#7744c144978ceb7c351c51a2d077aab8efaefaca"
 dependencies = [
  "arboard",
  "egui",
@@ -4152,7 +4152,7 @@ dependencies = [
 [[package]]
 name = "iurefficient-ui"
 version = "0.1.0"
-source = "git+https://github.com/ellaguno/iurefficient-ui?branch=main#e62bae477edc70b4a364d4e9000b7e78613fe8cb"
+source = "git+https://github.com/ellaguno/iurefficient-ui?branch=main#6f569b8420dec249d395a602a1c6f2506cdd7ca2"
 dependencies = [
  "egui",
  "epaint",

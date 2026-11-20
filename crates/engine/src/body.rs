@@ -95,11 +95,19 @@ pub(crate) fn classify<'a>(
 ) -> Vec<(&'a mail_parser::MessagePart<'a>, Option<String>)> {
     let mut out = Vec::new();
     let mut inline = 0usize;
+    // Solo va en línea lo que el HTML usa (`cid:`): Outlook y Apple Mail ponen `Content-ID` también a
+    // los PDF adjuntos, y esos se listan.
+    let html = msg
+        .html_part(0)
+        .and_then(|p| p.text_contents())
+        .map(|h| h.chars().take(MAX_HTML_BYTES).collect::<String>().to_ascii_lowercase())
+        .unwrap_or_default();
     for part in msg.attachments().take(500) {
         let size = part.len();
         if let Some(cid) = part.content_id() {
             let cid = cid.trim().trim_start_matches('<').trim_end_matches('>').to_string();
-            if inline < MAX_INLINE && size <= MAX_INLINE_BYTES && !cid.is_empty() {
+            let used = !cid.is_empty() && html.contains(&format!("cid:{}", cid.to_ascii_lowercase()));
+            if used && inline < MAX_INLINE && size <= MAX_INLINE_BYTES {
                 inline += 1;
                 out.push((part, Some(cid)));
                 continue;
@@ -222,6 +230,19 @@ mod tests {
         let b = parse(alt);
         assert!(b.text.contains("Texto"));
         assert!(b.html.as_deref().is_some_and(|h| h.contains("<b>HTML</b>")));
+    }
+
+    /// Regresión (dueño 2026-11-19): un PDF adjunto con `Content-ID` (Outlook y Apple Mail se lo
+    /// ponen a todo) no se listaba: se tomaba por imagen del cuerpo. Solo va en línea lo que el
+    /// HTML usa (`cid:`).
+    #[test]
+    fn attachments_with_content_id_are_listed_unless_the_html_uses_them() {
+        let raw = b"From: a@example.com\r\nSubject: Cotizacion\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=M\r\n\r\n--M\r\nContent-Type: multipart/related; boundary=R\r\n\r\n--R\r\nContent-Type: text/html\r\n\r\n<p>Hola <img src=\"cid:logo@x\"></p>\r\n--R\r\nContent-Type: image/png\r\nContent-ID: <logo@x>\r\nContent-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--R--\r\n--M\r\nContent-Type: application/pdf; name=\"Cotizacion.pdf\"\r\nContent-Disposition: attachment; filename=\"Cotizacion.pdf\"\r\nContent-ID: <pdf@x>\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQK\r\n--M\r\nContent-Type: application/pdf; name=\"Anexo.pdf\"\r\nContent-ID: <anexo@x>\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQK\r\n--M--\r\n";
+        let b = parse(raw);
+        let names: Vec<&str> = b.attachments.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["Cotizacion.pdf", "Anexo.pdf"], "los PDF se listan aunque traigan Content-ID");
+        assert_eq!(b.inline.len(), 1, "el logo del cuerpo sigue en línea");
+        assert_eq!(b.inline.first().map(|(c, _)| c.as_str()), Some("logo@x"));
     }
 
     #[test]
