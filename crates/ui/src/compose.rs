@@ -1,5 +1,5 @@
 //! Redactor: De (identidad), Para/CC/CCO con burbujas y autocompletado de contactos, asunto,
-//! editor enriquecido sencillo ([`crate::rich_edit`]), adjuntos (selector de archivos del portal
+//! el editor de la suite (S1.27: `iure-doc-ui`, lo de IureEditor 2.0; [`crate::md_body`]), adjuntos (selector de archivos del portal
 //! y arrastrar y soltar), firma, envío con «Deshacer», envío programado y guardado automático en
 //! «Borradores».
 
@@ -16,7 +16,7 @@ use iuredesk_model::{AccountId, Mailbox};
 use iurefficient_ui::{Icon, icons, pick, primary_button, theme};
 
 use crate::app::DeskApp;
-use crate::rich_edit::{EditorState, LineKind, Look, RichDoc, Toggle};
+use crate::md_body::MdBody;
 use crate::widgets::human_size;
 
 /// Guardado automático tras este tiempo sin escribir.
@@ -52,7 +52,7 @@ struct Suggest {
 pub struct ComposeWindow {
     pub id: u64,
     pub cd: ComposeDraft,
-    pub(crate) editor: EditorState,
+    pub(crate) editor: MdBody,
     /// Panel ✦ (F4.2).
     pub(crate) ai: crate::assistant::ComposeAi,
     inputs: [String; 3],
@@ -66,7 +66,6 @@ pub struct ComposeWindow {
     error: Option<String>,
     /// El cursor del cuerpo ya se puso al principio.
     cursor_init: bool,
-    open_frames: u8,
     /// Plantillas (F5.3).
     pub(crate) templates: crate::rules_ui::ComposeTemplates,
     /// F5.4: «Firmar» / «Cifrar».
@@ -86,12 +85,12 @@ enum Act {
 
 impl ComposeWindow {
     pub fn new(id: u64, cd: ComposeDraft) -> Self {
-        let doc = RichDoc::from_rich(&cd.draft.body);
+        let doc = MdBody::from_rich(&cd.draft.body);
         let show_cc = !cd.draft.cc.is_empty() || !cd.draft.bcc.is_empty();
         ComposeWindow {
             id,
             cd,
-            editor: EditorState::new(doc),
+            editor: doc,
             ai: Default::default(),
             inputs: Default::default(),
             show_cc,
@@ -103,7 +102,6 @@ impl ComposeWindow {
             want_suggest: None,
             error: None,
             cursor_init: false,
-            open_frames: 0,
             templates: Default::default(),
             security: Default::default(),
         }
@@ -164,7 +162,7 @@ impl ComposeWindow {
         for f in [Field::To, Field::Cc, Field::Bcc] {
             self.commit_field(f);
         }
-        self.cd.draft.body = self.editor.doc.to_rich();
+        self.cd.draft.body = self.editor.to_rich();
     }
 
     /// Añade archivos como adjuntos.
@@ -198,6 +196,14 @@ pub fn show_all(app: &mut DeskApp, ctx: &Context) {
     let presets: Vec<(Text, DateTime<Utc>)> = schedule_presets(app.session.now(), app.session.zone());
     let mut acts: Vec<(usize, Act)> = Vec::new();
     crate::assistant::compose_sync(app);
+    let env = BodyEnv {
+        store: app.session.store().clone(),
+        speller: app
+            .pim
+            .speller
+            .get_or_insert_with(|| iure_doc_ui::Speller::system(crate::pim::personal_dictionary()))
+            .clone(),
+    };
     for (i, w) in app.composers.iter_mut().enumerate() {
         let mut open = w.open;
         let mut mine = Vec::new();
@@ -209,7 +215,7 @@ pub fn show_all(app: &mut DeskApp, ctx: &Context) {
             // En pantallas anchas no crece a todo lo ancho: los campos piden ancho infinito.
             .max_width(compose_max_width(ctx))
             .collapsible(false)
-            .show(ctx, |ui| form(ui, w, &identities, &presets, &mut mine));
+            .show(ctx, |ui| form(ui, w, &identities, &presets, &env, &mut mine));
         if !open {
             mine.push(Act::Close);
         }
@@ -348,7 +354,7 @@ fn run_act(app: &mut DeskApp, ctx: &Context, i: usize, act: Act) {
                 return;
             }
             signature::apply(&mut w.cd.draft.body, sig.as_ref(), app.session.signature_placement());
-            w.editor.set_doc(RichDoc::from_rich(&w.cd.draft.body));
+            w.editor.set_rich(&w.cd.draft.body);
             w.touch();
         }
         Act::Identity(aid, ident) => {
@@ -357,7 +363,7 @@ fn run_act(app: &mut DeskApp, ctx: &Context, i: usize, act: Act) {
             app.session.switch_identity(&mut cd, aid, ident);
             if let Some(w) = app.composers.get_mut(i) {
                 w.cd = cd;
-                w.editor.set_doc(RichDoc::from_rich(&w.cd.draft.body));
+                w.editor.set_rich(&w.cd.draft.body);
                 w.touch();
             }
         }
@@ -533,11 +539,18 @@ fn address_row(ui: &mut Ui, w: &mut ComposeWindow, f: Field, label: &str) {
     }
 }
 
+/// Lo que el editor del cuerpo toma de la app: el almacén (imágenes en línea) y el corrector.
+struct BodyEnv {
+    store: std::sync::Arc<iuredesk_store::Store>,
+    speller: std::sync::Arc<iure_doc_ui::Speller>,
+}
+
 fn form(
     ui: &mut Ui,
     w: &mut ComposeWindow,
     identities: &[(AccountId, Identity)],
     presets: &[(Text, DateTime<Utc>)],
+    env: &BodyEnv,
     acts: &mut Vec<Act>,
 ) {
     let ctx = ui.ctx().clone();
@@ -586,43 +599,63 @@ fn form(
     });
     ui.add_space(2.0);
     crate::widgets::hairline(ui);
-    // Barra de formato.
+    // Barra de formato: acciones del editor sobre la selección (Markdown).
+    let body_id = egui::Id::unique(("compose-body", w.id));
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        let (a, b) = w.editor.sel;
+        use iure_doc_ui::ExternalEdit as E;
         let size = theme::density(&ctx).body_size();
+        let mut edit: Option<E> = None;
         let fmt = [
             (
-                Toggle::Bold,
+                E::Wrap("**".into()),
                 RichText::new("B").font(theme::bold_font(&ctx, size)),
                 pick("Bold (Ctrl+B)", "Negrita (Ctrl+B)"),
             ),
-            (Toggle::Italic, RichText::new("I").italics(), pick("Italic (Ctrl+I)", "Cursiva (Ctrl+I)")),
-            (Toggle::Underline, RichText::new("U").underline(), pick("Underline (Ctrl+U)", "Subrayado (Ctrl+U)")),
+            (E::Wrap("*".into()), RichText::new("I").italics(), pick("Italic (Ctrl+I)", "Cursiva (Ctrl+I)")),
+            (E::Wrap("~~".into()), RichText::new("S").strikethrough(), pick("Strikethrough", "Tachado")),
         ];
-        for (t, label, tip) in fmt {
-            let on = w.editor.doc.has(a, b, t);
-            if ui.add(egui::Button::selectable(on, label)).on_hover_text(tip).clicked() {
-                w.editor.toggle(t);
-                w.touch();
-                ui.memory_mut(|m| m.request_focus(egui::Id::unique(("compose-body", w.id))));
+        for (e, label, tip) in fmt {
+            if ui.add(egui::Button::new(label)).on_hover_text(tip).clicked() {
+                edit = Some(e);
+            }
+        }
+        // Subrayado: `<u>…</u>` (Markdown no lo tiene; el correo sí).
+        if ui
+            .add(egui::Button::new(RichText::new("U").underline()))
+            .on_hover_text(pick("Underline", "Subrayado"))
+            .clicked()
+        {
+            let (a, b) = (w.editor.sel.0.min(w.editor.sel.1), w.editor.sel.0.max(w.editor.sel.1));
+            let sel: String = w.editor.text.chars().skip(a).take(b - a).collect();
+            if !sel.is_empty() {
+                edit = Some(E::Replace(format!("<u>{sel}</u>")));
             }
         }
         ui.add_space(6.0);
-        for (kind, label, tip) in [
-            (LineKind::Bullet, "• ", pick("Bulleted list", "Lista con viñetas")),
-            (LineKind::Numbered, "1. ", pick("Numbered list", "Lista numerada")),
-            (LineKind::Quote, "❝", pick("Quote", "Cita")),
+        for (e, text, tip) in [
+            (
+                E::Line(iure_doc::edit::LineKind::Bullet),
+                format!("• {}", pick("List", "Lista")),
+                pick("Bulleted list", "Lista con viñetas"),
+            ),
+            (
+                E::Line(iure_doc::edit::LineKind::Ordered),
+                format!("1. {}", pick("List", "Lista")),
+                pick("Numbered list", "Lista numerada"),
+            ),
+            (E::Quote, pick("Quote", "Cita").to_string(), pick("Quote", "Cita")),
         ] {
-            let text = if kind == LineKind::Quote {
-                pick("Quote", "Cita").to_string()
-            } else {
-                format!("{label}{}", pick("List", "Lista"))
-            };
             if ui.button(text).on_hover_text(tip).clicked() {
-                w.editor.toggle_lines(kind);
-                w.touch();
+                edit = Some(e);
             }
+        }
+        if let Some(e) = edit
+            && iure_doc_ui::apply_external(&ctx, body_id, &mut w.editor.text, e)
+        {
+            w.editor.changed = true;
+            w.touch();
+            ui.memory_mut(|m| m.request_focus(body_id));
         }
         ui.add_space(6.0);
         if icons::icon_button(ui, Icon::Link, pick("Insert link", "Insertar enlace"), true).clicked() {
@@ -666,15 +699,38 @@ fn form(
             Some(true) => {
                 let href = w.link_url.take().unwrap_or_default();
                 if let Some(safe) = iuredesk_engine::iuredesk_compose::rich::html::safe_href(href.trim()) {
-                    w.editor.link(Some(&safe));
+                    let (a, b) = (w.editor.sel.0.min(w.editor.sel.1), w.editor.sel.0.max(w.editor.sel.1));
+                    let sel: String = w.editor.text.chars().skip(a).take(b - a).collect();
+                    let label = if sel.trim().is_empty() { safe.clone() } else { sel };
+                    let md = format!("[{label}]({safe})");
+                    if iure_doc_ui::apply_external(
+                        &ctx,
+                        body_id,
+                        &mut w.editor.text,
+                        iure_doc_ui::ExternalEdit::Replace(md),
+                    ) {
+                        w.editor.changed = true;
+                    }
                     w.touch();
                 } else {
                     w.error = Some(pick("That link isn't valid.", "Ese enlace no es válido.").to_string());
                 }
             }
             Some(false) => {
+                // Quitar el enlace: queda su texto.
                 w.link_url = None;
-                w.editor.link(None);
+                let (a, b) = (w.editor.sel.0.min(w.editor.sel.1), w.editor.sel.0.max(w.editor.sel.1));
+                let sel: String = w.editor.text.chars().skip(a).take(b - a).collect();
+                if let Some(label) = sel.strip_prefix('[').and_then(|r| r.split_once("](")).map(|(l, _)| l.to_string())
+                    && iure_doc_ui::apply_external(
+                        &ctx,
+                        body_id,
+                        &mut w.editor.text,
+                        iure_doc_ui::ExternalEdit::Replace(label),
+                    )
+                {
+                    w.editor.changed = true;
+                }
                 w.touch();
             }
             None => {}
@@ -729,45 +785,48 @@ fn form(
             }
         }
         ui.add_space(4.0);
-        let mut scroll = egui::ScrollArea::vertical().id_salt(("compose-scroll", w.id)).auto_shrink([false, false]);
-        // Los primeros cuadros (mientras la ventana toma su tamaño) se queda arriba.
-        if w.open_frames < 4 {
-            w.open_frames += 1;
-            scroll = scroll.vertical_scroll_offset(0.0);
-        }
-        scroll.show(ui, |ui| {
-            ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                let size = theme::density(&ctx).body_size() + 0.5;
-                let look = Look {
-                    size,
-                    bold: theme::bold_font(&ctx, size),
-                    text: c.text,
-                    muted: c.text_muted,
-                    accent: c.accent,
-                };
-                let body_id = egui::Id::unique(("compose-body", w.id));
-                if !w.cursor_init {
-                    // Al abrir, el cursor va al principio (encima de la cita y la firma).
-                    w.cursor_init = true;
-                    let mut st = egui::text_edit::TextEditState::default();
-                    st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(0))));
-                    st.store(ui.ctx(), body_id);
+        ui.with_layout(Layout::top_down(Align::Min), |ui| {
+            if !w.cursor_init {
+                // Al abrir, el cursor va al principio (encima de la cita y la firma).
+                w.cursor_init = true;
+                iure_doc_ui::focus_offset(ui.ctx(), body_id, &w.editor.text, 0);
+            }
+            let images: std::sync::Arc<dyn iure_doc_ui::DiagramRenderer> =
+                std::sync::Arc::new(crate::md_body::CidImages::new(env.store.clone(), &w.cd.draft.attachments));
+            let hooks = iure_doc_ui::Hooks {
+                diagrams: Some(images),
+                paste: Some(std::sync::Arc::new(iure_doc_ui::SystemClipboard)),
+                spell: Some(env.speller.clone()),
+                ..Default::default()
+            };
+            // Por bloques (con su propio desplazamiento): formato al escribir, `/`, buscar…
+            let out = iure_doc_ui::show_blocks_hooks(
+                ui,
+                body_id,
+                &mut w.editor.text,
+                pick("Write your message", "Escribe tu mensaje"),
+                hooks,
+            );
+            out.response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, pick("Message", "Mensaje"))
+            });
+            if out.changed {
+                w.editor.changed = true;
+            }
+            if let Some(l) = out.link {
+                let lower = l.to_ascii_lowercase();
+                if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(l));
                 }
-                let r = crate::rich_edit::editor(
-                    ui,
-                    egui::Id::unique(("compose-body", w.id)),
-                    &mut w.editor,
-                    &look,
-                    pick("Write your message", "Escribe tu mensaje"),
-                    12,
-                );
-                r.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::Role::MultilineTextInput, true, pick("Message", "Mensaje"))
-                });
-                if std::mem::take(&mut w.editor.changed) {
-                    w.touch();
-                }
-            })
+            }
+            // Lo seleccionado (o el cursor), para la barra, el asistente y el dictado.
+            w.editor.sel = iure_doc_ui::selection(ui.ctx(), body_id, &w.editor.text).unwrap_or_else(|| {
+                let c = iure_doc_ui::caret_offset(ui.ctx(), body_id, &w.editor.text).unwrap_or(0);
+                (c, c)
+            });
+            if std::mem::take(&mut w.editor.changed) {
+                w.touch();
+            }
         });
     });
 }

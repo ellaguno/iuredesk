@@ -22,7 +22,6 @@ use iurefficient_ui::{
 };
 
 use crate::app::DeskApp;
-use crate::rich_edit::{CharStyle, RichDoc};
 use crate::widgets::{hairline, pane_title, tool_button};
 
 /// Pestaña de la página del asistente.
@@ -798,7 +797,7 @@ pub fn compose_buttons(ui: &mut Ui, ai: &mut ComposeAi, window: u64) {
 }
 
 /// Panel ✦ del redactor (tono, longitud, idioma; reescribir; redactar respuesta).
-pub fn compose_panel(ui: &mut Ui, ai: &mut ComposeAi, editor: &crate::rich_edit::EditorState) {
+pub fn compose_panel(ui: &mut Ui, ai: &mut ComposeAi, editor: &crate::md_body::MdBody) {
     if !ai.open || !ai.enabled {
         return;
     }
@@ -955,9 +954,7 @@ pub fn compose_pump(app: &mut DeskApp) {
         if let Some(text) = insert.filter(|t| !t.trim().is_empty())
             && let Some(w) = app.composers.get_mut(i)
         {
-            let mut doc = w.editor.doc.clone();
-            doc.insert(0, &format!("{}\n\n", text.trim_end()), CharStyle::default());
-            w.editor.set_doc(doc);
+            w.editor.insert(0, &format!("{}\n\n", text.trim_end()));
         }
         let Some(want) = want else { continue };
         let key = AiKey::Compose(window);
@@ -967,8 +964,8 @@ pub fn compose_pump(app: &mut DeskApp) {
             Want::Rewrite => {
                 let Some(w) = app.composers.get_mut(i) else { continue };
                 let (a, b) = w.editor.sel;
-                let (from, to) = if a != b { (a.min(b), a.max(b)) } else { (0, own_text_end(&w.editor.doc.text)) };
-                let text: String = w.editor.doc.text.chars().skip(from).take(to.saturating_sub(from)).collect();
+                let (from, to) = if a != b { (a.min(b), a.max(b)) } else { (0, own_text_end(&w.editor.text)) };
+                let text: String = w.editor.text.chars().skip(from).take(to.saturating_sub(from)).collect();
                 w.ai.range = Some((from, to));
                 let task = AiTask::Rewrite {
                     window,
@@ -999,13 +996,11 @@ pub fn compose_pump(app: &mut DeskApp) {
                 };
                 if let Some(w) = app.composers.get_mut(i) {
                     let (from, to) = w.ai.range.take().unwrap_or((0, 0));
-                    let mut doc: RichDoc = w.editor.doc.clone();
-                    let to = to.min(doc.text.chars().count());
+                    let to = to.min(w.editor.text.chars().count());
                     let from = from.min(to);
-                    doc.remove(from, to);
+                    w.editor.remove(from, to);
                     let sep = if to == from { "\n\n" } else { "\n" };
-                    doc.insert(from, &format!("{}{sep}", text.trim_end()), CharStyle::default());
-                    w.editor.set_doc(doc);
+                    w.editor.insert(from, &format!("{}{sep}", text.trim_end()));
                 }
                 app.ai.hub.dismiss(key);
             }

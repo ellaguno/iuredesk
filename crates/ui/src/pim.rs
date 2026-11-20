@@ -22,7 +22,7 @@ pub struct PimState {
     pub(crate) note_edit: Option<NoteEdit>,
     /// S1.12: corrector ortográfico de las notas (se crea al editar la primera; carga los
     /// diccionarios del sistema en otro hilo).
-    speller: Option<std::sync::Arc<iure_doc_ui::Speller>>,
+    pub(crate) speller: Option<std::sync::Arc<iure_doc_ui::Speller>>,
     /// S1.12: la nota se edita aquí (DocEditor) en lugar de verse.
     pub(crate) note_editing: bool,
     pub(crate) task_list: Option<TaskListId>,
@@ -1200,7 +1200,7 @@ fn task_row(app: &mut DeskApp, ui: &mut Ui, t: &Task, writable: bool) -> Option<
 
 /// S1.12: diccionario personal del corrector (con `IUREDESK_DATA_DIR`, dentro de esa carpeta,
 /// para no tocar la instalación normal).
-fn personal_dictionary() -> Option<std::path::PathBuf> {
+pub(crate) fn personal_dictionary() -> Option<std::path::PathBuf> {
     match std::env::var_os("IUREDESK_DATA_DIR").filter(|v| !v.is_empty()) {
         Some(d) => Some(std::path::PathBuf::from(d).join("diccionario.txt")),
         None => iure_doc_ui::spell::personal_path("iuredesk"),

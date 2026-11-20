@@ -1462,7 +1462,7 @@ pub(crate) fn template_pump(app: &mut DeskApp) {
                 w.commit();
                 match app.session.apply_template(&mut w.cd, &n) {
                     Ok(()) => {
-                        w.editor.set_doc(crate::rich_edit::RichDoc::from_rich(&w.cd.draft.body));
+                        w.editor.set_rich(&w.cd.draft.body);
                         w.touch();
                     }
                     Err(e) => notices.push(Notice::error(e.text())),

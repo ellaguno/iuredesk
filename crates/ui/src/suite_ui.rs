@@ -101,10 +101,8 @@ pub fn frame(app: &mut DeskApp, ctx: &Context) {
                 if text.trim().is_empty() {
                     app.notice(Notice::info("Nothing was dictated.", "No se dictó nada."));
                 } else if let Some(w) = app.composers.iter_mut().find(|w| w.id == window) {
-                    let mut doc = w.editor.doc.clone();
-                    let at = w.editor.sel.1.min(doc.text.chars().count());
-                    doc.insert(at, text.trim(), crate::rich_edit::CharStyle::default());
-                    w.editor.set_doc(doc);
+                    let at = w.editor.sel.1.min(w.editor.text.chars().count());
+                    w.editor.insert(at, text.trim());
                 }
             }
             SuiteEvent::Transcript { title, text } => {
