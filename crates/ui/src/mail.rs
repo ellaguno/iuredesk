@@ -818,6 +818,9 @@ fn outbox_view(app: &mut DeskApp, ui: &mut Ui) {
 
 /// Barra de acciones con varios mensajes seleccionados: cuántos, seleccionar todo o nada, y lo que
 /// se hace con todos a la vez (marcar leídos o no leídos, archivar, eliminar, mover y más).
+/// Ancho que ocupan las acciones de la barra de selección (seis botones y separación).
+const ACTIONS_WIDTH: f32 = 6.0 * 26.0 + 16.0;
+
 fn bulk_bar(app: &mut DeskApp, ui: &mut Ui, rows: &[ListRow]) {
     let ctx = ui.ctx().clone();
     let c = theme::colors(ui);
@@ -826,44 +829,79 @@ fn bulk_bar(app: &mut DeskApp, ui: &mut Ui, rows: &[ListRow]) {
     let mut select_all = false;
     let mut clear = false;
     let mut cmd: Option<&str> = None;
-    egui::Frame::new().fill(c.selection_inactive).inner_margin(egui::Margin::symmetric(12, 6)).show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(format!("{n} {}", pick("selected", "seleccionados"))).strong().color(c.text));
-            if n < rows.len()
-                && ui.small_button(pick("Select all", "Seleccionar todo")).on_hover_text("Ctrl+A").clicked()
-            {
-                select_all = true;
-            }
-            if ui.small_button(pick("Clear selection", "Quitar selección")).on_hover_text("Esc").clicked() {
-                clear = true;
-            }
-            ui.separator();
-            for (id, en, es) in [
-                ("mail.mark_read", "Mark read", "Marcar leídos"),
-                ("mail.mark_unread", "Mark unread", "Marcar no leídos"),
-                ("mail.archive", "Archive", "Archivar"),
-                ("mail.delete", "Delete", "Eliminar"),
-                ("mail.move", "Move…", "Mover…"),
-            ] {
-                if ui.small_button(pick(en, es)).clicked() {
-                    cmd = Some(id);
+    // Una línea, como una barra de herramientas: a la izquierda cuántos (con ✕ para quitar la
+    // selección y «Seleccionar todos»), a la derecha las acciones con icono y su nombre al pasar.
+    egui::Frame::new()
+        .fill(c.selection_inactive)
+        .stroke(egui::Stroke::new(1.0, c.separator))
+        .corner_radius(8)
+        .inner_margin(egui::Margin::symmetric(8, 4))
+        .outer_margin(egui::Margin::symmetric(6, 4))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if icons::icon_button(ui, Icon::Close, pick("Clear selection (Esc)", "Quitar selección (Esc)"), true)
+                    .clicked()
+                {
+                    clear = true;
                 }
-            }
-            ui.menu_button(pick("More", "Más"), |ui| {
-                for (id, en, es) in [
-                    ("mail.toggle_flag", "Flag / unflag", "Marcar / quitar seguimiento"),
-                    ("mail.snooze", "Snooze…", "Posponer…"),
-                    ("mail.label", "Label…", "Etiquetar…"),
-                    ("mail.category", "Category…", "Categoría…"),
-                ] {
-                    if ui.button(pick(en, es)).clicked() {
-                        cmd = Some(id);
-                        ui.close();
+                ui.label(RichText::new(format!("{n} {}", pick("selected", "seleccionados"))).strong().color(c.text));
+                let all = format!("{} ({})", pick("Select all", "Seleccionar todos"), rows.len());
+                // El enlace solo si cabe junto a las acciones; si no, queda en «Más acciones».
+                let room = ui.available_width() - ACTIONS_WIDTH;
+                let fits = ui.fonts_mut(|f| {
+                    f.layout_no_wrap(all.clone(), egui::TextStyle::Small.resolve(ui.style()), c.text).size().x
+                }) <= room;
+                if n < rows.len() && fits && ui.link(RichText::new(&all).small()).on_hover_text("Ctrl+A").clicked() {
+                    select_all = true;
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    // De derecha a izquierda: «Más» al final.
+                    let more = ui.add(
+                        egui::Button::new(egui::Atom::custom(egui::IdSalt::new("mas"), egui::vec2(18.0, 18.0)))
+                            .frame_when_inactive(false),
+                    );
+                    let side = egui::Rect::from_center_size(more.rect.center(), egui::vec2(18.0, 18.0));
+                    icons::paint(ui.painter(), side, Icon::MoreHorizontal, c.text, c.accent);
+                    let more = more.on_hover_text(pick("More actions", "Más acciones"));
+                    crate::widgets::named(
+                        &more,
+                        egui::Role::Button,
+                        pick("More actions for the selection", "Más acciones para la selección"),
+                    );
+                    egui::Popup::menu(&more).show(|ui| {
+                        if n < rows.len() && icons::menu_item(ui, Some(Icon::List), &all).clicked() {
+                            select_all = true;
+                            ui.close();
+                        }
+                        for (id, icon, en, es) in [
+                            ("mail.toggle_flag", Icon::Flag, "Flag / unflag", "Marcar / quitar seguimiento"),
+                            ("mail.snooze", Icon::Clock, "Snooze…", "Posponer…"),
+                            ("mail.label", Icon::Tag, "Label…", "Etiquetar…"),
+                            ("mail.category", Icon::Tag, "Category…", "Categoría…"),
+                        ] {
+                            if icons::menu_item(ui, Some(icon), pick(en, es)).clicked() {
+                                cmd = Some(id);
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                    for (id, icon, en, es) in [
+                        ("mail.delete", Icon::Trash, "Delete", "Eliminar"),
+                        ("mail.move", Icon::Folder, "Move to…", "Mover a…"),
+                        ("mail.archive", Icon::Archive, "Archive", "Archivar"),
+                        ("mail.mark_unread", Icon::Mail, "Mark as unread", "Marcar como no leídos"),
+                        ("mail.mark_read", Icon::Check, "Mark as read", "Marcar como leídos"),
+                    ] {
+                        if icons::icon_button(ui, icon, pick(en, es), true).clicked() {
+                            cmd = Some(id);
+                        }
                     }
-                }
+                });
             });
         });
-    });
     if select_all {
         app.mail.list.selection.select_all(rows.len(), &key_of);
     }

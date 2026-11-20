@@ -17,6 +17,8 @@ iuredesk-html-view = { workspace = true }
 iure-doc-ui = { workspace = true }
 iure-doc-export = { workspace = true }
 iure-doc = { workspace = true }
+# Los diagramas y fórmulas del correo se ubican en el Markdown para enviarlos como imágenes.
+pulldown-cmark = { workspace = true }
 iurefficient-ui = { workspace = true }
 egui = { workspace = true }
 chrono = { workspace = true }

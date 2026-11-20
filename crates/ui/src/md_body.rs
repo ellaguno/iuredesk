@@ -136,6 +136,131 @@ impl MdBody {
     }
 }
 
+/// Content-ID de los dibujos del correo (`dibujo-N@iuredesk`).
+pub(crate) const DRAW_CID: &str = "dibujo-";
+const DRAW_DOMAIN: &str = "@iuredesk";
+/// Dibujos por correo, como mucho.
+const MAX_DRAWINGS: usize = 40;
+
+/// Un dibujo listo para el correo: su Content-ID, el PNG y su tamaño en puntos.
+pub(crate) struct Drawing {
+    pub cid: String,
+    pub png: Vec<u8>,
+    pub size: (u32, u32),
+}
+
+/// Diagramas (Mermaid, mapas mentales) y fórmulas (`$…$`, `$$…$$`) del Markdown, dibujados como PNG
+/// para enviarlos como imágenes en línea: devuelve el Markdown con `![…](cid:…)` en su lugar y los
+/// dibujos. Lo que no se puede dibujar se queda como texto.
+pub(crate) fn drawings_to_images(md: &str) -> (String, Vec<Drawing>) {
+    use iuredesk_html_view::diagram;
+    use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
+    enum What {
+        Diagram,
+        Formula(String, bool),
+    }
+    let mut found: Vec<(std::ops::Range<usize>, What)> = Vec::new();
+    let opts = Options::ENABLE_MATH | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
+    for (ev, r) in Parser::new_ext(md, opts).into_offset_iter() {
+        if found.last().is_some_and(|(prev, _)| r.start < prev.end) {
+            continue;
+        }
+        let slice = md.get(r.clone()).unwrap_or("");
+        let what = match ev {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info)))
+                if info.split_whitespace().next().is_some_and(|l| l.eq_ignore_ascii_case("mermaid")) =>
+            {
+                Some(What::Diagram)
+            }
+            Event::Start(Tag::BlockQuote(_))
+                if slice
+                    .trim_start()
+                    .trim_start_matches('>')
+                    .trim_start()
+                    .to_ascii_uppercase()
+                    .starts_with("[!MINDMAP") =>
+            {
+                Some(What::Diagram)
+            }
+            Event::DisplayMath(m) => Some(What::Formula(m.to_string(), true)),
+            Event::InlineMath(m) => Some(What::Formula(m.to_string(), false)),
+            _ => None,
+        };
+        if let Some(w) = what
+            && found.len() < MAX_DRAWINGS
+        {
+            found.push((r, w));
+        }
+    }
+    let pick = iurefficient_ui::lang::pick;
+    let mut out = String::with_capacity(md.len());
+    let mut drawings = Vec::new();
+    let mut at = 0usize;
+    for (r, what) in found {
+        let slice = md.get(r.clone()).unwrap_or("");
+        let drawn = match &what {
+            What::Diagram => diagram::draw_block(
+                slice,
+                &iuredesk_html_view::markdown::NoteStyle::default(),
+                iuredesk_html_view::mindmap::Layout::Radial,
+                2.0,
+                [255, 255, 255],
+            )
+            .ok()
+            .and_then(|p| diagram::encode_png(p.width, p.height, &p.rgba).map(|png| (png, p.points))),
+            What::Formula(latex, display) => {
+                iure_doc_export::math::render_math(latex.trim(), *display, 14.0, [0x1f, 0x23, 0x28], 2.0)
+                    .ok()
+                    .and_then(|m| diagram::encode_png(m.width, m.height, &m.rgba).map(|png| (png, m.points)))
+            }
+        };
+        let Some((png, (w, h))) = drawn else { continue };
+        let cid = format!("{DRAW_CID}{}{DRAW_DOMAIN}", drawings.len() + 1);
+        let alt = match &what {
+            What::Diagram => pick("Diagram", "Diagrama").to_string(),
+            What::Formula(latex, _) => latex.trim().chars().filter(|c| !matches!(c, '[' | ']')).take(80).collect(),
+        };
+        out.push_str(md.get(at..r.start).unwrap_or(""));
+        out.push_str(&format!("![{alt}](cid:{cid})"));
+        // Un bloque reemplazado conserva su salto de línea final.
+        if matches!(what, What::Diagram | What::Formula(_, true)) && slice.ends_with('\n') {
+            out.push('\n');
+        }
+        at = r.end;
+        drawings.push(Drawing { cid, png, size: (w.round() as u32, h.round() as u32) });
+    }
+    out.push_str(md.get(at..).unwrap_or(""));
+    (out, drawings)
+}
+
+/// Pone a las imágenes de los dibujos su tamaño en puntos (los PNG van al doble, para pantallas
+/// densas).
+pub(crate) fn size_drawings(blocks: &mut [Block], sizes: &HashMap<String, (u32, u32)>) {
+    use iuredesk_engine::iuredesk_compose::rich::Inline;
+    let fix = |content: &mut Vec<Inline>| {
+        for i in content.iter_mut() {
+            if let Inline::Image(img) = i
+                && let Some((w, h)) = img.src.strip_prefix("cid:").and_then(|c| sizes.get(c))
+            {
+                img.width = Some(*w);
+                img.height = Some(*h);
+            }
+        }
+    };
+    for b in blocks.iter_mut() {
+        match b {
+            Block::Paragraph { content } | Block::Heading { content, .. } => fix(content),
+            Block::List { items, .. } => {
+                for it in items.iter_mut() {
+                    size_drawings(it, sizes);
+                }
+            }
+            Block::Quote { blocks } | Block::Signature { blocks } => size_drawings(blocks, sizes),
+            _ => {}
+        }
+    }
+}
+
 /// Imágenes en línea del correo (`![…](cid:…)`) dibujadas desde los adjuntos en línea del borrador.
 pub(crate) struct CidImages {
     store: Arc<iuredesk_store::Store>,
@@ -236,6 +361,24 @@ mod tests {
         // Sin firma, nada raro; un `--` dentro de código no es firma.
         assert!(md_to_rich("Hola\n\n```\n-- \n```\n").signature().is_none());
         assert!(md_to_rich("Hola\n\n--\nFirma").signature().is_some());
+    }
+
+    #[test]
+    fn drawings_become_inline_images() {
+        let md = "Hola $x^2$ y\n\n```mermaid\nflowchart LR\n  A-->B\n```\n\n$$\n\\frac{1}{2}\n$$\n\nFin `$no$`\n";
+        let (out, d) = drawings_to_images(md);
+        assert_eq!(d.len(), 3, "{out}");
+        assert!(d.iter().all(|x| x.png.starts_with(b"\x89PNG") && x.size.0 > 0));
+        assert!(out.contains("![x^2](cid:dibujo-1@iuredesk)"), "{out}");
+        assert!(
+            out.contains("![Diagrama](cid:dibujo-2@iuredesk)") || out.contains("![Diagram](cid:dibujo-2@iuredesk)")
+        );
+        assert!(out.contains("`$no$`"), "el código no se toca");
+        let mut body = md_to_rich(&out);
+        let sizes: HashMap<String, (u32, u32)> = d.iter().map(|x| (x.cid.clone(), x.size)).collect();
+        size_drawings(&mut body.blocks, &sizes);
+        assert_eq!(body.content_ids().len(), 3);
+        assert!(body.to_html().contains("width="), "{}", body.to_html());
     }
 
     #[test]

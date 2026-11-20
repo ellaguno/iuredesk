@@ -70,6 +70,8 @@ pub struct ComposeWindow {
     pub(crate) templates: crate::rules_ui::ComposeTemplates,
     /// F5.4: «Firmar» / «Cifrar».
     pub(crate) security: crate::security_ui::ComposeSecurity,
+    /// Ocupa toda la ventana de IureDesk (para escribir a sus anchas).
+    pub(crate) maximized: bool,
 }
 
 enum Act {
@@ -104,6 +106,7 @@ impl ComposeWindow {
             cursor_init: false,
             templates: Default::default(),
             security: Default::default(),
+            maximized: false,
         }
     }
 
@@ -163,6 +166,32 @@ impl ComposeWindow {
             self.commit_field(f);
         }
         self.cd.draft.body = self.editor.to_rich();
+        // Los dibujos de un envío anterior (si falló o se deshizo) no se quedan como adjuntos.
+        self.cd.draft.attachments.retain(|a| {
+            !matches!(&a.kind, iuredesk_engine::iuredesk_compose::AttachmentKind::Inline { content_id }
+                if content_id.starts_with(crate::md_body::DRAW_CID))
+        });
+    }
+
+    /// Al enviar: los diagramas y fórmulas como imágenes en línea (el borrador guarda su código).
+    fn embed_drawings(&mut self) {
+        let (md, drawings) = crate::md_body::drawings_to_images(&self.editor.text);
+        if drawings.is_empty() {
+            return;
+        }
+        let sizes: std::collections::HashMap<String, (u32, u32)> =
+            drawings.iter().map(|d| (d.cid.clone(), d.size)).collect();
+        let mut body = crate::md_body::md_to_rich(&md);
+        crate::md_body::size_drawings(&mut body.blocks, &sizes);
+        self.cd.draft.body = body;
+        for d in drawings {
+            self.cd.draft.attachments.push(Attachment::inline_image(
+                format!("{}.png", d.cid.split('@').next().unwrap_or("dibujo")),
+                "image/png",
+                d.cid,
+                d.png,
+            ));
+        }
     }
 
     /// Añade archivos como adjuntos.
@@ -203,19 +232,24 @@ pub fn show_all(app: &mut DeskApp, ctx: &Context) {
             .speller
             .get_or_insert_with(|| iure_doc_ui::Speller::system(crate::pim::personal_dictionary()))
             .clone(),
+        layout: crate::note_preview::layout_of(app.session.prefs.mindmap_layout),
     };
     for (i, w) in app.composers.iter_mut().enumerate() {
         let mut open = w.open;
         let mut mine = Vec::new();
-        egui::Window::new(w.title())
+        let win = egui::Window::new(w.title())
             .id(egui::Id::unique(("compose", w.id)))
             .open(&mut open)
-            .default_size([720.0, 600.0])
             .min_size([420.0, 340.0])
+            .collapsible(false);
+        let win = if w.maximized {
+            // Maximizado: toda la ventana de IureDesk.
+            win.fixed_rect(ctx.content_rect().shrink(8.0))
+        } else {
             // En pantallas anchas no crece a todo lo ancho: los campos piden ancho infinito.
-            .max_width(compose_max_width(ctx))
-            .collapsible(false)
-            .show(ctx, |ui| form(ui, w, &identities, &presets, &env, &mut mine));
+            win.default_size([720.0, 600.0]).max_width(compose_max_width(ctx))
+        };
+        win.show(ctx, |ui| form(ui, w, &identities, &presets, &env, &mut mine));
         if !open {
             mine.push(Act::Close);
         }
@@ -274,6 +308,7 @@ fn run_act(app: &mut DeskApp, ctx: &Context, i: usize, act: Act) {
     match act {
         Act::Send | Act::Schedule(_) => {
             w.commit();
+            w.embed_drawings();
             w.cd.draft.send_at = match act {
                 Act::Schedule(t) => Some(t),
                 _ => None,
@@ -543,6 +578,8 @@ fn address_row(ui: &mut Ui, w: &mut ComposeWindow, f: Field, label: &str) {
 struct BodyEnv {
     store: std::sync::Arc<iuredesk_store::Store>,
     speller: std::sync::Arc<iure_doc_ui::Speller>,
+    /// Distribución de los mapas mentales (Preferencias).
+    layout: iuredesk_html_view::mindmap::Layout,
 }
 
 fn form(
@@ -672,6 +709,16 @@ fn form(
             acts.push(Act::Signature);
         }
         crate::assistant::compose_buttons(ui, &mut w.ai, w.id);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let (icon, tip) = if w.maximized {
+                (Icon::Restore, pick("Restore size", "Restaurar tamaño"))
+            } else {
+                (Icon::Maximize, pick("Maximize", "Maximizar"))
+            };
+            if icons::icon_button(ui, icon, tip, true).clicked() {
+                w.maximized = !w.maximized;
+            }
+        });
     });
     if let Some(url) = w.link_url.as_mut() {
         let mut done = None;
@@ -791,10 +838,17 @@ fn form(
                 w.cursor_init = true;
                 iure_doc_ui::focus_offset(ui.ctx(), body_id, &w.editor.text, 0);
             }
+            // Imágenes en línea, diagramas y fórmulas dibujados en su lugar (al enviar van como
+            // imágenes).
             let images: std::sync::Arc<dyn iure_doc_ui::DiagramRenderer> =
-                std::sync::Arc::new(crate::md_body::CidImages::new(env.store.clone(), &w.cd.draft.attachments));
+                std::sync::Arc::new(iure_doc_ui::Renderers(vec![
+                    std::sync::Arc::new(crate::md_body::CidImages::new(env.store.clone(), &w.cd.draft.attachments)),
+                    std::sync::Arc::new(crate::note_diagrams::NoteDiagrams::new(ui, env.layout)),
+                    std::sync::Arc::new(crate::note_diagrams::NoteFormulas::new(ui, false)),
+                ]));
             let hooks = iure_doc_ui::Hooks {
                 diagrams: Some(images),
+                math: Some(std::sync::Arc::new(crate::note_diagrams::NoteFormulas::new(ui, true))),
                 paste: Some(std::sync::Arc::new(iure_doc_ui::SystemClipboard)),
                 spell: Some(env.speller.clone()),
                 ..Default::default()

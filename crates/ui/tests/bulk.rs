@@ -92,7 +92,7 @@ fn checkboxes_select_several_and_the_bar_acts_on_all() {
     let mut h = harness(app(dir.path()));
     settle(&mut h);
     // (La lista anuncia «… seleccionados» a los lectores de pantalla: la barra se reconoce por su botón.)
-    assert!(h.query_by_label("Quitar selección").is_none(), "sin selección múltiple, sin barra");
+    assert!(h.query_by_label("Quitar selección (Esc)").is_none(), "sin selección múltiple, sin barra");
     // Dos casillas, sin teclas.
     check(&mut h, 0);
     check(&mut h, 1);
@@ -100,10 +100,10 @@ fn checkboxes_select_several_and_the_bar_acts_on_all() {
     assert_eq!(sel.len(), 2, "las casillas suman a la selección");
     assert!(h.query_by_label("2 seleccionados").is_some());
     // No leídos y leídos, los dos a la vez.
-    h.get_by_label("Marcar no leídos").click();
+    h.get_by_label("Marcar como no leídos").click();
     settle(&mut h);
     assert_eq!(seen(&mut h, &sel), [false, false]);
-    h.get_by_label("Marcar leídos").click();
+    h.get_by_label("Marcar como leídos").click();
     settle(&mut h);
     assert_eq!(seen(&mut h, &sel), [true, true]);
     // Eliminar los dos.
@@ -122,12 +122,17 @@ fn select_all_and_escape() {
     let total = h.state().session.rows_shared().len();
     check(&mut h, 0);
     check(&mut h, 2);
-    h.get_by_label("Seleccionar todo").click();
+    // En la columna angosta «Seleccionar todos» vive en «Más acciones».
+    if h.query_all_by_label_contains("Seleccionar todos").next().is_none() {
+        h.get_by_label("Más acciones para la selección").click();
+        settle(&mut h);
+    }
+    h.get_all_by_label_contains("Seleccionar todos").next().unwrap().click();
     settle(&mut h);
     assert_eq!(h.state().session.selection().len(), total);
     assert!(h.query_by_label(&format!("{total} seleccionados")).is_some());
     h.key_press(egui::Key::Escape);
     settle(&mut h);
     assert!(h.state().session.selection().len() <= 1, "Esc quita la selección");
-    assert!(h.query_by_label("Quitar selección").is_none(), "sin barra");
+    assert!(h.query_by_label("Quitar selección (Esc)").is_none(), "sin barra");
 }
