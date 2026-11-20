@@ -1291,7 +1291,20 @@ fn paint(placed: &[Placed], m: &Metrics, style: &NoteStyle, edges: Edges) -> Str
                 let (cx, cy) = border(p.w, p.h, -dx, -dy);
                 let (x1, y1) = (par.x + ox + bx, par.y + oy + by);
                 let (x2, y2) = (p.x + ox + cx, p.y + oy + cy);
-                write!(s, "<path d=\"M{x1:.1} {y1:.1} L{x2:.1} {y2:.1}\" {stroke}/>")
+                // Curva suave (Bézier en S) por el eje que más recorre, como el mapa de Mermaid.
+                if (x2 - x1).abs() >= (y2 - y1).abs() {
+                    let mx = (x1 + x2) / 2.0;
+                    write!(
+                        s,
+                        "<path d=\"M{x1:.1} {y1:.1} C{mx:.1} {y1:.1} {mx:.1} {y2:.1} {x2:.1} {y2:.1}\" {stroke}/>"
+                    )
+                } else {
+                    let my = (y1 + y2) / 2.0;
+                    write!(
+                        s,
+                        "<path d=\"M{x1:.1} {y1:.1} C{x1:.1} {my:.1} {x2:.1} {my:.1} {x2:.1} {y2:.1}\" {stroke}/>"
+                    )
+                }
             }
         };
     }
