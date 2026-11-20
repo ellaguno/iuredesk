@@ -1,4 +1,4 @@
-# Paso 2 (VM, PowerShell como administrador): IP fija en la red del anfitrión y bosque
+﻿# Paso 2 (VM, PowerShell como administrador): IP fija en la red del anfitrión y bosque
 # iuredesk.test. Reinicia sola al terminar.
 . Z:\comun.ps1
 $nat = Get-NetIPAddress -AddressFamily IPv4 | Where-Object IPAddress -like '10.0.2.*' | Select-Object -First 1

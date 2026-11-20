@@ -10,7 +10,9 @@ Kerberos, correo, calendario, contactos, tareas y disponibilidad.
 - Carpeta de trabajo: `~/VirtualBox VMs/iuredesk-ex1/lab` (fuera del proyecto y de MEGA; `LAB_DIR=…`
   para otra). `vm.sh` copia ahí los scripts; la VM la ve como `Z:\`. Ahí quedan las contraseñas
   aleatorias (`lab.env`) y el certificado (`iuredesk-lab.crt`).
-- Buzones: `ana@iuredesk.test` y `bea@iuredesk.test`.
+- Buzones: inician sesión como `ana@iuredesk.test` y `bea@iuredesk.test` (UPN) y su correo es
+  `ana@iuredesk.internal` y `bea@iuredesk.internal`: Exchange no entrega correo a dominios reservados
+  por la RFC 2606 como `.test` («501 5.1.4 Recipient address reserved by RFC 2606»; paso 5b).
 
 Las versiones de evaluación funcionan 180 días sin clave.
 
@@ -29,7 +31,8 @@ carpeta de trabajo.
 
 ## 2–5. Dentro de la VM
 
-PowerShell **como administrador**; los scripts están en `Z:\` (carpeta compartida). Si PowerShell
+PowerShell **como administrador**; los scripts están en `Z:\` (carpeta compartida). Los scripts van en UTF-8 **con
+marca (BOM)**: sin ella, Windows PowerShell 5 lee los acentos mal («PÃ©rez»). Si PowerShell
 no deja ejecutarlos: `Set-ExecutionPolicy -Scope Process Bypass`.
 
 | Paso | Comando | Entra como | Al terminar |
@@ -38,6 +41,7 @@ no deja ejecutarlos: `Set-ExecutionPolicy -Scope Process Bypass`.
 | 3 | `Z:\3-requisitos.ps1` | `IUREDESK\Administrator` | reinicia |
 | 4 | `Z:\4-exchange.ps1` (30–60 min) | `IUREDESK\Administrator` | reinicia |
 | 5 | `Z:\5-configurar.ps1` | `IUREDESK\Administrator` | deja `iuredesk-lab.crt` en la carpeta |
+| 5b | `Z:\5b-correo.ps1` | `IUREDESK\Administrator` | correo en `@iuredesk.internal` (ver abajo) |
 
 Si un paso falla, se puede volver a correr. Después del paso 5, una instantánea para volver
 atrás cuando haga falta:

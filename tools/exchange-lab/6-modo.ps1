@@ -1,4 +1,4 @@
-# Cambia cómo se autentica EWS y Autodiscover para probar cada camino de IureDesk:
+﻿# Cambia cómo se autentica EWS y Autodiscover para probar cada camino de IureDesk:
 #   basic     Basic + NTLM + Negotiate (lo de siempre)
 #   ntlm      sin Basic: IureDesk pasa solo a NTLM
 #   kerberos  sin Basic y solo Negotiate (como un dominio que restringe NTLM)
@@ -17,5 +17,8 @@ foreach ($site in @('Default Web Site/EWS', 'Default Web Site/Autodiscover')) {
         & $appcmd set config $site -section:system.webServer/security/authentication/windowsAuthentication /+"providers.[value='NTLM']" /commit:apphost | Out-Null
     }
 }
-iisreset /noforce
+# Basta con reciclar los grupos de EWS y Autodiscover: un iisreset completo tarda tanto en esta VM
+# que Windows lo da por fallido y deja IIS detenido.
+Import-Module WebAdministration
+foreach ($pool in 'MSExchangeServicesAppPool', 'MSExchangeAutodiscoverAppPool') { Restart-WebAppPool $pool }
 Write-Host "EWS y Autodiscover en modo $Modo."

@@ -1,4 +1,4 @@
-# Paso 5 (VM, IUREDESK\Administrator): certificado, URL, autenticación de EWS y Autodiscover,
+﻿# Paso 5 (VM, IUREDESK\Administrator): certificado, URL, autenticación de EWS y Autodiscover,
 # buzones de prueba y el certificado para el anfitrión (Z:\iuredesk-lab.crt).
 . Z:\comun.ps1
 Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
@@ -33,5 +33,8 @@ foreach ($u in @(@{ A = 'ana'; N = 'Ana'; L = 'Pérez'; P = $cfg.ANA_PASSWORD },
             -LastName $u.L -Password (Secure $u.P) -ResetPasswordOnNextLogon $false | Out-Null
     }
 }
-iisreset /noforce
+# Basta con reciclar los grupos de EWS y Autodiscover: un iisreset completo tarda tanto en esta VM
+# que Windows lo da por fallido y deja IIS detenido.
+Import-Module WebAdministration
+foreach ($pool in 'MSExchangeServicesAppPool', 'MSExchangeAutodiscoverAppPool') { Restart-WebAppPool $pool }
 Write-Host 'Listo. En el anfitrión: paso 6 del README (hosts y certificado).'

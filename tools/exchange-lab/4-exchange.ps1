@@ -1,4 +1,4 @@
-# Paso 4 (VM, IUREDESK\Administrator): instala Exchange (esquema, AD, buzón). 30–60 min.
+﻿# Paso 4 (VM, IUREDESK\Administrator): instala Exchange (esquema, AD, buzón). 30–60 min.
 . Z:\comun.ps1
 $ex = ExchangeDrive
 $setup = "$($ex)Setup.exe"

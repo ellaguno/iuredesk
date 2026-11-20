@@ -1,4 +1,4 @@
-# Lo compartido por los pasos: contraseñas de laboratorio (Z:\lab.env) y la unidad de Exchange.
+﻿# Lo compartido por los pasos: contraseñas de laboratorio (Z:\lab.env) y la unidad de Exchange.
 $ErrorActionPreference = 'Stop'
 $cfg = ((Get-Content Z:\lab.env) | Where-Object { $_ -match '^[A-Z_]+=' }) -join "`n" | ConvertFrom-StringData
 function Secure([string]$s) { ConvertTo-SecureString $s -AsPlainText -Force }

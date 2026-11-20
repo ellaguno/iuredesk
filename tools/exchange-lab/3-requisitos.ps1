@@ -1,4 +1,4 @@
-# Paso 3 (VM, entrando como IUREDESK\Administrator): requisitos de Exchange. Reinicia al terminar.
+﻿# Paso 3 (VM, entrando como IUREDESK\Administrator): requisitos de Exchange. Reinicia al terminar.
 . Z:\comun.ps1
 try { Add-DnsServerForwarder -IPAddress 10.0.2.3 -ErrorAction Stop } catch { }
 Install-WindowsFeature Server-Media-Foundation, NET-Framework-45-Features, RPC-over-HTTP-proxy, RSAT-Clustering, `
