@@ -353,6 +353,11 @@ impl DeskApp {
         self.composers.first().map(|w| w.cd.draft.subject.clone())
     }
 
+    /// Lo escrito en el cuerpo de la primera ventana de redacción, en Markdown (pruebas).
+    pub fn composer_body(&self) -> Option<String> {
+        self.composers.first().map(|w| w.editor.text.clone())
+    }
+
     /// Un cuadro completo. `ui` ocupa la ventana.
     pub fn ui(&mut self, ui: &mut Ui) {
         let frame_start = std::time::Instant::now();

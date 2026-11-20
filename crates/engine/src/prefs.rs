@@ -315,11 +315,11 @@ pub struct Prefs {
 #[serde(rename_all = "snake_case")]
 pub enum MindmapLayout {
     /// Centro a la izquierda, ramas a la derecha.
-    #[default]
     Right,
     /// En abanico alrededor del centro (como IureEditor).
     Radial,
-    /// Ramas a ambos lados del centro.
+    /// Ramas a ambos lados del centro (por omisión, decisión del dueño 2026-11-20).
+    #[default]
     Balanced,
     /// De arriba abajo (organigrama).
     Down,
@@ -481,7 +481,7 @@ impl Default for Prefs {
             today_layout: Default::default(),
             weather: Default::default(),
             update_check: true,
-            mindmap_layout: MindmapLayout::Right,
+            mindmap_layout: MindmapLayout::Balanced,
             projects: Vec::new(),
             notes_dir: None,
             reading_width: None,
@@ -541,8 +541,8 @@ mod tests {
         let p2 = Prefs::load(&p);
         assert_eq!(p2.theme, ThemePref::Dark);
         assert!(p2.conversations);
-        // S1.19: sin la clave, mapas a la derecha (como antes); con ella, la elegida.
-        assert_eq!(p2.mindmap_layout, MindmapLayout::Right);
+        // Sin la clave, mapas a ambos lados (por omisión desde 2026-11-20); con ella, la elegida.
+        assert_eq!(p2.mindmap_layout, MindmapLayout::Balanced);
         std::fs::write(&p, br#"{"mindmap_layout":"radial"}"#).unwrap();
         assert_eq!(Prefs::load(&p).mindmap_layout, MindmapLayout::Radial);
         let prefs = Prefs { mindmap_layout: MindmapLayout::Down, ..Default::default() };

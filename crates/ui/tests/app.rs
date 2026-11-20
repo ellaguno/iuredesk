@@ -295,7 +295,7 @@ fn mailto_opens_a_compose_window_and_saves_a_draft() {
     );
     let mut h = harness(app, vec2(1440.0, 900.0));
     settle(&mut h);
-    assert!(h.query_by_label_contains("Nuevo mensaje: Hola").is_some());
+    assert!(h.query_all_by_label_contains("Nuevo mensaje: Hola").next().is_some());
     let drafts_before = h.state_mut().session.unified_unread(FolderRole::Drafts);
     let _ = drafts_before;
     h.get_by_label("Guardar borrador").click();

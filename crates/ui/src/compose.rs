@@ -254,6 +254,7 @@ pub fn show_all(app: &mut DeskApp, ctx: &Context) {
                 if class == egui::ViewportClass::EmbeddedWindow {
                     // Sin ventanas del sistema (pruebas): dentro de IureDesk.
                     ui.set_min_size(vec2(720.0, 560.0));
+                    header(ui, w, true, &mut mine);
                     form(ui, w, &identities, &presets, &env, &mut mine);
                     return;
                 }
@@ -261,19 +262,25 @@ pub fn show_all(app: &mut DeskApp, ctx: &Context) {
                     open = false;
                 }
                 egui::CentralPanel::default().show(ui, |ui| {
+                    header(ui, w, false, &mut mine);
                     form(ui, w, &identities, &presets, &env, &mut mine);
                 });
             });
         } else {
+            // Barra de título propia: el título, maximizar y cerrar juntos (la de egui no admite
+            // más botones).
             egui::Window::new(w.title())
                 .id(egui::Id::unique(("compose", w.id)))
-                .open(&mut open)
+                .title_bar(false)
                 .min_size([420.0, 340.0])
                 .collapsible(false)
                 // En pantallas anchas no crece a todo lo ancho: los campos piden ancho infinito.
                 .default_size([720.0, 600.0])
                 .max_width(compose_max_width(ctx))
-                .show(ctx, |ui| form(ui, w, &identities, &presets, &env, &mut mine));
+                .show(ctx, |ui| {
+                    header(ui, w, true, &mut mine);
+                    form(ui, w, &identities, &presets, &env, &mut mine);
+                });
         }
         if !open {
             mine.push(Act::Close);
@@ -607,6 +614,41 @@ struct BodyEnv {
     layout: iuredesk_html_view::mindmap::Layout,
 }
 
+/// Barra de título del redactor: el título y, a la derecha, maximizar (en ventana propia) o volver,
+/// y cerrar (`close`: no en la ventana del sistema, que trae el suyo).
+fn header(ui: &mut Ui, w: &mut ComposeWindow, close: bool, acts: &mut Vec<Act>) {
+    let c = theme::colors(ui);
+    ui.horizontal(|ui| {
+        ui.set_min_height(26.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            if close
+                && icons::icon_button(
+                    ui,
+                    Icon::Close,
+                    pick("Close (saves the draft)", "Cerrar (guarda el borrador)"),
+                    true,
+                )
+                .clicked()
+            {
+                acts.push(Act::Close);
+            }
+            let (icon, tip) = if w.own_window {
+                (Icon::Restore, pick("Back into the IureDesk window", "Volver a la ventana de IureDesk"))
+            } else {
+                (Icon::Maximize, pick("Open in its own maximized window", "Abrir en ventana propia maximizada"))
+            };
+            if icons::icon_button(ui, icon, tip, true).clicked() {
+                w.own_window = !w.own_window;
+            }
+            ui.with_layout(Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
+                ui.add(egui::Label::new(RichText::new(w.title()).strong().color(c.text)).truncate().selectable(false));
+            });
+        });
+    });
+    crate::widgets::hairline(ui);
+}
+
 fn form(
     ui: &mut Ui,
     w: &mut ComposeWindow,
@@ -727,16 +769,6 @@ fn form(
             acts.push(Act::Signature);
         }
         crate::assistant::compose_buttons(ui, &mut w.ai, w.id);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let (icon, tip) = if w.own_window {
-                (Icon::Restore, pick("Back into the IureDesk window", "Volver a la ventana de IureDesk"))
-            } else {
-                (Icon::Maximize, pick("Open in its own maximized window", "Abrir en ventana propia maximizada"))
-            };
-            if icons::icon_button(ui, icon, tip, true).clicked() {
-                w.own_window = !w.own_window;
-            }
-        });
     });
     if let Some(url) = w.link_url.as_mut() {
         let mut done = None;
