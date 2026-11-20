@@ -714,8 +714,6 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             let now_t = ui.input(|i| i.time);
             let id = edit.id;
             let mut body = edit.body.clone();
-            let saved_body = notes.iter().find(|n| n.id == id).map(|n| n.body.clone()).unwrap_or_default();
-            let wide = ui.available_width() >= 980.0;
             let mut changed = false;
             // Por bloques (con su propio desplazamiento): teclear en una nota larga rehace solo el
             // bloque editado.
@@ -776,23 +774,9 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                     clicked_link = out.link;
                 }
             };
-            if wide {
-                ui.columns(2, |cols| {
-                    if let [left, right] = cols {
-                        editor(left, &mut body);
-                        egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-live-preview").show(
-                            right,
-                            |ui| {
-                                if !saved_body.trim().is_empty() {
-                                    preview_act = crate::note_preview::show(app, ui, id, &saved_body);
-                                }
-                            },
-                        );
-                    }
-                });
-            } else {
-                editor(ui, &mut body);
-            }
+            // El editor ya muestra el formato al escribir (como IureEditor 2.0): sin vista previa al
+            // lado.
+            editor(ui, &mut body);
             if let Some(l) = clicked_link {
                 follow_note_link(app, ui.ctx(), &l);
             }

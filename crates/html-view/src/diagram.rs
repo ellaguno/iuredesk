@@ -951,6 +951,29 @@ pub struct BlockPixels {
     pub boxes: Vec<mindmap::NodeBox>,
 }
 
+/// El SVG de un bloque de diagrama (```` ```mermaid ```` o mapa mental), para exportarlo.
+pub fn block_svg(block: &str, style: &NoteStyle, mindmap_layout: Layout) -> Result<String, DiagramError> {
+    block_svg_boxed(block, style, mindmap_layout).map(|(svg, _)| svg)
+}
+
+fn block_svg_boxed(
+    block: &str,
+    style: &NoteStyle,
+    mindmap_layout: Layout,
+) -> Result<(String, Vec<mindmap::NodeBox>), DiagramError> {
+    if let Some(code) = mermaid_code(block) {
+        return Ok((render_drawn(&code, style)?.svg, Vec::new()));
+    }
+    let map = mindmap::find(block).into_iter().next().ok_or_else(|| {
+        DiagramError::new(
+            None,
+            "This mind map has no branches to draw.",
+            "Este mapa mental no tiene ramas que dibujar.",
+        )
+    })?;
+    Ok(mindmap::draw_boxed(&map.root, style, &map.options.look(mindmap_layout)))
+}
+
 /// Dibuja un bloque de Markdown que es diagrama (```` ```mermaid ```` o mapa mental de IureEditor)
 /// a `scale` píxeles por punto, sobre `background`. Bloqueante (Blitz): la UI lo llama en otro
 /// hilo. Lo usan los editores de la suite (`iure-doc-ui::DiagramRenderer`).
@@ -961,21 +984,7 @@ pub fn draw_block(
     scale: f32,
     background: [u8; 3],
 ) -> Result<BlockPixels, DiagramError> {
-    let mut boxes = Vec::new();
-    let svg = if let Some(code) = mermaid_code(block) {
-        render_drawn(&code, style)?.svg
-    } else {
-        let map = mindmap::find(block).into_iter().next().ok_or_else(|| {
-            DiagramError::new(
-                None,
-                "This mind map has no branches to draw.",
-                "Este mapa mental no tiene ramas que dibujar.",
-            )
-        })?;
-        let (svg, b) = mindmap::draw_boxed(&map.root, style, &map.options.look(mindmap_layout));
-        boxes = b;
-        svg
-    };
+    let (svg, boxes) = block_svg_boxed(block, style, mindmap_layout)?;
     let points = svg_size(&svg).unwrap_or((800.0, 600.0));
     let px = rasterize(&svg, scale, background).map_err(|e| {
         DiagramError::new(

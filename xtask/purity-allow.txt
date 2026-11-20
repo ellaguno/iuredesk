@@ -9,5 +9,5 @@ prettyplease      # «links» solo para exponer su versión a otros build script
 ring              # proveedor criptográfico de rustls (TLS hacia Iurefficient y servidores de correo: reqwest, tokio-rustls, lettre); primitivas en C/ensamblador; decisión del dueño 2026-10-24
 stylo             # «links» solo evita dos copias del motor CSS; Rust puro. Su build.rs ejecuta python3 (plantillas Mako → Rust). aprobada por el dueño 2026-10-26 (solo compilación)
 objc-sys          # macOS: enlaza libobjc, el runtime de Objective-C del SO (como Wayland/X11 en Linux); llega por eframe → accesskit_macos (objc2 0.5); decisión del dueño 2026-10-29
-psm               # PENDIENTE DE DECISIÓN DEL DUEÑO (2026-11-20): ensamblador para crecer la pila; llega por typst-eval → stacker (fórmulas de las notas con Typst, iure-doc-export «math»)
-stacker           # PENDIENTE DE DECISIÓN DEL DUEÑO (2026-11-20): usa psm; llega por typst-eval (fórmulas de las notas con Typst)
+psm               # aprobada por el dueño 2026-11-20: ensamblador para crecer la pila; llega por typst-eval → stacker (fórmulas de las notas con Typst, iure-doc-export «math»)
+stacker           # aprobada por el dueño 2026-11-20: usa psm; llega por typst-eval (fórmulas de las notas con Typst)

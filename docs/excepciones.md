@@ -106,7 +106,7 @@ Se mantiene la decisión de no usar OpenSSL.
 
 **Alcance:** entra por `iurefficient-connect` y, desde F0.5, por el TLS de correo y descubrimiento (`rustls`/`tokio-rustls` en `iuredesk-accounts`, `reqwest` en `iuredesk-autoconfig`, `lettre` para SMTP), siempre con el proveedor `ring` (nunca `aws-lc-rs` ni OpenSSL). El resto del workspace sigue sin código nativo. En Windows y macOS el llavero (`keyring` con `windows-native` / `apple-native`) trae `windows-sys` y `security-framework-sys`: bindings del SO, pendientes de la revisión de la Fase 7.
 
-## `psm` y `stacker` (2026-11-20, **pendiente de decisión del dueño**)
+## `psm` y `stacker` (2026-11-20, decidido por el dueño)
 
 **Qué:** `stacker` deja crecer la pila en recursiones profundas y usa `psm`, que compila un poco de
 ensamblador por plataforma con `cc`. Llegan por `typst-eval`, el evaluador de Typst, que dibuja las

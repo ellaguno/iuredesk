@@ -68,6 +68,7 @@ impl iure_doc_ui::DiagramRenderer for NoteDiagrams {
     }
 
     fn menu(&self, ui: &mut egui::Ui, block: &str) -> Option<String> {
+        export_items(ui, block, &self.style, self.layout, self.background);
         if let Some(map) = mindmap::find(block).into_iter().next() {
             return map_menu(ui, block, map.options, self.layout);
         }
@@ -103,6 +104,40 @@ impl iure_doc_ui::DiagramRenderer for NoteDiagrams {
         };
         mindmap::edit_node(block, id, edit, pick("New branch", "Nueva rama"))
     }
+}
+
+/// «Exportar como PNG…» y «Exportar como SVG…» (como IureEditor 1.x): el diálogo de guardar y el
+/// dibujo van en otro hilo.
+fn export_items(ui: &mut egui::Ui, block: &str, style: &NoteStyle, layout: Layout, bg: [u8; 3]) {
+    for (png, label) in
+        [(true, pick("Export as PNG…", "Exportar como PNG…")), (false, pick("Export as SVG…", "Exportar como SVG…"))]
+    {
+        if ui.button(label).clicked() {
+            let (block, style) = (block.to_string(), style.clone());
+            std::thread::spawn(move || {
+                let (name, ext) = if png {
+                    (pick("diagram.png", "diagrama.png"), "png")
+                } else {
+                    (pick("diagram.svg", "diagrama.svg"), "svg")
+                };
+                let Some(path) = rfd::FileDialog::new().set_file_name(name).add_filter(ext, &[ext]).save_file() else {
+                    return;
+                };
+                let data = if png {
+                    diagram::draw_block(&block, &style, layout, 2.0, bg)
+                        .ok()
+                        .and_then(|p| diagram::encode_png(p.width, p.height, &p.rgba))
+                } else {
+                    diagram::block_svg(&block, &style, layout).ok().map(String::into_bytes)
+                };
+                if let Some(d) = data {
+                    let _ = std::fs::write(path, d);
+                }
+            });
+            ui.close();
+        }
+    }
+    ui.separator();
 }
 
 /// Las opciones de un mapa mental (distribución, forma, centro, colores, vista).
