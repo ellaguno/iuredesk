@@ -70,8 +70,9 @@ pub struct ComposeWindow {
     pub(crate) templates: crate::rules_ui::ComposeTemplates,
     /// F5.4: «Firmar» / «Cifrar».
     pub(crate) security: crate::security_ui::ComposeSecurity,
-    /// Ocupa toda la ventana de IureDesk (para escribir a sus anchas).
-    pub(crate) maximized: bool,
+    /// En su propia ventana del sistema, maximizada (para escribir a sus anchas, fuera de los
+    /// límites de IureDesk).
+    pub(crate) own_window: bool,
 }
 
 enum Act {
@@ -106,7 +107,7 @@ impl ComposeWindow {
             cursor_init: false,
             templates: Default::default(),
             security: Default::default(),
-            maximized: false,
+            own_window: false,
         }
     }
 
@@ -237,19 +238,43 @@ pub fn show_all(app: &mut DeskApp, ctx: &Context) {
     for (i, w) in app.composers.iter_mut().enumerate() {
         let mut open = w.open;
         let mut mine = Vec::new();
-        let win = egui::Window::new(w.title())
-            .id(egui::Id::unique(("compose", w.id)))
-            .open(&mut open)
-            .min_size([420.0, 340.0])
-            .collapsible(false);
-        let win = if w.maximized {
-            // Maximizado: toda la ventana de IureDesk.
-            win.fixed_rect(ctx.content_rect().shrink(8.0))
+        if w.own_window {
+            // Ventana propia del sistema: se abre maximizada y se mueve, cambia de tamaño o va a
+            // otra pantalla como cualquier ventana. Cerrarla es cerrar el redactor (guarda el
+            // borrador).
+            let builder = egui::ViewportBuilder::default()
+                .with_title(format!("{} — IureDesk", w.title()))
+                .with_app_id("iuredesk")
+                .with_inner_size([1000.0, 760.0])
+                .with_min_inner_size([520.0, 420.0])
+                .with_maximized(true)
+                .with_resizable(true);
+            let vid = egui::ViewportId::from_hash_of(("iuredesk-compose", w.id));
+            ctx.show_viewport_immediate(vid, builder, |ui, class| {
+                if class == egui::ViewportClass::EmbeddedWindow {
+                    // Sin ventanas del sistema (pruebas): dentro de IureDesk.
+                    ui.set_min_size(vec2(720.0, 560.0));
+                    form(ui, w, &identities, &presets, &env, &mut mine);
+                    return;
+                }
+                if ui.ctx().input(|i| i.viewport().close_requested()) {
+                    open = false;
+                }
+                egui::CentralPanel::default().show(ui, |ui| {
+                    form(ui, w, &identities, &presets, &env, &mut mine);
+                });
+            });
         } else {
-            // En pantallas anchas no crece a todo lo ancho: los campos piden ancho infinito.
-            win.default_size([720.0, 600.0]).max_width(compose_max_width(ctx))
-        };
-        win.show(ctx, |ui| form(ui, w, &identities, &presets, &env, &mut mine));
+            egui::Window::new(w.title())
+                .id(egui::Id::unique(("compose", w.id)))
+                .open(&mut open)
+                .min_size([420.0, 340.0])
+                .collapsible(false)
+                // En pantallas anchas no crece a todo lo ancho: los campos piden ancho infinito.
+                .default_size([720.0, 600.0])
+                .max_width(compose_max_width(ctx))
+                .show(ctx, |ui| form(ui, w, &identities, &presets, &env, &mut mine));
+        }
         if !open {
             mine.push(Act::Close);
         }
@@ -620,11 +645,20 @@ fn form(
     }
     ui.horizontal(|ui| {
         let lr = field_label(ui, pick("Subject", "Asunto"));
+        // Lo que ocupa el botón CC/CCO, medido: si se calcula de menos, la ventana se ensancha un
+        // poco en cada cuadro (se veía como una animación al abrir).
+        let cc_width = if w.show_cc {
+            0.0
+        } else {
+            let font = egui::TextStyle::Button.resolve(ui.style());
+            let text = ui.fonts_mut(|f| f.layout_no_wrap(pick("Cc/Bcc", "CC/CCO").into(), font, c.text).size().x);
+            text + 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x + 2.0
+        };
         let r = ui.add(
             egui::TextEdit::singleline(&mut w.cd.draft.subject)
                 .id(egui::Id::unique(("compose-subject", w.id)))
                 .hint_text(pick("Subject", "Asunto"))
-                .desired_width(ui.available_width() - if w.show_cc { 0.0 } else { 70.0 }),
+                .desired_width((ui.available_width() - cc_width).max(80.0)),
         );
         let r = r.labelled_by(lr.id);
         if r.changed() {
@@ -638,55 +672,44 @@ fn form(
     crate::widgets::hairline(ui);
     // Barra de formato: acciones del editor sobre la selección (Markdown).
     let body_id = egui::Id::unique(("compose-body", w.id));
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 1.0;
         use iure_doc_ui::ExternalEdit as E;
-        let size = theme::density(&ctx).body_size();
-        let mut edit: Option<E> = None;
-        let fmt = [
-            (
-                E::Wrap("**".into()),
-                RichText::new("B").font(theme::bold_font(&ctx, size)),
-                pick("Bold (Ctrl+B)", "Negrita (Ctrl+B)"),
-            ),
-            (E::Wrap("*".into()), RichText::new("I").italics(), pick("Italic (Ctrl+I)", "Cursiva (Ctrl+I)")),
-            (E::Wrap("~~".into()), RichText::new("S").strikethrough(), pick("Strikethrough", "Tachado")),
+        use iure_doc_ui::toolbar::{self, Fmt, Glyph, Pressed, Tool};
+        // La misma barra que IureEditor (iconos de la suite), con lo que un correo necesita.
+        const MAIL: &[Tool] = &[
+            Tool::Undo,
+            Tool::Redo,
+            Tool::Separator,
+            Tool::Bold,
+            Tool::Italic,
+            Tool::Underline,
+            Tool::Strike,
+            Tool::TextColor,
+            Tool::Highlight,
+            Tool::Separator,
+            Tool::Bullet,
+            Tool::Ordered,
+            Tool::Quote,
+            Tool::Separator,
+            Tool::Link,
+            Tool::Diagram,
         ];
-        for (e, label, tip) in fmt {
-            if ui.add(egui::Button::new(label)).on_hover_text(tip).clicked() {
-                edit = Some(e);
+        let edit = match toolbar::tools(ui, MAIL) {
+            // Enlace: se pide la dirección en la barra de abajo.
+            Some(Pressed::Edit(E::Link)) => {
+                w.link_url = Some("https://".into());
+                None
             }
-        }
-        // Subrayado: `<u>…</u>` (Markdown no lo tiene; el correo sí).
-        if ui
-            .add(egui::Button::new(RichText::new("U").underline()))
-            .on_hover_text(pick("Underline", "Subrayado"))
-            .clicked()
-        {
-            let (a, b) = (w.editor.sel.0.min(w.editor.sel.1), w.editor.sel.0.max(w.editor.sel.1));
-            let sel: String = w.editor.text.chars().skip(a).take(b - a).collect();
-            if !sel.is_empty() {
-                edit = Some(E::Replace(format!("<u>{sel}</u>")));
+            Some(Pressed::Edit(e)) => Some(e),
+            // Subrayado: `<u>…</u>` (Markdown no lo tiene; el correo sí).
+            Some(Pressed::Other(Tool::Underline)) => {
+                let (a, b) = (w.editor.sel.0.min(w.editor.sel.1), w.editor.sel.0.max(w.editor.sel.1));
+                let sel: String = w.editor.text.chars().skip(a).take(b - a).collect();
+                (!sel.is_empty()).then(|| E::Replace(format!("<u>{sel}</u>")))
             }
-        }
-        ui.add_space(6.0);
-        for (e, text, tip) in [
-            (
-                E::Line(iure_doc::edit::LineKind::Bullet),
-                format!("• {}", pick("List", "Lista")),
-                pick("Bulleted list", "Lista con viñetas"),
-            ),
-            (
-                E::Line(iure_doc::edit::LineKind::Ordered),
-                format!("1. {}", pick("List", "Lista")),
-                pick("Numbered list", "Lista numerada"),
-            ),
-            (E::Quote, pick("Quote", "Cita").to_string(), pick("Quote", "Cita")),
-        ] {
-            if ui.button(text).on_hover_text(tip).clicked() {
-                edit = Some(e);
-            }
-        }
+            Some(Pressed::Other(_)) | None => None,
+        };
         if let Some(e) = edit
             && iure_doc_ui::apply_external(&ctx, body_id, &mut w.editor.text, e)
         {
@@ -694,29 +717,24 @@ fn form(
             w.touch();
             ui.memory_mut(|m| m.request_focus(body_id));
         }
-        ui.add_space(6.0);
-        if icons::icon_button(ui, Icon::Link, pick("Insert link", "Insertar enlace"), true).clicked() {
-            w.link_url = Some("https://".into());
-        }
-        if icons::icon_button(ui, Icon::Attachment, pick("Attach files", "Adjuntar archivos"), true).clicked() {
+        ui.add_space(4.0);
+        ui.separator();
+        ui.add_space(4.0);
+        if toolbar::fmt_button(ui, Fmt::Icon(Icon::Attachment), pick("Attach files", "Adjuntar archivos")) {
             acts.push(Act::Attach);
         }
-        if ui
-            .button(pick("Signature", "Firma"))
-            .on_hover_text(pick("Insert my signature", "Insertar mi firma"))
-            .clicked()
-        {
+        if toolbar::fmt_button(ui, Fmt::Draw(Glyph::Signature), pick("Insert my signature", "Insertar mi firma")) {
             acts.push(Act::Signature);
         }
         crate::assistant::compose_buttons(ui, &mut w.ai, w.id);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let (icon, tip) = if w.maximized {
-                (Icon::Restore, pick("Restore size", "Restaurar tamaño"))
+            let (icon, tip) = if w.own_window {
+                (Icon::Restore, pick("Back into the IureDesk window", "Volver a la ventana de IureDesk"))
             } else {
-                (Icon::Maximize, pick("Maximize", "Maximizar"))
+                (Icon::Maximize, pick("Open in its own maximized window", "Abrir en ventana propia maximizada"))
             };
             if icons::icon_button(ui, icon, tip, true).clicked() {
-                w.maximized = !w.maximized;
+                w.own_window = !w.own_window;
             }
         });
     });

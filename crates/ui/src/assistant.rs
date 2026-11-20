@@ -778,12 +778,19 @@ fn create_task(app: &mut DeskApp, id: MessageId, t: &ProposedTask) {
 /// Botones ✦ y «Dictar» en la barra de formato del redactor.
 pub fn compose_buttons(ui: &mut Ui, ai: &mut ComposeAi, window: u64) {
     if ai.enabled
-        && icons::icon_button(ui, Icon::Sparkle, pick("Assistant (Ctrl+J)", "Asistente (Ctrl+J)"), true).clicked()
+        && iure_doc_ui::toolbar::fmt_button(
+            ui,
+            iure_doc_ui::toolbar::Fmt::Icon(Icon::Sparkle),
+            pick("Assistant (Ctrl+J)", "Asistente (Ctrl+J)"),
+        )
     {
         ai.open = !ai.open;
     }
-    if ui.button(pick("Dictate", "Dictar")).on_hover_text(pick("Dictate with IureVoz", "Dictar con IureVoz")).clicked()
-    {
+    if iure_doc_ui::toolbar::fmt_button(
+        ui,
+        iure_doc_ui::toolbar::Fmt::Draw(iure_doc_ui::toolbar::Glyph::Microphone),
+        pick("Dictate with IureVoz", "Dictar con IureVoz"),
+    ) {
         ai.want = Some(Want::Dictate);
     }
     // Ctrl+J dentro del redactor (los atajos de la app no se disparan mientras se escribe).

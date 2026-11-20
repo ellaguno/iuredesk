@@ -538,3 +538,47 @@ fn today_cards_can_be_removed_and_put_back() {
     let l = h.state().session.prefs.today_layout.normalized();
     assert_eq!(l.left.first(), Some(&iuredesk_engine::today_layout::TodayCard::Mail));
 }
+
+/// Al abrir el redactor no se ve una ventana que se va ensanchando cuadro a cuadro: queda de su
+/// tamaño desde el primer momento.
+#[test]
+fn the_compose_window_does_not_grow_after_opening() {
+    spanish();
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(sample_app(dir.path(), false), vec2(1440.0, 900.0));
+    settle(&mut h);
+    h.get_by_label("Nuevo mensaje").click();
+    h.run_steps(3);
+    let mut widths = Vec::new();
+    for _ in 0..20 {
+        h.step();
+        widths.push(h.get_by_label("Asunto").rect().width());
+    }
+    let (first, last) = (widths[0], widths[widths.len() - 1]);
+    assert!((last - first).abs() < 1.0, "la ventana cambió de ancho: {widths:?}");
+}
+
+/// El redactor se abre en su propia ventana (maximizada) y vuelve a la de IureDesk sin perder lo
+/// escrito.
+#[test]
+fn the_composer_moves_to_its_own_window_and_back() {
+    use egui::accesskit::Role;
+    spanish();
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(sample_app(dir.path(), false), vec2(1440.0, 900.0));
+    settle(&mut h);
+    h.get_by_label("Nuevo mensaje").click();
+    settle(&mut h);
+    h.get_by_role_and_label(Role::TextInput, "Asunto").focus();
+    h.run();
+    h.event(egui::Event::Text("Escrito a mis anchas".into()));
+    settle(&mut h);
+    h.get_by_label("Abrir en ventana propia maximizada").click();
+    settle(&mut h);
+    assert_eq!(h.state().composer_count(), 1);
+    h.get_by_label("Volver a la ventana de IureDesk").click();
+    settle(&mut h);
+    assert_eq!(h.state().composer_subject().as_deref(), Some("Escrito a mis anchas"));
+    assert!(h.query_by_label("Abrir en ventana propia maximizada").is_some());
+}
