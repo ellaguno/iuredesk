@@ -548,6 +548,109 @@ pub fn find(md: &str) -> Vec<Block> {
     out
 }
 
+/// Las palabras del metadato del marcador de un bloque de mapa (`> [!MINDMAP|map right] …`).
+pub fn meta_words(block: &str) -> Vec<String> {
+    let line = block.lines().next().unwrap_or("");
+    let Some(open) = line.find("[!") else { return Vec::new() };
+    let Some(close) = line.get(open..).and_then(|l| l.find(']')) else { return Vec::new() };
+    let inner = line.get(open + 2..open + close).unwrap_or("");
+    inner.split_once('|').map(|(_, m)| m.split_whitespace().map(str::to_string).collect()).unwrap_or_default()
+}
+
+/// Cambia la vista de un bloque de mapa: `None` lista arriba; `Some("right")` lista a la izquierda;
+/// `Some("map")` solo el mapa. Las demás palabras del metadato se conservan.
+pub fn set_view(block: &str, view: Option<&str>) -> Option<String> {
+    let line_end = block.find('\n').unwrap_or(block.len());
+    let line = block.get(..line_end)?;
+    let open = line.find("[!")? + 2;
+    let close = open + line.get(open..)?.find(']')?;
+    let inner = line.get(open..close)?;
+    let (kind, meta) = inner.split_once('|').unwrap_or((inner, ""));
+    let mut words: Vec<&str> = meta
+        .split_whitespace()
+        .filter(|w| !matches!(w.to_ascii_lowercase().as_str(), "map" | "right" | "below"))
+        .collect();
+    words.extend(view);
+    let inner = if words.is_empty() { kind.to_string() } else { format!("{kind}|{}", words.join(" ")) };
+    Some(format!("{}{inner}{}", line.get(..open)?, block.get(close..)?))
+}
+
+/// Qué se hace con un nodo desde el dibujo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeEdit {
+    AddChild,
+    AddSibling,
+    Delete,
+    /// Solo dónde está su texto.
+    Goto,
+}
+
+/// Sangría (columnas tras `> `), marca y dónde empieza el texto (bytes) del elemento de la lista
+/// de un mapa en `line`.
+fn item_at(line: &str) -> Option<(usize, String, usize)> {
+    let lead = line.len() - line.trim_start_matches([' ', '\t']).len();
+    let rest = line.get(lead..)?.strip_prefix('>')?;
+    let after_gt = lead + 1 + usize::from(rest.starts_with(' '));
+    let body = line.get(after_gt..)?;
+    let t = body.trim_start_matches(' ');
+    let indent = body.len() - t.len();
+    let marker: String = t.chars().take_while(|c| matches!(c, '-' | '*' | '+')).take(1).collect();
+    if marker.is_empty() || !t.get(1..).is_some_and(|r| r.starts_with(' ')) {
+        return None;
+    }
+    Some((indent, marker, after_gt + indent + 2))
+}
+
+/// Edita la lista de un bloque de mapa desde el dibujo: rama hija o hermana (`label`) del nodo de
+/// la línea `line` (después de sus ramas), borrarlo con sus ramas (el centro no) o ir a su texto.
+/// Devuelve el bloque y dónde dejar el cursor (carácter del bloque).
+pub fn edit_node(block: &str, line: usize, edit: NodeEdit, label: &str) -> Option<(String, Option<usize>)> {
+    let mut lines: Vec<String> = block.split('\n').map(str::to_string).collect();
+    let text = lines.get(line)?.clone();
+    let char_at = |lines: &[String], l: usize, byte: usize| -> usize {
+        lines.iter().take(l).map(|x| x.chars().count() + 1).sum::<usize>()
+            + lines.get(l).and_then(|x| x.get(..byte.min(x.len()))).map_or(0, |p| p.chars().count())
+    };
+    let me = if line == 0 { None } else { Some(item_at(&text)?) };
+    let mut end = line + 1;
+    while let Some(l) = lines.get(end) {
+        let deeper = match (&me, item_at(l)) {
+            (None, _) => l.trim_start().starts_with('>'),
+            (Some((ind, _, _)), Some((i2, _, _))) => i2 > *ind,
+            (Some(_), None) => {
+                l.trim_start().starts_with('>') && !l.trim_start().trim_start_matches('>').trim().is_empty()
+            }
+        };
+        if !deeper {
+            break;
+        }
+        end += 1;
+    }
+    match edit {
+        NodeEdit::Goto => {
+            let at = me.as_ref().map_or_else(|| text.find(']').map_or(0, |b| b + 1), |m| m.2);
+            Some((block.to_string(), Some(char_at(&lines, line, at))))
+        }
+        NodeEdit::Delete => {
+            me.as_ref()?;
+            lines.drain(line..end);
+            Some((lines.join("\n"), None))
+        }
+        NodeEdit::AddChild | NodeEdit::AddSibling => {
+            let (indent, marker) = match (&me, edit) {
+                (None, _) => (0, "-".to_string()),
+                (Some((i, m, _)), NodeEdit::AddChild) => (i + 2, m.clone()),
+                (Some((i, m, _)), _) => (*i, m.clone()),
+            };
+            let new = format!("> {}{marker} {label}", " ".repeat(indent));
+            let at = new.len();
+            lines.insert(end, new);
+            let caret = char_at(&lines, end, at);
+            Some((lines.join("\n"), Some(caret)))
+        }
+    }
+}
+
 /// S1.19–S1.20: cambia las opciones de dibujo del mapa `n` (en el orden de [`find`]) y devuelve
 /// el Markdown nuevo. Solo se reescribe el metadato del marcador: la forma va primero (IureEditor
 /// toma como forma la primera palabra que no sea vista ni `links`), luego lo que ya había (vista,
@@ -1266,6 +1369,25 @@ mod tests {
     use super::*;
 
     const NOTE: &str = "# titulo\n\n> Veamos diagrama\n\n> [!MINDMAP|map] Idea central\n> - Analisis\n> - Diseño\n>   - **Bocetos**\n> - [Pruebas](https://x)\n>\n> - Pre-análisis\n\nY ahora\n";
+
+    #[test]
+    fn views_and_node_edits_rewrite_the_block() {
+        let b = "> [!MINDMAP] C\n> - Uno\n>   - Uno.a\n> - Dos";
+        assert_eq!(set_view(b, Some("right")).as_deref(), Some("> [!MINDMAP|right] C\n> - Uno\n>   - Uno.a\n> - Dos"));
+        assert_eq!(meta_words("> [!MINDMAP|square map] C"), ["square", "map"]);
+        let (t, c) = edit_node(b, 1, NodeEdit::AddChild, "Nueva").unwrap();
+        assert_eq!(t, "> [!MINDMAP] C\n> - Uno\n>   - Uno.a\n>   - Nueva\n> - Dos");
+        assert_eq!(c, Some(t.find("Nueva").map(|i| t[..i].chars().count() + 5).unwrap()));
+        assert_eq!(
+            edit_node(b, 1, NodeEdit::AddSibling, "N").map(|x| x.0).as_deref(),
+            Some("> [!MINDMAP] C\n> - Uno\n>   - Uno.a\n> - N\n> - Dos")
+        );
+        assert!(edit_node(b, 0, NodeEdit::AddChild, "N").unwrap().0.ends_with("> - Dos\n> - N"));
+        assert_eq!(edit_node(b, 1, NodeEdit::Delete, "").map(|x| x.0).as_deref(), Some("> [!MINDMAP] C\n> - Dos"));
+        assert_eq!(edit_node(b, 0, NodeEdit::Delete, ""), None);
+        assert_eq!(edit_node(b, 3, NodeEdit::Goto, "").and_then(|x| x.1), Some(b.find("Dos").unwrap()));
+        assert_eq!(edit_node(b, 9, NodeEdit::Goto, ""), None);
+    }
 
     #[test]
     fn nodes_know_their_line_and_where_they_are_drawn() {

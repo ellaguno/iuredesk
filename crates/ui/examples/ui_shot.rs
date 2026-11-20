@@ -848,10 +848,11 @@ fn main() -> Result<(), String> {
 /// UX-8: nota de ejemplo con todo lo que pinta la vista previa.
 const DEMO_NOTE: &str = "Acuerdos de la **reunión del 21 de octubre** con *Altamira Legal*. \
 Expediente: [caso 241/2026](https://iurefficient.com/casos/241).
+Honorarios: $h \\cdot \\frac{3}{4}$ del total; ver [[Contrato Altamira]] y <mark>confirmar la fecha</mark>.
 
 ![Sello del despacho](img/sello.png)
 
-> [!MINDMAP|map] Estrategia del caso
+> [!MINDMAP|right] Estrategia del caso
 > - Análisis
 >   - Contrato
 >   - Pruebas

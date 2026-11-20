@@ -725,10 +725,23 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             let notes_dir = app.session.notes_dir();
             let speller =
                 app.pim.speller.get_or_insert_with(|| iure_doc_ui::Speller::system(personal_dictionary())).clone();
+            // `[[`: las demás notas por su título (y sus títulos internos).
+            let index: std::sync::Arc<dyn iure_doc_ui::NoteIndex> =
+                std::sync::Arc::new(crate::note_diagrams::NotesIndex(
+                    app.session
+                        .notes()
+                        .iter()
+                        .filter(|n| n.id != id)
+                        .map(|n| (iuredesk_engine::session::note_title(n), n.body.clone()))
+                        .collect(),
+                ));
+            let mut clicked_link: Option<String> = None;
             let mut editor = |ui: &mut egui::Ui, body: &mut String| {
                 let diagrams: std::sync::Arc<dyn iure_doc_ui::DiagramRenderer> =
                     std::sync::Arc::new(iure_doc_ui::Renderers(vec![
                         std::sync::Arc::new(crate::note_diagrams::NoteDiagrams::new(ui, mindmap_layout)),
+                        // Fórmulas en bloque (`$$…$$`), con Typst.
+                        std::sync::Arc::new(crate::note_diagrams::NoteFormulas::new(ui, false)),
                         std::sync::Arc::new(iure_doc_ui::LocalImages::new(notes_dir.clone())),
                     ]));
                 // Pegar de la web, Word o Google Docs pega su Markdown (el HTML del portapapeles).
@@ -740,6 +753,11 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                     // Imágenes pegadas o soltadas: en `img/` de la carpeta de notas (donde la vista
                     // previa las busca).
                     images: Some(std::sync::Arc::new(iure_doc_ui::FolderImages::new(notes_dir.clone(), "img"))),
+                    // `[[` enlaza otras notas; Ctrl+clic las abre.
+                    notes: Some(index.clone()),
+                    // Fórmulas en línea (`$…$`).
+                    math: Some(std::sync::Arc::new(crate::note_diagrams::NoteFormulas::new(ui, true))),
+                    ..Default::default()
                 };
                 let out = iure_doc_ui::show_blocks_hooks(
                     ui,
@@ -754,6 +772,9 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                     pick("Note text", "Texto de la nota"),
                 );
                 changed |= out.changed;
+                if out.link.is_some() {
+                    clicked_link = out.link;
+                }
             };
             if wide {
                 ui.columns(2, |cols| {
@@ -771,6 +792,9 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                 });
             } else {
                 editor(ui, &mut body);
+            }
+            if let Some(l) = clicked_link {
+                follow_note_link(app, ui.ctx(), &l);
             }
             if let Some(e) = app.pim.note_edit.as_mut().filter(|e| e.id == id) {
                 if changed {
@@ -832,6 +856,49 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
 
 /// UX-12: «Nueva nota» desde la interfaz: se crea con un título (para que tenga su archivo) y se
 /// abre en IureEditor, donde se escribe. Con deshacer (el de la creación).
+/// Ctrl+clic en un enlace de una nota: `[[Título]]` abre esa nota (si no existe, la crea con ese
+/// título); una dirección web, el navegador.
+pub(crate) fn follow_note_link(app: &mut DeskApp, ctx: &egui::Context, link: &str) {
+    let Some(inner) = link.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) else {
+        let lower = link.to_ascii_lowercase();
+        if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") {
+            ctx.open_url(egui::OpenUrl::new_tab(link));
+        }
+        return;
+    };
+    let title = inner.split('#').next().unwrap_or(inner).trim().to_string();
+    if title.is_empty() {
+        return;
+    }
+    flush_note(app);
+    let want = title.to_lowercase();
+    let found = app
+        .session
+        .notes()
+        .into_iter()
+        .find(|n| iuredesk_engine::session::note_title(n).trim().to_lowercase() == want)
+        .map(|n| n.id);
+    let id = match found {
+        Some(id) => id,
+        None => {
+            if let Err(e) = app.session.run("notes.new") {
+                app.notice(iuredesk_engine::Notice::error(e.text()));
+                return;
+            }
+            let Some(id) = app.session.note_focus() else { return };
+            if let Err(e) = app.session.save_note(id, &title, "") {
+                app.notice(iuredesk_engine::Notice::error(e.text()));
+                return;
+            }
+            id
+        }
+    };
+    // Que se vea en la lista aunque hubiera una búsqueda.
+    app.pim.note_search.clear();
+    app.session.set_note_focus(Some(id));
+    app.pim.note_edit = app.session.notes().into_iter().find(|n| n.id == id).as_ref().map(NoteEdit::of);
+}
+
 pub(crate) fn new_note_in_editor(app: &mut DeskApp, ctx: &egui::Context) {
     flush_note(app);
     match app.session.run("notes.new") {

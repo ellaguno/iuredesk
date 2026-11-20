@@ -105,3 +105,17 @@ que ya usan IureDav, IureTranscribe y las demás apps del ecosistema a través d
 Se mantiene la decisión de no usar OpenSSL.
 
 **Alcance:** entra por `iurefficient-connect` y, desde F0.5, por el TLS de correo y descubrimiento (`rustls`/`tokio-rustls` en `iuredesk-accounts`, `reqwest` en `iuredesk-autoconfig`, `lettre` para SMTP), siempre con el proveedor `ring` (nunca `aws-lc-rs` ni OpenSSL). El resto del workspace sigue sin código nativo. En Windows y macOS el llavero (`keyring` con `windows-native` / `apple-native`) trae `windows-sys` y `security-framework-sys`: bindings del SO, pendientes de la revisión de la Fase 7.
+
+## `psm` y `stacker` (2026-11-20, **pendiente de decisión del dueño**)
+
+**Qué:** `stacker` deja crecer la pila en recursiones profundas y usa `psm`, que compila un poco de
+ensamblador por plataforma con `cc`. Llegan por `typst-eval`, el evaluador de Typst, que dibuja las
+fórmulas de las notas (`$…$` y `$$…$$`, LaTeX → Typst → imagen; `iure-doc-export` con la función
+`math`). Es lo mismo que ya usan IureEditor 2.0 (fórmulas y PDF) e `iure-doc`.
+
+**Por qué:** Typst no tiene una opción sin `stacker`. Sin Typst, las fórmulas de las notas se ven
+como texto (como antes); no hay otro motor de fórmulas en Rust puro de su calidad.
+
+**Alcance:** solo el dibujo de fórmulas en el editor de notas. Si el dueño no la aprueba, se quita
+la dependencia `iure-doc-export` de `iuredesk-ui` y los dibujantes `NoteFormulas`
+(`crates/ui/src/note_diagrams.rs`); el resto del editor (S1.12) no cambia.

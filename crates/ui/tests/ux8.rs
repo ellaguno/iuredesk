@@ -467,3 +467,27 @@ fn recording_pill_and_minutes_note() {
     assert!(n.body.contains("Buenos días a todos") && n.body.contains("/tmp/reunion.wav"), "{}", n.body);
     assert_eq!(s.module, Module::Notes);
 }
+
+/// IureEditor en las notas: Ctrl+clic en `[[Título]]` abre esa nota; si no existe, la crea con ese
+/// título (como IureEditor con sus archivos).
+#[test]
+fn wiki_links_open_or_create_notes() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    let ctx = h.ctx.clone();
+    let before = h.state().session.notes().len();
+    h.state_mut().follow_note_link(&ctx, "[[Ideas para la audiencia#Pruebas]]");
+    settle(&mut h);
+    let s = &h.state().session;
+    assert_eq!(s.notes().len(), before + 1, "se creó");
+    let id = s.note_focus().unwrap();
+    let n = s.notes().into_iter().find(|n| n.id == id).unwrap();
+    assert_eq!(n.title, "Ideas para la audiencia");
+    // Otra vez (sin mayúsculas): la misma nota, no otra.
+    h.state_mut().follow_note_link(&ctx, "[[ideas para la audiencia]]");
+    settle(&mut h);
+    assert_eq!(h.state().session.notes().len(), before + 1);
+    assert_eq!(h.state().session.note_focus(), Some(id));
+}

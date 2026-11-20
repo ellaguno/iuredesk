@@ -144,6 +144,12 @@ pub struct DeskApp {
 }
 
 impl DeskApp {
+    /// Sigue un enlace de una nota (Ctrl+clic en el editor): `[[Título]]` abre esa nota o la crea;
+    /// una dirección web va al navegador.
+    pub fn follow_note_link(&mut self, ctx: &egui::Context, link: &str) {
+        crate::pim::follow_note_link(self, ctx, link);
+    }
+
     pub fn new(session: Session, options: Options) -> Self {
         let attach = crate::attach_ui::AttachUi::new(&session);
         let (ai, suite, import) = (

@@ -227,7 +227,7 @@ struct Colors {
     live: LivePreview,
 }
 
-fn layout_label(l: Layout) -> &'static str {
+pub(crate) fn layout_label(l: Layout) -> &'static str {
     match l {
         Layout::Right => pick("To the right", "Hacia la derecha"),
         Layout::Radial => pick("Radial (as in IureEditor)", "Radial (como IureEditor)"),
@@ -236,7 +236,7 @@ fn layout_label(l: Layout) -> &'static str {
     }
 }
 
-fn shape_label(s: Shape) -> &'static str {
+pub(crate) fn shape_label(s: Shape) -> &'static str {
     match s {
         Shape::Default => pick("Pill (default)", "Píldora (omisión)"),
         Shape::Square => pick("Square", "Cuadrado"),
@@ -248,7 +248,7 @@ fn shape_label(s: Shape) -> &'static str {
     }
 }
 
-fn root_label(r: RootSize) -> &'static str {
+pub(crate) fn root_label(r: RootSize) -> &'static str {
     match r {
         RootSize::Auto => pick("Automatic", "Automático"),
         RootSize::Small => pick("Small", "Chico"),
@@ -257,7 +257,7 @@ fn root_label(r: RootSize) -> &'static str {
     }
 }
 
-fn palette_label(p: Palette) -> &'static str {
+pub(crate) fn palette_label(p: Palette) -> &'static str {
     match p {
         Palette::Iure => pick("Like the app", "Como la app"),
         Palette::Pastel => pick("Pastel", "Pastel"),
@@ -267,7 +267,7 @@ fn palette_label(p: Palette) -> &'static str {
     }
 }
 
-fn theme_label(t: DiagramTheme) -> &'static str {
+pub(crate) fn theme_label(t: DiagramTheme) -> &'static str {
     match t {
         DiagramTheme::App => pick("Like the app", "Como la app"),
         DiagramTheme::Default => pick("Classic Mermaid", "Mermaid clásico"),
@@ -278,7 +278,7 @@ fn theme_label(t: DiagramTheme) -> &'static str {
     }
 }
 
-fn color_label(r: ColorRole) -> &'static str {
+pub(crate) fn color_label(r: ColorRole) -> &'static str {
     match r {
         ColorRole::NodeFill => pick("Node fill", "Relleno de los nodos"),
         ColorRole::NodeBorder => pick("Node border", "Borde de los nodos"),
@@ -370,7 +370,7 @@ enum MenuAct {
 }
 
 /// Un submenú con el valor actual en su título; devuelve lo elegido.
-fn choose<T: Copy + PartialEq>(
+pub(crate) fn choose<T: Copy + PartialEq>(
     ui: &mut Ui,
     title: &str,
     current: T,
