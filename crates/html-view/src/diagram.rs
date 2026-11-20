@@ -586,7 +586,7 @@ fn mindmap_tree(code: &str) -> Option<Node> {
                 children.push(conv(c, depth + 1, count));
             }
         }
-        Node { label: mindmap::plain_label(&n.text), children }
+        Node { label: mindmap::plain_label(&n.text), children, line: 0 }
     }
     m.root.as_ref().map(|r| conv(r, 0, &mut count))
 }
@@ -947,6 +947,8 @@ pub struct BlockPixels {
     pub rgba: Vec<u8>,
     /// Tamaño del dibujo en px CSS (puntos de la UI).
     pub points: (f32, f32),
+    /// Mapas mentales: dónde quedó cada nodo (en puntos) y su línea del bloque.
+    pub boxes: Vec<mindmap::NodeBox>,
 }
 
 /// Dibuja un bloque de Markdown que es diagrama (```` ```mermaid ```` o mapa mental de IureEditor)
@@ -959,6 +961,7 @@ pub fn draw_block(
     scale: f32,
     background: [u8; 3],
 ) -> Result<BlockPixels, DiagramError> {
+    let mut boxes = Vec::new();
     let svg = if let Some(code) = mermaid_code(block) {
         render_drawn(&code, style)?.svg
     } else {
@@ -969,7 +972,9 @@ pub fn draw_block(
                 "Este mapa mental no tiene ramas que dibujar.",
             )
         })?;
-        mindmap::draw(&map.root, style, &map.options.look(mindmap_layout))
+        let (svg, b) = mindmap::draw_boxed(&map.root, style, &map.options.look(mindmap_layout));
+        boxes = b;
+        svg
     };
     let points = svg_size(&svg).unwrap_or((800.0, 600.0));
     let px = rasterize(&svg, scale, background).map_err(|e| {
@@ -979,7 +984,7 @@ pub fn draw_block(
             format!("No se pudo dibujar el diagrama ({e})."),
         )
     })?;
-    Ok(BlockPixels { width: px.width, height: px.height, rgba: px.rgba, points })
+    Ok(BlockPixels { width: px.width, height: px.height, rgba: px.rgba, points, boxes })
 }
 
 #[cfg(test)]

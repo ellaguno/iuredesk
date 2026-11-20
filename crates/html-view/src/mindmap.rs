@@ -292,6 +292,17 @@ pub struct Look {
 pub struct Node {
     pub label: String,
     pub children: Vec<Node>,
+    /// Línea del bloque de donde sale (0: la del marcador), para editarlo desde el dibujo.
+    pub line: usize,
+}
+
+/// Dónde quedó un nodo en el dibujo (px del SVG = puntos), y su línea del bloque.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NodeBox {
+    pub line: usize,
+    pub depth: usize,
+    /// `[x0, y0, x1, y1]`.
+    pub rect: [f32; 4],
 }
 
 /// Un mapa mental de la nota.
@@ -415,6 +426,7 @@ struct Flat {
     label: String,
     parent: usize,
     depth: usize,
+    line: usize,
 }
 
 /// El subárbol de `idx` desde la lista plana (≤ [`MAX_NODES`] nodos).
@@ -425,17 +437,19 @@ fn build(flat: &[Flat], idx: usize, label: String) -> Node {
         .filter(|(k, f)| f.parent == idx && *k != idx)
         .map(|(k, f)| build(flat, k, f.label.clone()))
         .collect();
-    Node { label, children }
+    Node { label, children, line: flat.get(idx).map_or(0, |f| f.line) }
 }
 
 /// Árbol desde las líneas del cuerpo.
 fn tree(title: &str, body: &[String]) -> Node {
     let mut root_label = plain_label(title);
     // El 0 es el centro.
-    let mut flat = vec![Flat { label: String::new(), parent: 0, depth: 0 }];
+    let mut flat = vec![Flat { label: String::new(), parent: 0, depth: 0, line: 0 }];
     // Pila de (sangría, índice en `flat`).
     let mut stack: Vec<(usize, usize)> = Vec::new();
-    for line in body {
+    for (k, line) in body.iter().enumerate() {
+        // Línea del bloque (la 0 es la del marcador).
+        let at = k + 1;
         if flat.len() >= MAX_NODES {
             break;
         }
@@ -452,6 +466,9 @@ fn tree(title: &str, body: &[String]) -> Node {
         }
         if root_label.is_empty() && !is_item {
             root_label = label;
+            if let Some(r) = flat.first_mut() {
+                r.line = at;
+            }
             continue;
         }
         if !is_item {
@@ -465,7 +482,7 @@ fn tree(title: &str, body: &[String]) -> Node {
         if depth > MAX_DEPTH {
             continue;
         }
-        flat.push(Flat { label, parent, depth });
+        flat.push(Flat { label, parent, depth, line: at });
         if is_item {
             stack.push((indent, flat.len() - 1));
         }
@@ -601,6 +618,8 @@ struct Placed {
     parent: Option<usize>,
     /// -1: rama a la izquierda del centro; 1: a la derecha o abajo.
     side: f32,
+    /// Línea del bloque del nodo.
+    line: usize,
 }
 
 /// Medidas del dibujo, según la letra de la nota, la forma y el centro.
@@ -745,11 +764,12 @@ impl Metrics {
             color,
             parent,
             side,
+            line: n.line,
         }
     }
 
     /// El centro listo para colocar en (0, 0).
-    fn root(&self, _n: &Node, color: [u8; 3]) -> Placed {
+    fn root(&self, n: &Node, color: [u8; 3]) -> Placed {
         Placed {
             depth: 0,
             x: 0.0,
@@ -761,6 +781,7 @@ impl Metrics {
             color,
             parent: None,
             side: 1.0,
+            line: n.line,
         }
     }
 }
@@ -1113,7 +1134,8 @@ fn border(w: f32, h: f32, dx: f32, dy: f32) -> (f32, f32) {
 }
 
 /// SVG de un árbol ya colocado (coordenadas relativas; aquí se encuadran).
-fn paint(placed: &[Placed], m: &Metrics, style: &NoteStyle, edges: Edges) -> String {
+/// Encuadre del dibujo: desplazamiento de los nodos y tamaño del SVG.
+fn frame(placed: &[Placed], m: &Metrics) -> (f32, f32, f32, f32) {
     // Margen extra para las formas que sobresalen (nube, estrella, elipse).
     let bleed = match m.shape {
         Shape::Bang => m.node_h * 0.3,
@@ -1127,6 +1149,11 @@ fn paint(placed: &[Placed], m: &Metrics, style: &NoteStyle, edges: Edges) -> Str
     let (ox, oy) = (m.pad + bleed - min_x, m.pad + bleed - min_y);
     let width = (max_x - min_x + 2.0 * (m.pad + bleed)).clamp(1.0, 4_000.0);
     let height = (max_y - min_y + 2.0 * (m.pad + bleed)).clamp(1.0, 8_000.0);
+    (ox, oy, width, height)
+}
+
+fn paint(placed: &[Placed], m: &Metrics, style: &NoteStyle, edges: Edges) -> String {
+    let (ox, oy, width, height) = frame(placed, m);
     let font = m.font;
     let mut s = String::with_capacity(placed.len() * 360 + 512);
     let _ = write!(
@@ -1201,17 +1228,32 @@ fn paint(placed: &[Placed], m: &Metrics, style: &NoteStyle, edges: Edges) -> Str
 /// (el radial también: el de `mermaid-svg` tapaba las líneas con un disco central enorme). Ancho
 /// y alto acotados.
 pub fn draw(root: &Node, style: &NoteStyle, look: &Look) -> String {
+    draw_boxed(root, style, look).0
+}
+
+/// Como [`draw`], con dónde quedó cada nodo (para pulsarlos y editar el mapa desde el dibujo).
+pub fn draw_boxed(root: &Node, style: &NoteStyle, look: &Look) -> (String, Vec<NodeBox>) {
     let m = Metrics::new(style, look, &root.label);
-    match look.layout {
+    let (placed, edges) = match look.layout {
         Layout::Down => {
             let mut placed = Vec::new();
             place_down(root, 0, CENTER, None, 0.0, &m, &mut placed);
-            paint(&placed, &m, style, Edges::Vertical)
+            (placed, Edges::Vertical)
         }
-        Layout::Balanced => paint(&layout_rows(root, true, &m), &m, style, Edges::Horizontal),
-        Layout::Right => paint(&layout_rows(root, false, &m), &m, style, Edges::Horizontal),
-        Layout::Radial => paint(&layout_radial(root, &m), &m, style, Edges::Straight),
-    }
+        Layout::Balanced => (layout_rows(root, true, &m), Edges::Horizontal),
+        Layout::Right => (layout_rows(root, false, &m), Edges::Horizontal),
+        Layout::Radial => (layout_radial(root, &m), Edges::Straight),
+    };
+    let (ox, oy, _, _) = frame(&placed, &m);
+    let boxes = placed
+        .iter()
+        .map(|p| NodeBox {
+            line: p.line,
+            depth: p.depth,
+            rect: [p.x + ox - p.w / 2.0, p.y + oy - p.h / 2.0, p.x + ox + p.w / 2.0, p.y + oy + p.h / 2.0],
+        })
+        .collect();
+    (paint(&placed, &m, style, edges), boxes)
 }
 
 /// Como [`draw`] a la derecha, con píldoras y lo de omisión (lo de antes de S1.19).
@@ -1224,6 +1266,31 @@ mod tests {
     use super::*;
 
     const NOTE: &str = "# titulo\n\n> Veamos diagrama\n\n> [!MINDMAP|map] Idea central\n> - Analisis\n> - Diseño\n>   - **Bocetos**\n> - [Pruebas](https://x)\n>\n> - Pre-análisis\n\nY ahora\n";
+
+    #[test]
+    fn nodes_know_their_line_and_where_they_are_drawn() {
+        let md = "> [!MINDMAP] Centro\n> - Uno\n>   - Uno.a\n> - Dos\n";
+        let b = find(md);
+        let root = &b[0].root;
+        assert_eq!(root.line, 0);
+        assert_eq!(root.children.iter().map(|c| c.line).collect::<Vec<_>>(), [1, 3]);
+        assert_eq!(root.children[0].children[0].line, 2);
+        let style = crate::markdown::NoteStyle::default();
+        for layout in Layout::ALL {
+            let look = Look { layout, ..Look::default() };
+            let (svg, boxes) = draw_boxed(root, &style, &look);
+            let (w, h) = crate::diagram::svg_size(&svg).unwrap();
+            let mut lines: Vec<usize> = boxes.iter().map(|b| b.line).collect();
+            lines.sort();
+            assert_eq!(lines, [0, 1, 2, 3], "{layout:?}");
+            for bx in &boxes {
+                assert!(
+                    bx.rect[0] >= 0.0 && bx.rect[1] >= 0.0 && bx.rect[2] <= w + 0.5 && bx.rect[3] <= h + 0.5,
+                    "{layout:?} {bx:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn finds_the_owner_note_map() {
@@ -1267,7 +1334,11 @@ mod tests {
 
     #[test]
     fn svg_is_safe_and_escaped() {
-        let root = Node { label: "<script>&".into(), children: vec![Node { label: "a\"b".into(), children: vec![] }] };
+        let root = Node {
+            label: "<script>&".into(),
+            children: vec![Node { label: "a\"b".into(), children: vec![], line: 1 }],
+            line: 0,
+        };
         let s = svg(&root, &NoteStyle::default());
         assert!(s.starts_with("<svg") && s.ends_with("</svg>"));
         assert!(!s.contains("<script>") && s.contains("&lt;script&gt;&amp;") && s.contains("a&quot;b"));
@@ -1354,15 +1425,16 @@ mod tests {
     }
 
     fn sample() -> Node {
-        let leaf = |l: &str| Node { label: l.into(), children: vec![] };
+        let leaf = |l: &str| Node { label: l.into(), children: vec![], line: 0 };
         Node {
             label: "Centro".into(),
             children: vec![
-                Node { label: "Uno".into(), children: vec![leaf("a"), leaf("b")] },
-                Node { label: "Dos".into(), children: vec![leaf("c")] },
-                Node { label: "Tres".into(), children: vec![leaf("d"), leaf("e")] },
+                Node { label: "Uno".into(), children: vec![leaf("a"), leaf("b")], line: 0 },
+                Node { label: "Dos".into(), children: vec![leaf("c")], line: 0 },
+                Node { label: "Tres".into(), children: vec![leaf("d"), leaf("e")], line: 0 },
                 leaf("Cuatro"),
             ],
+            line: 0,
         }
     }
 
@@ -1414,7 +1486,7 @@ mod tests {
         let mut root = sample();
         root.label = "Lanzamiento de IureDesk para despachos jurídicos en México y España".into();
         for c in &mut root.children {
-            c.children.extend((0..4).map(|i| Node { label: format!("Detalle número {i}"), children: vec![] }));
+            c.children.extend((0..4).map(|i| Node { label: format!("Detalle número {i}"), children: vec![], line: 0 }));
         }
         let st = NoteStyle::default();
         for size in RootSize::ALL {
@@ -1448,7 +1520,7 @@ mod tests {
         // El chico no corta una etiqueta del largo máximo.
         let max: String = "palabra ".repeat(MAX_LABEL / 8);
         let s = draw(
-            &Node { label: max.trim().into(), children: vec![] },
+            &Node { label: max.trim().into(), children: vec![], line: 0 },
             &st,
             &Look { root: RootSize::Small, ..Default::default() },
         );
