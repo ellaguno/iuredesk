@@ -132,6 +132,14 @@ fn notes_view_and_edit_here() {
         std::thread::sleep(Duration::from_millis(30));
     }
     assert!(body(&h).contains("Llamar al notario"), "el resto intacto");
+    // La barra de formato actúa sobre la línea del cursor (y se guarda igual).
+    h.get_by_label("Lista de tareas").click();
+    let start = Instant::now();
+    while !body(&h).starts_with("- [ ] Intro con") {
+        assert!(start.elapsed() < Duration::from_secs(15), "la barra no cambió la nota: {}", body(&h));
+        h.run_steps(5);
+        std::thread::sleep(Duration::from_millis(30));
+    }
     // Ctrl+Mayús+E (o «Ver») vuelve a la vista.
     let ctx = h.ctx.clone();
     h.state_mut().run(&ctx, "notes.toggle_edit");

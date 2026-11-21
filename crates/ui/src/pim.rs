@@ -774,9 +774,48 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                     clicked_link = out.link;
                 }
             };
+            // La barra de formato de la suite (la de IureEditor 2.0, el correo y las tareas de
+            // IureProject): cada botón actúa sobre la selección del editor.
+            let mut bar_changed = false;
+            ui.horizontal_wrapped(|ui| {
+                use iure_doc_ui::toolbar::{self, Pressed, Tool};
+                ui.spacing_mut().item_spacing.x = 1.0;
+                const NOTES: &[Tool] = &[
+                    Tool::Undo,
+                    Tool::Redo,
+                    Tool::Separator,
+                    Tool::Headings,
+                    Tool::Separator,
+                    Tool::Bold,
+                    Tool::Italic,
+                    Tool::Strike,
+                    Tool::Code,
+                    Tool::TextColor,
+                    Tool::Highlight,
+                    Tool::Separator,
+                    Tool::Bullet,
+                    Tool::Ordered,
+                    Tool::Task,
+                    Tool::Quote,
+                    Tool::Separator,
+                    Tool::Link,
+                    Tool::Table,
+                    Tool::Diagram,
+                ];
+                if let Some(Pressed::Edit(e)) = toolbar::tools(ui, NOTES) {
+                    let ctx = ui.ctx().clone();
+                    let eid = egui::Id::unique(("note-editor", id));
+                    if iure_doc_ui::apply_external(&ctx, eid, &mut body, e) {
+                        bar_changed = true;
+                        ui.memory_mut(|m| m.request_focus(eid));
+                    }
+                }
+            });
+            ui.add_space(4.0);
             // El editor ya muestra el formato al escribir (como IureEditor 2.0): sin vista previa al
             // lado.
             editor(ui, &mut body);
+            changed |= bar_changed;
             if let Some(l) = clicked_link {
                 follow_note_link(app, ui.ctx(), &l);
             }
