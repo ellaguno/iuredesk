@@ -143,8 +143,22 @@ impl EwsError {
 }
 
 impl From<reqwest::Error> for EwsError {
+    /// Con la cadena de causas: `reqwest` solo dice «error sending request» y el motivo
+    /// (certificado no válido, DNS, conexión rechazada) va dentro; sin él, la prueba de conexión no
+    /// puede explicar qué pasó.
     fn from(e: reqwest::Error) -> Self {
-        Self::Network(e.to_string())
+        let mut msg = e.to_string();
+        let mut cause = std::error::Error::source(&e);
+        for _ in 0..8 {
+            let Some(c) = cause else { break };
+            let text = c.to_string();
+            if !msg.contains(&text) {
+                msg.push_str(": ");
+                msg.push_str(&text);
+            }
+            cause = c.source();
+        }
+        Self::Network(msg.chars().take(1_000).collect())
     }
 }
 

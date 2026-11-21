@@ -83,9 +83,20 @@ impl EwsClient {
         if emails.is_empty() || to <= from {
             return Ok(Vec::new());
         }
+        let r = self.call(&availability_request(&emails, from, to)).await?;
+        Ok(parse_availability(&r, emails.len()))
+    }
+}
+
+/// Zona UTC para `GetUserAvailability`: desfase cero todo el año. Exchange rechaza («The
+/// specified time zone isn't valid») una zona cuyos cambios de invierno y verano caen el mismo
+/// día, así que van en fechas distintas aunque los dos desfases sean cero.
+const UTC_TIME_ZONE: &str = "<t:TimeZone><t:Bias>0</t:Bias><t:StandardTime><t:Bias>0</t:Bias><t:Time>02:00:00</t:Time><t:DayOrder>5</t:DayOrder><t:Month>10</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:StandardTime><t:DaylightTime><t:Bias>0</t:Bias><t:Time>02:00:00</t:Time><t:DayOrder>5</t:DayOrder><t:Month>3</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:DaylightTime></t:TimeZone>";
+
+/// Cuerpo de `GetUserAvailability` (horas en UTC, ventana acotada a [`MAX_DAYS`]).
+pub fn availability_request(emails: &[&String], from: DateTime<Utc>, to: DateTime<Utc>) -> String {
+    {
         let to = to.min(from + chrono::Duration::days(MAX_DAYS));
-        // Zona con desfase cero y sin horario de verano: las horas van y vuelven en UTC.
-        let utc = "<t:Bias>0</t:Bias><t:Time>00:00:00</t:Time><t:DayOrder>1</t:DayOrder><t:Month>1</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek>";
         let people: String = emails
             .iter()
             .map(|e| {
@@ -96,14 +107,11 @@ impl EwsClient {
             })
             .collect();
         let fmt = |d: DateTime<Utc>| d.format("%Y-%m-%dT%H:%M:%S").to_string();
-        let r = self
-            .call(&format!(
-                "<m:GetUserAvailabilityRequest><t:TimeZone><t:Bias>0</t:Bias><t:StandardTime>{utc}</t:StandardTime><t:DaylightTime>{utc}</t:DaylightTime></t:TimeZone><m:MailboxDataArray>{people}</m:MailboxDataArray><t:FreeBusyViewOptions><t:TimeWindow><t:StartTime>{}</t:StartTime><t:EndTime>{}</t:EndTime></t:TimeWindow><t:MergedFreeBusyIntervalInMinutes>30</t:MergedFreeBusyIntervalInMinutes><t:RequestedView>FreeBusy</t:RequestedView></t:FreeBusyViewOptions></m:GetUserAvailabilityRequest>",
-                fmt(from),
-                fmt(to)
-            ))
-            .await?;
-        Ok(parse_availability(&r, emails.len()))
+        format!(
+            "<m:GetUserAvailabilityRequest>{UTC_TIME_ZONE}<m:MailboxDataArray>{people}</m:MailboxDataArray><t:FreeBusyViewOptions><t:TimeWindow><t:StartTime>{}</t:StartTime><t:EndTime>{}</t:EndTime></t:TimeWindow><t:MergedFreeBusyIntervalInMinutes>30</t:MergedFreeBusyIntervalInMinutes><t:RequestedView>FreeBusy</t:RequestedView></t:FreeBusyViewOptions></m:GetUserAvailabilityRequest>",
+            fmt(from),
+            fmt(to)
+        )
     }
 }
 
@@ -153,6 +161,28 @@ pub fn parse_availability(r: &Element, n: usize) -> Vec<Option<Vec<Busy>>> {
 mod tests {
     use super::*;
     use crate::soap::T;
+
+    /// Regresión (F8.5, Exchange SE real): con los dos cambios de hora el mismo día, Exchange
+    /// respondía «The specified time zone isn't valid».
+    #[test]
+    fn availability_time_zone_has_distinct_transitions() {
+        let a = "ana@contoso.com".to_string();
+        let from = "2026-11-25T00:00:00Z".parse().unwrap();
+        let x = availability_request(&[&a], from, from + chrono::Duration::days(100));
+        let part = |tag: &str| {
+            x.split(&format!("<t:{tag}>"))
+                .nth(1)
+                .and_then(|r| r.split(&format!("</t:{tag}>")).next())
+                .unwrap()
+                .to_string()
+        };
+        assert_ne!(part("StandardTime"), part("DaylightTime"));
+        assert!(
+            part("StandardTime").contains("<t:Bias>0</t:Bias>") && part("DaylightTime").contains("<t:Bias>0</t:Bias>")
+        );
+        assert!(x.contains("<t:EndTime>2027-01-06T00:00:00</t:EndTime>"), "ventana acotada a 42 días: {x}");
+        assert!(x.contains("<t:Address>ana@contoso.com</t:Address>"));
+    }
 
     #[test]
     fn availability_per_person_in_order() {

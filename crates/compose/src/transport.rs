@@ -16,7 +16,7 @@ use iuredesk_model::account::{Account, AccountKind, AuthMethod, Protocol, Securi
 use iuredesk_oauth::{BoxFuture, TokenAudience, TokenProvider};
 use lettre::address::Envelope;
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
-use lettre::transport::smtp::client::{Tls, TlsParameters};
+use lettre::transport::smtp::client::Tls;
 use lettre::transport::smtp::extension::ClientId;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 use serde::{Deserialize, Serialize};
@@ -281,7 +281,7 @@ impl SmtpTransport {
         let tls = match cfg.security {
             Security::Plain => Tls::None,
             Security::Tls | Security::StartTls => {
-                let params = TlsParameters::new(cfg.host.clone())
+                let params = iuredesk_accounts::smtp_tls_parameters(&cfg.host)
                     .map_err(|e| SendError::new(SendErrorKind::Tls, e.to_string()).with_host(host))?;
                 if cfg.security == Security::Tls { Tls::Wrapper(params) } else { Tls::Required(params) }
             }
