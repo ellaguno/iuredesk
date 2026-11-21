@@ -44,7 +44,6 @@ pub const CHAT_BIT: u64 = 1 << 61;
 /// De quién es el render.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {
-    Note,
     Chat,
 }
 /// Memoria máxima de las texturas guardadas.
@@ -270,22 +269,6 @@ pub enum PreviewAct {
     NodeLink(String),
 }
 
-/// Pinta la vista previa de la nota `id` con el texto `body`. Devuelve lo que se pulsó.
-pub fn show(app: &mut DeskApp, ui: &mut Ui, id: NoteId, body: &str) -> Option<PreviewAct> {
-    let c = theme::colors(ui);
-    if body.trim().is_empty() {
-        ui.label(
-            RichText::new(pick(
-                "This note is empty. Press Edit (Ctrl+Shift+E) to write in it.",
-                "Esta nota está vacía. Pulsa Editar (Ctrl+Shift+E) para escribir en ella.",
-            ))
-            .color(c.text_muted),
-        );
-        return None;
-    }
-    render(app, ui, Owner::Note, id, body)
-}
-
 /// UX-15: una respuesta del asistente (la línea `n` del chat) con su Markdown pintado.
 pub fn chat(app: &mut DeskApp, ui: &mut Ui, n: usize, body: &str) {
     let id = NoteId(CHAT_BIT | (n as u64 & (CHAT_BIT - 1)));
@@ -306,7 +289,6 @@ fn render(app: &mut DeskApp, ui: &mut Ui, owner: Owner, id: NoteId, body: &str) 
     let hash = hasher.finish();
     let width = crate::html::HtmlCache::width_for(ui.available_width());
     let cache = match owner {
-        Owner::Note => &mut app.note_preview,
         Owner::Chat => &mut app.chat_preview,
     };
     let remote = cache.remote.get(&id).filter(|(h, _)| *h == hash).map(|(_, m)| Arc::clone(m));

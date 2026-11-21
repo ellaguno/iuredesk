@@ -97,9 +97,17 @@ fn no_mount() -> Text {
 }
 
 impl Suite {
-    /// Perfiles de IureDav de este equipo (montados o no).
+    /// Perfiles de IureDav de este equipo (montados o no). **Bloqueante**: mirar si una unidad está
+    /// montada lee su carpeta, y una unidad de red puede tardar segundos; la interfaz lo hace en
+    /// otro hilo con [`Suite::dav_mounts_reader`].
     pub fn dav_mounts(&self) -> Vec<DavMount> {
         (self.mounts)()
+    }
+
+    /// Lo que lee los perfiles de IureDav, para llamarlo en otro hilo.
+    pub fn dav_mounts_reader(&self) -> impl Fn() -> Vec<DavMount> + Send + Sync + 'static {
+        let f = std::sync::Arc::clone(&self.mounts);
+        move || f()
     }
 
     /// La unidad de Iurefficient donde guardar: la primera montada y con escritura.

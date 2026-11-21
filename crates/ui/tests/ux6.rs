@@ -181,5 +181,12 @@ fn note_has_its_markdown_file() {
         std::thread::sleep(Duration::from_millis(40));
     }
     settle(&mut h);
-    assert!(h.query_all_by_label_contains("Agregado en IureEditor").next().is_some(), "la vista muestra lo nuevo");
+    // La vista es el editor solo para leer: el texto es el valor de sus campos.
+    let shown = h
+        .query_all(
+            egui_kittest::kittest::by().predicate(|n| n.value().is_some_and(|v| v.contains("Agregado en IureEditor"))),
+        )
+        .next()
+        .is_some();
+    assert!(shown, "la vista muestra lo nuevo");
 }

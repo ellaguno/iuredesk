@@ -109,6 +109,11 @@ fn body(h: &Harness<'_, DeskApp>) -> String {
 
 /// UX-12 + S1.12: la nota se ve por omisión; «Editar aquí» (Ctrl+Mayús+E) abre el DocEditor,
 /// lo escrito se guarda solo al dejar de teclear y «Ver» vuelve a la vista.
+/// ¿Se ve `text` en la nota? La vista es el editor solo para leer: el texto es el valor de sus campos.
+fn shows(h: &Harness<'_, DeskApp>, text: &str) -> bool {
+    h.query_all(egui_kittest::kittest::by().predicate(|n| n.value().is_some_and(|v| v.contains(text)))).next().is_some()
+}
+
 #[test]
 fn notes_view_and_edit_here() {
     let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
@@ -117,7 +122,7 @@ fn notes_view_and_edit_here() {
     settle(&mut h);
     assert!(h.query_by_label("Texto de la nota").is_none(), "se ve, no se edita");
     assert!(h.query_by_label("Editar en IureEditor").is_some());
-    assert!(h.query_all_by_label_contains("Llamar al notario").next().is_some(), "la vista");
+    assert!(shows(&h, "Llamar al notario"), "la vista");
     h.get_by_label("Editar aquí").click();
     settle(&mut h);
     let editor = h.get_by_label("Texto de la nota");
@@ -440,7 +445,7 @@ fn preview_follows_the_file() {
         std::thread::sleep(Duration::from_millis(40));
     }
     settle(&mut h);
-    assert!(h.query_all_by_label_contains("Desde IureEditor").next().is_some(), "la vista muestra lo nuevo");
+    assert!(shows(&h, "Desde IureEditor"), "la vista muestra lo nuevo");
 }
 
 /// S1.4: mientras se graba hay una barra visible con el título y el tiempo; «Detener» la quita

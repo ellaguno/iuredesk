@@ -630,7 +630,6 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         };
         let mut act: Option<&'static str> = None;
         let mut save_now = false;
-        let mut preview_act = None;
         // S1.12: al editar, más ancho (editor y vista lado a lado).
         let max = if editing { 1700.0 } else { 820.0 };
         ui.set_max_width(ui.available_width().min(max));
@@ -854,15 +853,37 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                 });
             });
         } else {
-            let (nid, body) = (edit.id, edit.body.clone());
-            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("note-preview").show(ui, |ui| {
-                preview_act = crate::note_preview::show(app, ui, nid, &body);
-            });
-        }
-        if let Some(a) = preview_act
-            && let Some(id) = app.pim.note_edit.as_ref().map(|e| e.id)
-        {
-            crate::note_preview::handle(app, id, a);
+            // «Ver»: el mismo editor, solo para leer (se ve igual que al editar: misma letra, mismos
+            // saltos de línea, diagramas y fórmulas). Marcar una tarea sí se guarda; Ctrl+clic en un
+            // enlace lo abre.
+            let id = edit.id;
+            let mut body = edit.body.clone();
+            let notes_dir = app.session.notes_dir();
+            let mindmap_layout = crate::note_preview::layout_of(app.session.prefs.mindmap_layout);
+            let diagrams: std::sync::Arc<dyn iure_doc_ui::DiagramRenderer> =
+                std::sync::Arc::new(iure_doc_ui::Renderers(vec![
+                    std::sync::Arc::new(crate::note_diagrams::NoteDiagrams::new(ui, mindmap_layout)),
+                    std::sync::Arc::new(crate::note_diagrams::NoteFormulas::new(ui, false)),
+                    std::sync::Arc::new(iure_doc_ui::LocalImages::new(notes_dir)),
+                ]));
+            let hooks = iure_doc_ui::Hooks {
+                diagrams: Some(diagrams),
+                math: Some(std::sync::Arc::new(crate::note_diagrams::NoteFormulas::new(ui, true))),
+                read_only: true,
+                ..Default::default()
+            };
+            let out = iure_doc_ui::show_blocks_hooks(ui, egui::Id::unique(("note-view", id)), &mut body, "", hooks);
+            crate::widgets::named(&out.response, egui::Role::Document, pick("Note", "Nota"));
+            if let Some(l) = out.link {
+                follow_note_link(app, ui.ctx(), &l);
+            }
+            if out.changed
+                && let Some(e) = app.pim.note_edit.as_mut().filter(|e| e.id == id)
+            {
+                e.body = body;
+                e.dirty_at = Some(ui.input(|i| i.time));
+                save_now = true;
+            }
         }
         if let Some(id) = app.pim.note_edit.as_ref().map(|e| e.id) {
             crate::diagram_ui::show(app, ui, id);

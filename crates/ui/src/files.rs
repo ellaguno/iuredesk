@@ -54,7 +54,15 @@ pub struct FilesState {
     loading: Option<(PathBuf, Receiver<Listing>)>,
     /// Carpeta que se tiene leída.
     shown: Option<PathBuf>,
+    /// Las unidades de IureDav, leídas en otro hilo (mirar si una unidad de red está montada puede
+    /// tardar segundos: en el hilo de la interfaz congelaba IureDesk), cuándo y la lectura en curso.
+    mounts: Vec<DavMount>,
+    mounts_at: Option<std::time::Instant>,
+    mounts_rx: Option<Receiver<Vec<DavMount>>>,
 }
+
+/// Cada cuánto se vuelven a leer las unidades.
+const MOUNTS_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
 
 type Listing = Result<(Vec<Entry>, bool), String>;
 
@@ -86,9 +94,9 @@ pub fn read_dir(dir: &Path) -> Listing {
     Ok((out, truncated))
 }
 
-/// La carpeta `rel` dentro de `root`, solo si de verdad queda dentro (sin `..`, sin enlaces que
-/// lleven fuera).
-pub fn inside(root: &Path, rel: &[String]) -> Option<PathBuf> {
+/// `root` + `rel` sin tocar el disco (sin `..`, `.`, separadores ni demasiada profundidad). Lo que
+/// mira el disco ([`inside`]) va en el hilo que lee la carpeta.
+fn joined(root: &Path, rel: &[String]) -> Option<PathBuf> {
     if rel.len() > MAX_DEPTH || rel.iter().any(|c| c.is_empty() || c == "." || c == ".." || c.contains(['/', '\\'])) {
         return None;
     }
@@ -96,6 +104,13 @@ pub fn inside(root: &Path, rel: &[String]) -> Option<PathBuf> {
     for c in rel {
         p.push(c);
     }
+    Some(p)
+}
+
+/// La carpeta `rel` dentro de `root`, solo si de verdad queda dentro (sin `..`, sin enlaces que
+/// lleven fuera).
+pub fn inside(root: &Path, rel: &[String]) -> Option<PathBuf> {
+    let p = joined(root, rel)?;
     let real_root = root.canonicalize().ok()?;
     let real = p.canonicalize().ok()?;
     real.starts_with(&real_root).then_some(p)
@@ -114,14 +129,42 @@ fn human_size(n: u64) -> String {
     if i == 0 { format!("{n} {unit}") } else { format!("{v:.1} {unit}") }
 }
 
-fn mounts(app: &DeskApp) -> Vec<DavMount> {
-    app.suite.hub.suite().map(|s| s.dav_mounts()).unwrap_or_default()
+fn mounts(app: &mut DeskApp, ctx: &egui::Context) -> Vec<DavMount> {
+    let st = &mut app.files;
+    if let Some(rx) = &st.mounts_rx {
+        match rx.try_recv() {
+            Ok(m) => {
+                st.mounts = m;
+                st.mounts_rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => st.mounts_rx = None,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            }
+        }
+    }
+    let stale = st.mounts_at.is_none_or(|t| t.elapsed() >= MOUNTS_EVERY);
+    if stale
+        && st.mounts_rx.is_none()
+        && let Some(read) = app.suite.hub.suite().map(|s| s.dav_mounts_reader())
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new().name("files-mounts".into()).spawn(move || {
+            let _ = tx.send(read());
+        });
+        if spawned.is_ok() {
+            st.mounts_rx = Some(rx);
+        }
+        st.mounts_at = Some(std::time::Instant::now());
+    }
+    st.mounts.clone()
 }
 
 /// Pide leer la carpeta actual si cambió.
 fn ensure_listing(app: &mut DeskApp, ctx: &egui::Context, root: &Path) {
     let st = &mut app.files;
-    let Some(dir) = inside(root, &st.rel) else {
+    // Sin tocar el disco en este hilo: con una unidad de red, cada consulta puede tardar segundos.
+    let Some(dir) = joined(root, &st.rel) else {
         st.rel.clear();
         return;
     };
@@ -129,10 +172,15 @@ fn ensure_listing(app: &mut DeskApp, ctx: &egui::Context, root: &Path) {
         return;
     }
     let (tx, rx) = std::sync::mpsc::channel();
-    let target = dir.clone();
+    let (root, rel) = (root.to_path_buf(), st.rel.clone());
     let ctx = ctx.clone();
     let spawned = std::thread::Builder::new().name("files-list".into()).spawn(move || {
-        let _ = tx.send(read_dir(&target));
+        // Que de verdad quede dentro de la unidad (un enlace no saca de ella), y luego leerla.
+        let listing = match inside(&root, &rel) {
+            Some(target) => read_dir(&target),
+            None => Err("fuera de la unidad".into()),
+        };
+        let _ = tx.send(listing);
         ctx.request_repaint();
     });
     if spawned.is_ok() {
@@ -179,7 +227,7 @@ enum Act {
 pub fn show(app: &mut DeskApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     poll_listing(app);
-    let all = mounts(app);
+    let all = mounts(app, &ctx);
     if app.files.mount.as_ref().is_none_or(|id| !all.iter().any(|m| &m.id == id)) {
         app.files.mount = all.iter().find(|m| m.mounted).or(all.first()).map(|m| m.id.clone());
         app.files.rel.clear();
@@ -274,24 +322,33 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
                     let e = app.files.entries.iter().find(|e| e.name == n)?;
                     let mut rel = app.files.rel.clone();
                     rel.push(e.name.clone());
-                    inside(&root, &rel).map(|p| (p, e.dir))
+                    // Sin tocar el disco en cada cuadro; se verifica al usar el archivo.
+                    joined(&root, &rel).map(|p| (p, e.dir))
                 });
+                // Al pulsar (una vez, no en cada cuadro): que el archivo siga dentro de la unidad.
+                let checked = |p: &Path| {
+                    let (r, q) = (root.canonicalize().ok()?, p.canonicalize().ok()?);
+                    q.starts_with(&r).then(|| p.to_path_buf())
+                };
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some((p, dir)) = sel {
                         if ui.button(pick("Copy path", "Copiar ruta")).clicked() {
-                            act = Some(Act::Copy(p.clone()));
+                            act = checked(&p).map(Act::Copy);
                         }
                         if !dir && ui.button(pick("Send by email", "Enviar por correo")).clicked() {
-                            act = Some(Act::Mail(p.clone()));
+                            act = checked(&p).map(Act::Mail);
                         }
                         if ui.button(pick("Show in folder", "Mostrar en la carpeta")).clicked() {
-                            act = Some(Act::Reveal(p.clone()));
+                            act = checked(&p).map(Act::Reveal);
                         }
                         if ui.button(pick("Open", "Abrir")).clicked() {
                             act = Some(if dir {
                                 Act::Enter(p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
                             } else {
-                                Act::Open(p)
+                                match checked(&p) {
+                                    Some(p) => Act::Open(p),
+                                    None => return,
+                                }
                             });
                         }
                     }

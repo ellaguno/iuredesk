@@ -131,3 +131,29 @@ fn unmounted_drive_invites_to_open_iuredav_and_no_iuredav_no_files() {
     h.run_steps(2);
     assert_ne!(h.state().session.module, Module::Files);
 }
+
+/// Regresión: mirar si una unidad de IureDav está montada lee su carpeta, y una unidad de red puede
+/// tardar segundos. Antes se hacía en cada cuadro en el hilo de la interfaz y congelaba IureDesk;
+/// ahora va en otro hilo y la pantalla sigue respondiendo mientras tanto.
+#[test]
+fn a_slow_drive_does_not_freeze_the_window() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mount = tempfile::tempdir().unwrap();
+    std::fs::write(mount.path().join("lento.pdf"), b"%PDF").unwrap();
+    let m = drive(mount.path(), true);
+    let suite = Suite::empty().with_app(SisterApp::Dav, "/opt/iuredav/iuredav-app").with_mounts(move || {
+        std::thread::sleep(Duration::from_millis(1500));
+        vec![m.clone()]
+    });
+    let mut h = harness(app(dir.path(), suite));
+    h.run_steps(2);
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "nav.files");
+    let start = Instant::now();
+    for _ in 0..10 {
+        h.step();
+    }
+    assert!(start.elapsed() < Duration::from_millis(1000), "los cuadros esperaron a la unidad: {:?}", start.elapsed());
+    wait_for(&mut h, "lento.pdf");
+}
