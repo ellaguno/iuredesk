@@ -949,6 +949,8 @@ pub struct BlockPixels {
     pub points: (f32, f32),
     /// Mapas mentales: dónde quedó cada nodo (en puntos) y su línea del bloque.
     pub boxes: Vec<mindmap::NodeBox>,
+    /// S1.33: las zonas que se editan desde el dibujo (puntos de un cuadrante…), en puntos.
+    pub spots: Vec<crate::mermaid_edit::actions::Spot>,
 }
 
 /// El SVG de un bloque de diagrama (```` ```mermaid ```` o mapa mental), para exportarlo.
@@ -993,7 +995,8 @@ pub fn draw_block(
             format!("No se pudo dibujar el diagrama ({e})."),
         )
     })?;
-    Ok(BlockPixels { width: px.width, height: px.height, rgba: px.rgba, points, boxes })
+    let spots = crate::mermaid_edit::actions::spots(block, &svg);
+    Ok(BlockPixels { width: px.width, height: px.height, rgba: px.rgba, points, boxes, spots })
 }
 
 #[cfg(test)]

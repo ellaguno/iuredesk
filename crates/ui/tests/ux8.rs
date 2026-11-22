@@ -504,3 +504,54 @@ fn wiki_links_open_or_create_notes() {
     assert_eq!(h.state().session.notes().len(), before + 1);
     assert_eq!(h.state().session.note_focus(), Some(id));
 }
+
+/// S1.33: en un diagrama de cuadrantes, un clic en un hueco de la gráfica ofrece «Agregar
+/// elemento aquí»; pide el nombre y escribe el punto con las coordenadas del clic.
+#[test]
+fn quadrant_chart_adds_a_point_where_clicked() {
+    use iuredesk_html_view as hv;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    let code = "quadrantChart\n    title Prioridades\n    Campaña A: [0.3, 0.6]";
+    let id = h.state().session.note_focus().unwrap();
+    h.state_mut().session.save_note(id, "Cuadrante", &format!("```mermaid\n{code}\n```\n")).unwrap();
+    h.get_by_label("Editar aquí").click();
+    let start = Instant::now();
+    while h.query_by_label("Diagrama 1").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(20), "no se dibujó");
+        h.run_steps(2);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    h.run_steps(3);
+    let svg = hv::diagram::render_drawn(code, &hv::markdown::NoteStyle::default()).unwrap().svg;
+    let (w, _) = hv::diagram::svg_size(&svg).unwrap();
+    let g = hv::mermaid_edit::quadrant::geometry(&svg).unwrap();
+    let img = h.get_by_label("Diagrama 1").rect();
+    let k = img.width() / w;
+    let [x0, y0, x1, y1] = g.plot;
+    let p = img.min + egui::vec2((x0 + x1) / 2.0 * k, (y0 + y1) / 2.0 * k);
+    h.event(egui::Event::PointerMoved(p));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(3);
+    h.get_by_label("Agregar elemento aquí").click();
+    h.run_steps(3);
+    h.event(egui::Event::Text("Centro".into()));
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    let start = Instant::now();
+    while !body(&h).contains("Centro: [0.5, 0.5]") {
+        assert!(start.elapsed() < Duration::from_secs(15), "no se agregó: {}", body(&h));
+        h.run_steps(5);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(body(&h).contains("Campaña A: [0.3, 0.6]"), "lo demás igual");
+}
