@@ -14,7 +14,7 @@ use egui::{Align, Color32, CornerRadius, Layout, Margin, Rect, RichText, Sense, 
 use iuredesk_engine::calendar::Occurrence;
 use iuredesk_engine::iure::FeedItem;
 use iuredesk_engine::today::{self, AgendaItem, DaySummary, DayTask, MailItem, NextState, TaskSource};
-use iuredesk_engine::today_layout::{Column, TodayCard, TodayLayout};
+use iuredesk_engine::today_layout::{CardTint, Column, TINTS, TodayCard, TodayLayout};
 use iuredesk_engine::{FolderSel, Module, Notice};
 use iuredesk_model::{ContactId, FolderId, TaskId, TaskListId};
 use iurefficient_ui::{Icon, PaneKind, icons, pick, split, theme};
@@ -43,6 +43,8 @@ pub struct TodayState {
     pub(crate) bg: crate::today_bg::BgState,
     /// UX-15: personalizando las tarjetas.
     pub(crate) editing: bool,
+    /// UX-19: tarjeta que se está arrastrando.
+    pub(crate) drag: Option<TodayCard>,
     /// UX-15: el clima de hoy.
     pub(crate) weather: crate::today_weather::WeatherUi,
     /// S1.6: planes de IureProject que se siguen.
@@ -267,11 +269,16 @@ fn chip(ui: &mut Ui, ic: Icon, text: &str, tint: Option<Color32>) -> egui::Respo
 fn columns(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, w: f32, acts: &mut Vec<Act>) {
     let layout = app.session.prefs.today_layout.normalized();
     let mut edits: Vec<Edit> = Vec::new();
+    let mut placed: Vec<Placed> = Vec::new();
+    if !app.today.editing {
+        app.today.drag = None;
+    }
     // UX-15: si una columna queda vacía, la otra ocupa todo el ancho.
-    if w < TWO_COLUMNS || layout.left.is_empty() || layout.right.is_empty() {
+    let side_by_side = !(w < TWO_COLUMNS || layout.left.is_empty() || layout.right.is_empty());
+    if !side_by_side {
         let two = w >= TWO_COLUMNS;
         for card in layout.left.iter().chain(&layout.right) {
-            slot(app, ui, s, now, *card, &layout, two, acts, &mut edits);
+            slot(app, ui, s, now, *card, &layout, two, acts, &mut edits, &mut placed);
         }
     } else {
         let left = ((w - GAP) * if w > 1000.0 { 0.56 } else { 0.52 }).floor();
@@ -284,7 +291,7 @@ fn columns(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, w
                     ui.set_width(width);
                     ui.spacing_mut().item_spacing = spacing;
                     for card in cards {
-                        slot(app, ui, s, now, *card, &layout, true, acts, &mut edits);
+                        slot(app, ui, s, now, *card, &layout, true, acts, &mut edits, &mut placed);
                     }
                 });
                 if gap {
@@ -293,18 +300,51 @@ fn columns(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, w
             }
         });
     }
+    // UX-19: mientras se arrastra, la tarjeta se atenúa, una raya marca dónde caerá y su nombre
+    // sigue al puntero.
+    let pointer = ui.ctx().pointer_latest_pos();
+    if let (Some(card), Some(pos)) = (app.today.drag, pointer) {
+        let c = theme::colors(ui);
+        let p = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("today-drag")));
+        if let Some(me) = placed.iter().find(|x| x.card == card) {
+            p.rect_filled(me.rect, 12.0, c.bg.gamma_multiply(0.55));
+        }
+        if let Some(t) = drop_target(&placed, card, pos, side_by_side) {
+            let line = Rect::from_min_max(pos2(t.x.min, t.y - 1.5), pos2(t.x.max, t.y + 1.5));
+            p.rect_filled(line, 2.0, c.accent);
+        }
+        let font = theme::medium_font(ui.ctx(), theme::density(ui.ctx()).body_size());
+        let g = p.layout_no_wrap(card.label().to_string(), font, c.text);
+        let r = Rect::from_min_size(pos + vec2(14.0, 10.0), vec2(g.size().x + 44.0, 30.0));
+        p.rect(r, 15.0, c.surface, Stroke::new(1.0, c.accent), egui::StrokeKind::Inside);
+        let ir = Rect::from_center_size(pos2(r.left() + 18.0, r.center().y), vec2(16.0, 16.0));
+        let tone = layout.tint(card).map_or(c.accent, crate::widgets::rgb);
+        icons::paint(&p, ir, card_icon(card), tone, tone);
+        p.galley(pos2(ir.right() + 8.0, r.center().y - g.size().y / 2.0), g, c.text);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
     if !edits.is_empty() {
-        let mut l = layout;
+        let mut l = layout.clone();
         for e in edits {
             match e {
                 Edit::Up(c) => l.move_card(c, true),
                 Edit::Down(c) => l.move_card(c, false),
                 Edit::Switch(c) => l.switch_column(c),
                 Edit::Hide(c) => l.hide(c),
+                Edit::Tint(c, t) => l.set_tint(c, t),
+                Edit::Grab(c) => app.today.drag = Some(c),
+                Edit::Drop(c) => {
+                    app.today.drag = None;
+                    if let Some(t) = pointer.and_then(|pos| drop_target(&placed, c, pos, side_by_side)) {
+                        l.move_to(c, t.col, t.index);
+                    }
+                }
             }
         }
-        app.session.prefs.today_layout = l;
-        app.session.save_prefs();
+        if l != layout {
+            app.session.prefs.today_layout = l;
+            app.session.save_prefs();
+        }
     }
 }
 
@@ -314,6 +354,72 @@ enum Edit {
     Down(TodayCard),
     Switch(TodayCard),
     Hide(TodayCard),
+    /// UX-19: color (`None`: el de por omisión).
+    Tint(TodayCard, Option<CardTint>),
+    /// UX-19: empezó a arrastrarse.
+    Grab(TodayCard),
+    /// UX-19: se soltó donde está el puntero.
+    Drop(TodayCard),
+}
+
+/// UX-19: dónde quedó dibujada cada tarjeta (para saber dónde cae la que se arrastra).
+struct Placed {
+    card: TodayCard,
+    col: Column,
+    rect: Rect,
+}
+
+/// UX-19: dónde caería la tarjeta: columna, posición (contada sin ella), altura y ancho de la raya.
+struct DropTarget {
+    col: Column,
+    index: usize,
+    y: f32,
+    x: egui::Rangef,
+}
+
+fn drop_target(placed: &[Placed], card: TodayCard, pos: egui::Pos2, side_by_side: bool) -> Option<DropTarget> {
+    let span = |v: &[&Placed]| -> Option<egui::Rangef> {
+        let first = v.first()?;
+        Some(v.iter().fold(first.rect.x_range(), |r, p| r.union(p.rect.x_range())))
+    };
+    let me = placed.iter().find(|p| p.card == card)?;
+    // Las demás de la columna elegida (o de todas, en una sola columna), en orden.
+    let (col, others): (Option<Column>, Vec<&Placed>) = if side_by_side {
+        let of = |col: Column| placed.iter().filter(|p| p.col == col).collect::<Vec<_>>();
+        let (l, r) = (of(Column::Left), of(Column::Right));
+        let dist = |v: &[&Placed]| span(v).map_or(f32::INFINITY, |x| (x.center() - pos.x).abs());
+        let col = if dist(&l) <= dist(&r) { Column::Left } else { Column::Right };
+        let v = if col == Column::Left { l } else { r };
+        (Some(col), v.into_iter().filter(|p| p.card != card).collect())
+    } else {
+        (None, placed.iter().filter(|p| p.card != card).collect())
+    };
+    let k = others.iter().filter(|p| p.rect.center().y < pos.y).count();
+    let y = match (others.get(k), others.last()) {
+        (Some(p), _) => p.rect.top() - GAP / 2.0,
+        (None, Some(p)) => p.rect.bottom() - GAP / 2.0,
+        (None, None) => me.rect.top() - GAP / 2.0,
+    };
+    let x = if side_by_side {
+        span(&others).unwrap_or(me.rect.x_range())
+    } else {
+        span(&placed.iter().collect::<Vec<_>>())?
+    };
+    let (col, index) = match col {
+        Some(col) => (col, k),
+        None => {
+            // Una sola columna: la izquierda va antes que la derecha.
+            let lefts = others.iter().filter(|p| p.col == Column::Left).count();
+            if lefts > 0 && k <= lefts { (Column::Left, k) } else { (Column::Right, k.saturating_sub(lefts)) }
+        }
+    };
+    Some(DropTarget { col, index, y, x })
+}
+
+/// UX-19: el color de la tarjeta que se está pintando lo lee [`card`] (así no cambia la firma de
+/// cada tarjeta).
+fn tint_id() -> egui::Id {
+    egui::Id::unique("today-card-tint")
 }
 
 fn card_icon(card: TodayCard) -> Icon {
@@ -327,7 +433,8 @@ fn card_icon(card: TodayCard) -> Icon {
     }
 }
 
-/// Una tarjeta en su sitio; al personalizar, con sus controles (subir, bajar, columna, quitar).
+/// Una tarjeta en su sitio; al personalizar, con sus controles (arrastrar, color, subir, bajar,
+/// columna, quitar).
 #[allow(clippy::too_many_arguments)]
 fn slot(
     app: &mut DeskApp,
@@ -339,7 +446,10 @@ fn slot(
     two: bool,
     acts: &mut Vec<Act>,
     edits: &mut Vec<Edit>,
+    placed: &mut Vec<Placed>,
 ) {
+    let tone = layout.tint(which).map(crate::widgets::rgb);
+    ui.ctx().data_mut(|d| d.insert_temp(tint_id(), tone));
     let mut rect = ui
         .scope(|ui| match which {
             TodayCard::Agenda => agenda_card(app, ui, s, now, acts),
@@ -352,11 +462,8 @@ fn slot(
         })
         .response
         .rect;
-    if !app.today.editing {
-        return;
-    }
     // Una tarjeta sin nada que mostrar (Iurefficient sin sesión) se ve igual para poder moverla.
-    if rect.height() < 4.0 {
+    if app.today.editing && rect.height() < 4.0 {
         rect = ui
             .scope(|ui| {
                 card(
@@ -371,8 +478,15 @@ fn slot(
             .response
             .rect;
     }
+    ui.ctx().data_mut(|d| d.remove::<Option<Color32>>(tint_id()));
+    if !app.today.editing {
+        return;
+    }
+    if let Some(col) = layout.column(which) {
+        placed.push(Placed { card: which, col, rect });
+    }
     let c = theme::colors(ui);
-    let n = if two { 4.0 } else { 3.0 };
+    let n = if two { 6.0 } else { 5.0 };
     let side = 30.0;
     let bar = Rect::from_min_size(
         pos2(rect.right() - 12.0 - side * n - 8.0, rect.top() + 8.0),
@@ -421,7 +535,96 @@ fn slot(
         {
             edits.push(Edit::Up(which));
         }
+        tint_button(ui, which, tone, edits);
+        grip(ui, which, app.today.drag == Some(which), edits);
     }
+}
+
+/// UX-19: asa para arrastrar la tarjeta (seis puntos).
+fn grip(ui: &mut Ui, which: TodayCard, dragging: bool, edits: &mut Vec<Edit>) {
+    let c = theme::colors(ui);
+    let side = theme::density(ui.ctx()).icon_size() + 8.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(side, side), Sense::drag());
+    let tip = format!("{} {}", pick("Drag to move", "Arrastra para mover"), which.label());
+    iurefficient_ui::a11y::button(&resp, &tip);
+    let hot = resp.hovered() || dragging;
+    if hot {
+        ui.painter().rect_filled(rect.shrink(1.0), 6.0, c.hover);
+        ui.ctx().set_cursor_icon(if dragging { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
+    }
+    let ink = if hot { c.text } else { c.text_muted };
+    for (dx, dy) in [(-3.0, -5.0), (3.0, -5.0), (-3.0, 0.0), (3.0, 0.0), (-3.0, 5.0), (3.0, 5.0)] {
+        ui.painter().circle_filled(rect.center() + vec2(dx, dy), 1.6, ink);
+    }
+    if resp.drag_started() {
+        edits.push(Edit::Grab(which));
+    }
+    if resp.drag_stopped() {
+        edits.push(Edit::Drop(which));
+    }
+    resp.on_hover_text(tip);
+}
+
+/// UX-19: botón con el color de la tarjeta; abre la paleta.
+fn tint_button(ui: &mut Ui, which: TodayCard, tone: Option<Color32>, edits: &mut Vec<Edit>) {
+    let c = theme::colors(ui);
+    let side = theme::density(ui.ctx()).icon_size() + 8.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(side, side), Sense::click());
+    let tip = format!("{} {}", pick("Color of", "Color de"), which.label());
+    iurefficient_ui::a11y::button(&resp, &tip);
+    if resp.hovered() {
+        ui.painter().rect_filled(rect.shrink(1.0), 6.0, c.hover);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    swatch(ui.painter(), rect.center(), 6.0, tone, &c);
+    let resp = resp.on_hover_text(tip);
+    egui::Popup::menu(&resp).show(|ui| {
+        ui.label(RichText::new(pick("Card color", "Color de la tarjeta")).color(c.text_muted));
+        ui.add_space(4.0);
+        for row in TINTS.chunks(5) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for &rgb in row {
+                    let col = crate::widgets::rgb(rgb);
+                    let (r, sw) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
+                    let chosen = tone == Some(col);
+                    if sw.hovered() || chosen {
+                        ui.painter().circle_stroke(r.center(), 11.5, Stroke::new(2.0, col));
+                    }
+                    swatch(ui.painter(), r.center(), 8.0, Some(col), &c);
+                    iurefficient_ui::a11y::button(&sw, &format!("#{rgb:06X}"));
+                    if sw.clicked() {
+                        edits.push(Edit::Tint(which, Some(CardTint::Color(rgb))));
+                        ui.close();
+                    }
+                }
+            });
+        }
+        ui.add_space(4.0);
+        if ui.button(pick("No color", "Sin color")).clicked() {
+            edits.push(Edit::Tint(which, Some(CardTint::None)));
+        }
+        if ui.button(pick("Default color", "Color por omisión")).clicked() {
+            edits.push(Edit::Tint(which, None));
+        }
+    });
+}
+
+/// Muestra de un tono (punto lleno); sin color, un círculo vacío.
+fn swatch(p: &egui::Painter, at: egui::Pos2, r: f32, tone: Option<Color32>, c: &iurefficient_ui::Palette) {
+    match tone {
+        Some(t) => {
+            p.circle_filled(at, r, t);
+        }
+        None => {
+            p.circle_stroke(at, r, Stroke::new(1.2, c.text_muted));
+        }
+    }
+}
+
+/// UX-19: el tono aclarado hasta un pastel sobre la superficie (o, en oscuro, un poco más vivo).
+fn pastel(c: &iurefficient_ui::Palette, tone: Color32) -> Color32 {
+    theme::blend(c.surface, tone.gamma_multiply(if c.dark { 0.12 } else { 0.11 }))
 }
 
 /// UX-15: barra de «Personalizar»: tarjetas quitadas para volver a ponerlas y «Listo».
@@ -442,8 +645,8 @@ fn edit_bar(app: &mut DeskApp, ui: &mut Ui) {
                 ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
                 ui.label(
                     RichText::new(pick(
-                        "Move or remove cards with their buttons.",
-                        "Mueve o quita las tarjetas con sus botones.",
+                        "Drag cards by their handle, change their color or remove them.",
+                        "Arrastra las tarjetas por su asa, cámbiales el color o quítalas.",
                     ))
                     .color(c.text_muted),
                 );
@@ -494,9 +697,13 @@ pub(crate) fn card(
     let c = theme::colors(ui);
     let ctx = ui.ctx().clone();
     let mut clicked = false;
+    // UX-19: el color suave de la tarjeta (lo pone `slot`).
+    let tone = ctx.data(|d| d.get_temp::<Option<Color32>>(tint_id())).flatten();
+    let fill = tone.map_or(c.surface, |t| pastel(&c, t));
+    let border = tone.map_or(c.separator, |t| theme::blend(c.surface, t.gamma_multiply(0.35)));
     egui::Frame::new()
-        .fill(c.surface)
-        .stroke(Stroke::new(1.0, c.separator))
+        .fill(fill)
+        .stroke(Stroke::new(1.0, border))
         .corner_radius(12)
         .inner_margin(Margin { left: 16, right: 16, top: 14, bottom: 14 })
         .show(ui, |ui| {
@@ -504,7 +711,8 @@ pub(crate) fn card(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-                icons::paint(ui.painter(), r, ic, c.accent, c.accent);
+                let ink = tone.unwrap_or(c.accent);
+                icons::paint(ui.painter(), r, ic, ink, ink);
                 ui.label(RichText::new(title).font(theme::semibold_font(&ctx, 15.0)).color(c.text));
                 if !detail.is_empty() {
                     ui.label(RichText::new(detail).color(c.text_muted));
@@ -1237,9 +1445,11 @@ fn apply(app: &mut DeskApp, ctx: &egui::Context, a: Act) {
         }
         Act::Tasks => app.session.module = Module::Tasks,
         Act::Complete(dt) => complete(app, ctx, &dt),
+        // La carpeta del mensaje y la pestaña de su categoría: en otra pestaña no se abría.
         Act::Message(m) => {
-            app.session.select_folder(FolderSel::Folder(m.folder));
-            app.session.request_focus(m.id);
+            if !app.session.reveal_message(m.id) {
+                app.session.select_folder(FolderSel::Folder(m.folder));
+            }
         }
         Act::Inbox(f) => match f {
             Some(f) => app.session.select_folder(FolderSel::Folder(f)),
@@ -1248,8 +1458,9 @@ fn apply(app: &mut DeskApp, ctx: &egui::Context, a: Act) {
         Act::Flagged => app.session.select_folder(FolderSel::Flagged),
         Act::Triage => crate::assistant::request_triage(app),
         Act::TriageOpen(id) => {
-            app.session.select_folder(FolderSel::Unified(iuredesk_model::FolderRole::Inbox));
-            app.session.request_focus(id);
+            if !app.session.reveal_message(id) {
+                app.session.select_folder(FolderSel::Unified(iuredesk_model::FolderRole::Inbox));
+            }
         }
         Act::Iure(it) => {
             app.session.iure_mark_read(it.mention, &it.id);

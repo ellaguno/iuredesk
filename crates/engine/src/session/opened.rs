@@ -36,13 +36,19 @@ impl Session {
     /// Lleva al mensaje con ese `Message-ID` (su carpeta, seleccionado). `false` si no está.
     pub fn open_message_id(&mut self, message_id: &str) -> bool {
         let Some(id) = self.message_by_message_id(message_id) else { return false };
+        self.reveal_message(id)
+    }
+
+    /// Lleva al mensaje (su carpeta y, en una bandeja de entrada, la pestaña de su categoría) y
+    /// pide a la lista que lo seleccione y lo abra. `false` si no está en el almacén.
+    pub fn reveal_message(&mut self, id: MessageId) -> bool {
         let Some(env) = self.store.get_envelope(id).ok().flatten() else { return false };
         self.select_folder(FolderSel::Folder(env.folder));
         self.module = Module::Mail;
-        // En una bandeja de entrada, la pestaña de su categoría (si no, no se vería).
+        // En otra pestaña (u «Iurefficient») la lista no lo tiene y la petición se perdería.
         if self.folder(env.folder).is_some_and(|f| f.role == FolderRole::Inbox)
             && let Some((c, _)) = self.category_of(id)
-            && self.category_tab() != c
+            && (self.category_tab() != c || self.iure_tab())
         {
             self.set_category_tab(c);
         }

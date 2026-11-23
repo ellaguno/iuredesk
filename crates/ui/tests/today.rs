@@ -299,3 +299,57 @@ fn project_milestones_in_the_calendar() {
     let l = launches.0.lock().unwrap().join("\n");
     assert!(l.contains("Caso Ramírez.iurp"), "{l}");
 }
+
+/// UX-19: al personalizar, una tarjeta se arrastra por su asa a otra columna y su color se cambia
+/// o se quita desde la paleta.
+#[test]
+fn cards_are_dragged_and_recolored() {
+    use iuredesk_engine::today_layout::{CardTint, TodayCard};
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    a.demo_today_edit();
+    let mut h = harness(a);
+    settle(&mut h);
+    assert_eq!(h.state().session.prefs.today_layout.tint(TodayCard::Agenda), Some(0x3B82F6), "azul del calendario");
+
+    // Correo (izquierda) arriba de Tareas (derecha).
+    let from = h.get_by_label("Arrastra para mover Correo").rect().center();
+    let to = h.get_by_label("Arrastra para mover Tareas").rect().center() + egui::vec2(-200.0, -10.0);
+    let press = |h: &mut Harness<'_, DeskApp>, pos: egui::Pos2, pressed: bool| {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(1);
+    };
+    h.hover_at(from);
+    h.run_steps(1);
+    press(&mut h, from, true);
+    for k in 1..=10 {
+        let t = k as f32 / 10.0;
+        h.event(egui::Event::PointerMoved(from + (to - from) * t));
+        h.run_steps(1);
+    }
+    assert_eq!(h.state().today_dragging(), Some(TodayCard::Mail));
+    press(&mut h, to, false);
+    settle(&mut h);
+    let l = h.state().session.prefs.today_layout.normalized();
+    assert_eq!(l.left, vec![TodayCard::Agenda]);
+    assert_eq!(l.right.first(), Some(&TodayCard::Mail), "{l:?}");
+    assert_eq!(h.state().today_dragging(), None);
+
+    // Color: rojo, luego sin color.
+    h.get_by_label("Color de Tareas").click();
+    settle(&mut h);
+    h.get_by_label("#EF4444").click();
+    settle(&mut h);
+    assert_eq!(h.state().session.prefs.today_layout.tints.get(&TodayCard::Tasks), Some(&CardTint::Color(0xEF4444)));
+    h.get_by_label("Color de Tareas").click();
+    settle(&mut h);
+    h.get_by_label("Sin color").click();
+    settle(&mut h);
+    assert_eq!(h.state().session.prefs.today_layout.tint(TodayCard::Tasks), None);
+}

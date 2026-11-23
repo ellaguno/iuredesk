@@ -1516,11 +1516,7 @@ impl Session {
 
     /// Abre el mensaje de un seguimiento (en su carpeta).
     pub fn open_followup(&mut self, msg: MessageId) {
-        if let Some(env) = self.store.get_envelope(msg).ok().flatten() {
-            self.module = super::Module::Mail;
-            self.select_folder(FolderSel::Folder(env.folder));
-            self.request_focus(msg);
-        }
+        self.reveal_message(msg);
     }
 
     // ------------------------------------------------------------------ baja de listas
