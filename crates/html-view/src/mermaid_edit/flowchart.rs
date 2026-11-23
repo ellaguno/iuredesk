@@ -577,6 +577,211 @@ pub fn delete(block: &str, id: &str) -> Option<String> {
     Some(out)
 }
 
+// --- Flechas ---
+
+/// Los tipos de flecha que se ofrecen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdgeKind {
+    Solid,
+    Dotted,
+    Thick,
+    Open,
+}
+
+impl EdgeKind {
+    pub const ALL: [EdgeKind; 4] = [EdgeKind::Solid, EdgeKind::Dotted, EdgeKind::Thick, EdgeKind::Open];
+
+    fn arrow(self) -> &'static str {
+        match self {
+            EdgeKind::Solid => "-->",
+            EdgeKind::Dotted => "-.->",
+            EdgeKind::Thick => "==>",
+            EdgeKind::Open => "---",
+        }
+    }
+
+    /// Nombre en inglés y español.
+    pub fn label(self) -> (&'static str, &'static str) {
+        match self {
+            EdgeKind::Solid => ("Arrow", "Flecha"),
+            EdgeKind::Dotted => ("Dotted arrow", "Flecha punteada"),
+            EdgeKind::Thick => ("Thick arrow", "Flecha gruesa"),
+            EdgeKind::Open => ("Line without arrowhead", "Línea sin punta"),
+        }
+    }
+}
+
+/// Una flecha del código: su línea, el número de su parte en la sentencia y sus dos nodos.
+#[derive(Clone, Debug, PartialEq)]
+struct EdgeAt {
+    line: usize,
+    item: usize,
+    from: String,
+    to: String,
+    /// Sus dos lados son un solo nodo (sin `&`).
+    single: bool,
+}
+
+/// Las flechas del código en el orden de `mermaid-svg` (los `&` se expanden: cada nodo de la
+/// izquierda con cada uno de la derecha).
+fn source_edges(block: &str) -> Vec<EdgeAt> {
+    let mut out = Vec::new();
+    for (line, it) in statements(block) {
+        // Los grupos entre flechas.
+        let mut groups: Vec<Vec<String>> = vec![Vec::new()];
+        let mut edge_items: Vec<usize> = Vec::new();
+        for (k, x) in it.iter().enumerate() {
+            match x {
+                Item::Node(n) => {
+                    if let Some(g) = groups.last_mut() {
+                        g.push(n.id.clone());
+                    }
+                }
+                Item::Amp => {}
+                Item::Edge(_) => {
+                    edge_items.push(k);
+                    groups.push(Vec::new());
+                }
+            }
+        }
+        for (e, item) in edge_items.iter().enumerate() {
+            let (Some(l), Some(r)) = (groups.get(e), groups.get(e + 1)) else { continue };
+            let single = l.len() == 1 && r.len() == 1;
+            for f in l {
+                for t in r {
+                    out.push(EdgeAt { line, item: *item, from: f.clone(), to: t.clone(), single });
+                }
+            }
+        }
+        if out.len() > MAX_NODES {
+            break;
+        }
+    }
+    out
+}
+
+/// Las flechas del árbol (desde, hacia, texto).
+pub fn edges(code: &str) -> Vec<(String, String, Option<String>)> {
+    match mermaid_svg::parse(code) {
+        Ok(mermaid_svg::Diagram::Flowchart(f)) => {
+            f.edges.into_iter().take(MAX_NODES).map(|e| (e.from, e.to, e.label)).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// La flecha `n` del árbol en el código, si el código y el árbol coinciden (si no, no se edita).
+fn edge_at(block: &str, code: &str, n: usize) -> Option<EdgeAt> {
+    let src = source_edges(block);
+    let tree = edges(code);
+    let same = src.len() == tree.len() && src.iter().zip(&tree).all(|(a, (f, t, _))| a.from == *f && a.to == *t);
+    if !same {
+        return None;
+    }
+    src.into_iter().nth(n).filter(|e| e.single)
+}
+
+/// La flecha sin su texto (`-->`, `-.->`…) y su texto.
+fn split_edge(tok: &str) -> (String, Option<String>) {
+    let tok = tok.trim();
+    if let Some(p) = tok.find('|') {
+        let core = tok.get(..p).unwrap_or("").trim().to_string();
+        let label = tok.get(p + 1..).and_then(|r| r.rfind('|').and_then(|q| r.get(..q))).map(|l| l.trim().to_string());
+        return (core, label.filter(|l| !l.is_empty()));
+    }
+    let words: Vec<&str> = tok.split_whitespace().collect();
+    match words.as_slice() {
+        [open, middle @ .., close] if !middle.is_empty() => {
+            let core = if *open == "-." { format!("-{close}") } else { close.to_string() };
+            (core, Some(middle.join(" ")))
+        }
+        _ => (tok.to_string(), None),
+    }
+}
+
+/// Cambia la parte `item` (una flecha) de la línea por `with`.
+fn replace_item(block: &str, e: &EdgeAt, with: &str) -> Option<String> {
+    let line = block.lines().nth(e.line)?;
+    let it = items(line)?;
+    let Item::Edge((a, b)) = it.get(e.item)? else { return None };
+    splice(block, e.line, *a, *b, with)
+}
+
+fn edge_tok(block: &str, e: &EdgeAt) -> Option<String> {
+    let line = block.lines().nth(e.line)?;
+    let it = items(line)?;
+    let Item::Edge((a, b)) = it.get(e.item)? else { return None };
+    line.get(*a..*b).map(str::to_string)
+}
+
+fn with_label(core: &str, label: Option<&str>) -> Option<String> {
+    Some(match label {
+        Some(l) => format!("{core}|{}|", node_text(&l.replace('|', "/"))?),
+        None => core.to_string(),
+    })
+}
+
+/// Cambia el texto de la flecha `n` (vacío: se quita).
+pub fn set_edge_text(block: &str, code: &str, n: usize, text: &str) -> Option<String> {
+    let e = edge_at(block, code, n)?;
+    let (core, _) = split_edge(&edge_tok(block, &e)?);
+    let t = text.trim();
+    replace_item(block, &e, &with_label(&core, (!t.is_empty()).then_some(t))?)
+}
+
+/// Cambia el tipo de la flecha `n` (su texto queda).
+pub fn set_edge_kind(block: &str, code: &str, n: usize, kind: EdgeKind) -> Option<String> {
+    let e = edge_at(block, code, n)?;
+    let (_, label) = split_edge(&edge_tok(block, &e)?);
+    replace_item(block, &e, &with_label(kind.arrow(), label.as_deref().map(|l| l.trim_matches('"')))?)
+}
+
+/// ¿Se puede invertir la flecha `n`? (Su sentencia es solo `A --> B`.)
+pub fn can_reverse(block: &str, code: &str, n: usize) -> bool {
+    edge_at(block, code, n)
+        .and_then(|e| block.lines().nth(e.line).and_then(items))
+        .is_some_and(|it| matches!(it.as_slice(), [Item::Node(_), Item::Edge(_), Item::Node(_)]))
+}
+
+/// Invierte la flecha `n`: `A --> B` pasa a `B --> A` (cada nodo con su forma).
+pub fn reverse_edge(block: &str, code: &str, n: usize) -> Option<String> {
+    let e = edge_at(block, code, n)?;
+    let line = block.lines().nth(e.line)?;
+    let it = items(line)?;
+    let [Item::Node(a), Item::Edge((ea, eb)), Item::Node(b)] = it.as_slice() else { return None };
+    let new = format!(
+        "{}{} {} {}{}",
+        line.get(..a.span.0)?,
+        line.get(b.span.0..b.span.1)?,
+        line.get(*ea..*eb)?,
+        line.get(a.span.0..a.span.1)?,
+        line.get(b.span.1..)?
+    );
+    replace_line(block, e.line, &[new])
+}
+
+/// Borra la flecha `n`; los nodos quedan (una cadena se parte en dos).
+pub fn delete_edge(block: &str, code: &str, n: usize) -> Option<String> {
+    let e = edge_at(block, code, n)?;
+    let line = block.lines().nth(e.line)?;
+    let it = items(line)?;
+    let indent = indent_of(line);
+    let piece = |range: &[Item]| -> Option<String> {
+        let a = range.iter().find_map(|x| match x {
+            Item::Node(n) => Some(n.span.0),
+            _ => None,
+        })?;
+        let b = range.iter().rev().find_map(|x| match x {
+            Item::Node(n) => Some(n.span.1),
+            _ => None,
+        })?;
+        line.get(a..b).map(|t| format!("{indent}{t}"))
+    };
+    let left = piece(it.get(..e.item)?)?;
+    let right = piece(it.get(e.item + 1..)?)?;
+    replace_line(block, e.line, &[left, right])
+}
+
 /// Texto comparable: sin etiquetas, entidades básicas resueltas y sin espacios.
 fn norm(s: &str) -> String {
     let mut out = String::new();
@@ -668,6 +873,59 @@ pub fn boxes(svg: &str, nodes: &[(String, String, Vec<String>)]) -> Vec<Option<[
             cands.get(pick).map(|c| c.1)
         })
         .collect()
+}
+
+/// Zonas de las flechas en el SVG, en el orden de [`edges`]: alrededor de la mitad de cada trazo
+/// (y de su etiqueta, si la tiene). Vacío si el número de trazos no coincide.
+pub fn edge_boxes(svg: &str, count: usize) -> Vec<[f32; 4]> {
+    let mut out: Vec<[f32; 4]> = Vec::new();
+    let mut i = 0;
+    let mut last_was_edge = false;
+    for _ in 0..50_000 {
+        let Some(rest) = svg.get(i..) else { break };
+        let Some(p) = rest.find('<') else { break };
+        i += p;
+        let Some(rest) = svg.get(i..) else { break };
+        if rest.starts_with("<defs") {
+            match rest.find("</defs>") {
+                Some(e) => i += e + 7,
+                None => break,
+            }
+            continue;
+        }
+        let Some(e) = rest.find('>') else { break };
+        let tag = rest.get(..e + 1).unwrap_or("");
+        i += e + 1;
+        if tag.starts_with("<path") && tag.contains("fill=\"none\"") {
+            let Some(d) = tag.find(" d=\"").and_then(|a| tag.get(a + 4..)).and_then(|r| r.get(..r.find('"')?)) else {
+                continue;
+            };
+            // Los arcos (`A`) son de figuras (el fondo de un cilindro), no flechas.
+            if d.contains('A') || d.contains('a') {
+                last_was_edge = false;
+                continue;
+            }
+            let nums: Vec<f32> = d
+                .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+                .filter_map(|t| t.parse().ok())
+                .take(2_000)
+                .collect();
+            let pairs = nums.len() / 2;
+            let mid = pairs / 2;
+            let (Some(x), Some(y)) = (nums.get(mid * 2), nums.get(mid * 2 + 1)) else { continue };
+            out.push([x - 9.0, y - 9.0, x + 9.0, y + 9.0]);
+            last_was_edge = true;
+        } else if tag.starts_with("<rect") && tag.contains("stroke=\"none\"") && last_was_edge {
+            // La etiqueta de la flecha anterior.
+            if let (Some((x, y, w, h)), Some(b)) = (crate::diagram::shape_box(tag), out.last_mut()) {
+                *b = [b[0].min(x), b[1].min(y), b[2].max(x + w), b[3].max(y + h)];
+            }
+            last_was_edge = false;
+        } else if !tag.starts_with("<text") && !tag.starts_with("</") {
+            last_was_edge = false;
+        }
+    }
+    if out.len() == count { out } else { Vec::new() }
 }
 
 #[cfg(test)]
@@ -768,6 +1026,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn edits_arrows_one_by_one() {
+        let c = code(F);
+        // 0: A-->B, 1: B-->|sí|C, 2: B -- no --> D, 3: D-->A
+        let out = set_edge_text(F, &c, 0, "empieza").unwrap();
+        assert!(out.contains("    A[Inicio] -->|empieza| B{¿Listo?}\n"), "{out}");
+        let out = set_edge_text(F, &c, 1, "").unwrap();
+        assert!(out.contains("    B --> C(Fin):::verde\n"), "{out}");
+        let out = set_edge_kind(F, &c, 2, EdgeKind::Dotted).unwrap();
+        assert!(out.contains("    B -.->|no| D[(Base)]\n"), "{out}");
+        let out = set_edge_kind(F, &c, 3, EdgeKind::Thick).unwrap();
+        assert!(out.contains("    D ==> A\n"), "{out}");
+        assert!(can_reverse(F, &c, 3));
+        let out = reverse_edge(F, &c, 3).unwrap();
+        assert!(out.contains("    A --> D\n"), "{out}");
+        let out = delete_edge(F, &c, 3).unwrap();
+        assert!(out.contains("    D\n    A\n"), "{out}");
+        assert_eq!(edges(&code(&out)).len(), 3);
+        // Con `&`: no se edita esa flecha (cambiaría las dos).
+        let g = "```mermaid\ngraph LR\n  a & b --> c\n```\n";
+        assert!(set_edge_kind(g, &code(g), 0, EdgeKind::Thick).is_none());
+    }
+
+    #[test]
+    fn edge_boxes_match_the_drawing() {
+        let c = code(F);
+        let svg = mermaid_svg::render(&c).unwrap();
+        let eb = edge_boxes(&svg, edges(&c).len());
+        assert_eq!(eb.len(), 4);
+        // La flecha con etiqueta «sí» contiene su etiqueta.
+        let at = svg.find(">sí</text>").unwrap();
+        let tag = &svg[svg[..at].rfind("<text").unwrap()..at];
+        let x: f32 = tag[tag.find(" x=\"").unwrap() + 4..].split('"').next().unwrap().parse().unwrap();
+        assert!(eb[1][0] <= x && x <= eb[1][2], "{:?} {x}", eb[1]);
+        assert!(edge_boxes(&svg, 9).is_empty(), "si no coincide, nada");
+    }
+
     proptest! {
         #[test]
         fn never_panics_and_reparses(text in ".{0,30}", junk in ".{0,120}", k in 0usize..6, s in 0usize..9) {
@@ -780,6 +1075,12 @@ mod tests {
             let _ = set_shape(&block, id, shape);
             let _ = delete(&block, id);
             let _ = boxes(&junk, &[]);
+            let _ = edge_boxes(&junk, 2);
+            let c = format!("flowchart TD\n    A --> B\n    {junk}");
+            let _ = set_edge_text(&block, &c, k, &text);
+            let _ = set_edge_kind(&block, &c, k, EdgeKind::Open);
+            let _ = reverse_edge(&block, &c, k);
+            let _ = delete_edge(&block, &c, k);
             // Sobre un diagrama válido, lo agregado se vuelve a leer.
             if let Some(out) = add_after(F, &code(F), "A", shape, &text) {
                 prop_assert_eq!(parsed_ids(&out).len(), 5);

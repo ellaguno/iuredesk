@@ -287,7 +287,7 @@ pub mod quadrant {
 /// Las acciones del dibujo, sin egui: la app las pasa a su editor (iure-doc) y llama a [`apply`] o
 /// [`drag`] con lo que se eligió.
 pub mod actions {
-    use super::flowchart::{self, Shape};
+    use super::flowchart::{self, EdgeKind, Shape};
     use super::quadrant;
     use crate::markdown::NoteStyle;
 
@@ -301,6 +301,8 @@ pub mod actions {
         Connect,
         /// Cambiar la forma.
         Shape,
+        /// Invertir una flecha.
+        Reverse,
     }
 
     /// Lo que pide la acción.
@@ -359,6 +361,12 @@ pub mod actions {
     const FLOW_SHAPE: u32 = 13;
     const FLOW_DELETE: u32 = 14;
     const FLOW_LOOSE: u32 = 15;
+    const EDGE_TEXT: u32 = 20;
+    const EDGE_KIND: u32 = 21;
+    const EDGE_REVERSE: u32 = 22;
+    const EDGE_DELETE: u32 = 23;
+    /// Las zonas de las flechas van desde aquí (las de los nodos, desde 0).
+    const EDGE_BASE: usize = 100_000;
 
     fn shapes() -> Vec<(&'static str, &'static str)> {
         Shape::ALL.iter().map(|s| s.label()).collect()
@@ -399,10 +407,16 @@ pub mod actions {
     pub fn spots(block: &str, svg: &str) -> Vec<Spot> {
         if let Some(code) = flow_code(block) {
             let nodes = flowchart::nodes(&code);
+            let edges = flowchart::edges(&code).len();
             return flowchart::boxes(svg, &nodes)
                 .into_iter()
                 .enumerate()
                 .filter_map(|(id, b)| b.map(|rect| Spot { id, rect, draggable: false }))
+                .chain(flowchart::edge_boxes(svg, edges).into_iter().enumerate().map(|(e, rect)| Spot {
+                    id: EDGE_BASE + e,
+                    rect,
+                    draggable: false,
+                }))
                 .collect();
         }
         if quadrant_code(block).is_none() {
@@ -421,6 +435,43 @@ pub mod actions {
 
     /// Las acciones de la zona `id`.
     pub fn spot_actions(block: &str, id: usize) -> Vec<Action> {
+        if let Some(code) = flow_code(block)
+            && let Some(e) = id.checked_sub(EDGE_BASE)
+        {
+            let Some((_, _, label)) = flowchart::edges(&code).into_iter().nth(e) else { return Vec::new() };
+            let mut v = vec![
+                Action {
+                    id: EDGE_TEXT,
+                    icon: IconKind::Rename,
+                    label: ("Arrow text", "Texto de la flecha"),
+                    input: Input::Text {
+                        prompt: ("Text on the arrow (empty: none)", "Texto sobre la flecha (vacío: sin texto)"),
+                        initial: label.unwrap_or_default(),
+                    },
+                },
+                Action {
+                    id: EDGE_KIND,
+                    icon: IconKind::Shape,
+                    label: ("Arrow type", "Tipo de flecha"),
+                    input: Input::Choice(EdgeKind::ALL.iter().map(|k| k.label()).collect()),
+                },
+            ];
+            if flowchart::can_reverse(block, &code, e) {
+                v.push(Action {
+                    id: EDGE_REVERSE,
+                    icon: IconKind::Reverse,
+                    label: ("Reverse", "Invertir"),
+                    input: Input::None,
+                });
+            }
+            v.push(Action {
+                id: EDGE_DELETE,
+                icon: IconKind::Delete,
+                label: ("Delete arrow", "Eliminar flecha"),
+                input: Input::None,
+            });
+            return v;
+        }
         if let Some(code) = flow_code(block) {
             let Some((_, text)) = flow_node(&code, id) else { return Vec::new() };
             return vec![
@@ -500,6 +551,17 @@ pub mod actions {
     /// Hace la acción: el bloque nuevo.
     pub fn apply(block: &str, style: &NoteStyle, target: Target, action: u32, data: Data) -> Option<String> {
         if let Some(code) = flow_code(block) {
+            if let Target::Spot(id) = target
+                && let Some(e) = id.checked_sub(EDGE_BASE)
+            {
+                return match (action, data) {
+                    (EDGE_TEXT, Data::Text(t)) => flowchart::set_edge_text(block, &code, e, &t),
+                    (EDGE_KIND, Data::Choice(k)) => flowchart::set_edge_kind(block, &code, e, *EdgeKind::ALL.get(k)?),
+                    (EDGE_REVERSE, _) => flowchart::reverse_edge(block, &code, e),
+                    (EDGE_DELETE, _) => flowchart::delete_edge(block, &code, e),
+                    _ => None,
+                };
+            }
             let node = |n: usize| flow_node(&code, n).map(|(id, _)| id);
             let shape = |k: usize| Shape::ALL.get(k).copied();
             return match (target, action, data) {
@@ -637,7 +699,7 @@ mod tests {
         let b = "```mermaid\nflowchart TD\n    A[Inicio] --> B{¿Listo?}\n    B -->|sí| C(Fin)\n```\n";
         let svg = crate::diagram::render_drawn(&mermaid_code(b), &style).unwrap().svg;
         let spots = actions::spots(b, &svg);
-        assert_eq!(spots.iter().map(|s| s.id).collect::<Vec<_>>(), [0, 1, 2]);
+        assert_eq!(spots.iter().map(|s| s.id).collect::<Vec<_>>(), [0, 1, 2, 100_000, 100_001]);
         assert_eq!(actions::spot_actions(b, 1).len(), 5);
         let next = actions::apply(b, &style, Target::Spot(2), 10, Data::ChoiceText(3, "¿Otra?".into())).unwrap();
         assert!(next.contains("    C --> N1{¿Otra?}\n"), "{next}");
@@ -647,6 +709,13 @@ mod tests {
         assert!(shp.contains("A([Inicio])"), "{shp}");
         let del = actions::apply(b, &style, Target::Spot(2), 14, Data::None).unwrap();
         assert!(!del.contains("Fin"), "{del}");
+        // Las flechas: zonas desde 100 000.
+        assert!(spots.iter().any(|s| s.id == 100_001));
+        assert_eq!(actions::spot_actions(b, 100_001).len(), 4);
+        let dotted = actions::apply(b, &style, Target::Spot(100_001), 21, Data::Choice(1)).unwrap();
+        assert!(dotted.contains("    B -.->|sí| C(Fin)\n"), "{dotted}");
+        let rev = actions::apply(b, &style, Target::Spot(100_000), 22, Data::None).unwrap();
+        assert!(rev.contains("    B{¿Listo?} --> A[Inicio]\n"), "{rev}");
         let loose =
             actions::apply(b, &style, Target::Canvas([1.0, 1.0]), 15, Data::ChoiceText(0, "Suelto".into())).unwrap();
         assert!(loose.contains("    N1[Suelto]\n```"), "{loose}");

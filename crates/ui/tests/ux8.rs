@@ -607,3 +607,49 @@ fn flowchart_adds_the_next_step_from_the_drawing() {
         std::thread::sleep(Duration::from_millis(30));
     }
 }
+
+/// S1.33: un clic en una flecha (en su etiqueta) abre su barra; «Tipo de flecha» la cambia.
+#[test]
+fn flowchart_arrow_type_changes_from_the_drawing() {
+    use iuredesk_html_view as hv;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    let code = "flowchart TD\n    A[Inicio] --> B{¿Listo?}\n    B -->|sí| C(Fin)";
+    let id = h.state().session.note_focus().unwrap();
+    h.state_mut().session.save_note(id, "Flujo", &format!("```mermaid\n{code}\n```\n")).unwrap();
+    h.get_by_label("Editar aquí").click();
+    let start = Instant::now();
+    while h.query_by_label("Diagrama 1").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(20), "no se dibujó");
+        h.run_steps(2);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    h.run_steps(3);
+    let svg = hv::diagram::render_drawn(code, &hv::markdown::NoteStyle::default()).unwrap().svg;
+    let (w, _) = hv::diagram::svg_size(&svg).unwrap();
+    let [x0, y0, x1, y1] = hv::mermaid_edit::flowchart::edge_boxes(&svg, 2)[1];
+    let img = h.get_by_label("Diagrama 1").rect();
+    let k = img.width() / w;
+    let p = img.min + egui::vec2((x0 + x1) / 2.0 * k, (y0 + y1) / 2.0 * k);
+    h.event(egui::Event::PointerMoved(p));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(3);
+    h.get_by_label("Tipo de flecha").click();
+    h.run_steps(3);
+    h.get_by_label("Flecha punteada").click();
+    let start = Instant::now();
+    while !body(&h).contains("B -.->|sí| C(Fin)") {
+        assert!(start.elapsed() < Duration::from_secs(15), "no cambió: {}", body(&h));
+        h.run_steps(5);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+}
