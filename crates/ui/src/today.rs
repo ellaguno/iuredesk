@@ -47,6 +47,8 @@ pub struct TodayState {
     pub(crate) drag: Option<TodayCard>,
     /// UX-15: el clima de hoy.
     pub(crate) weather: crate::today_weather::WeatherUi,
+    /// S1.36: noticias habladas (su audio sigue sonando fuera de «Mi día»).
+    pub(crate) news: crate::today_news::NewsUi,
     /// S1.6: planes de IureProject que se siguen.
     pub(crate) projects: crate::today_projects::ProjectsUi,
 }
@@ -239,6 +241,8 @@ fn header(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, ac
             }
         }
     });
+    // S1.36: el resumen de noticias de cada fuente con su ▶.
+    crate::today_news::panel(app, ui);
 }
 
 /// Píldora con icono y texto; `tint` = color de alerta (borde y texto).

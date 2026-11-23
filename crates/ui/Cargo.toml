@@ -11,6 +11,7 @@ publish = false
 iuredesk-model = { workspace = true }
 iuredesk-store = { workspace = true }
 iuredesk-engine = { workspace = true }
+iuredesk-audio = { workspace = true }
 # R1.2: abrir al iniciar sesión y memoria en Windows/macOS.
 iuredesk-desktop = { workspace = true }
 iuredesk-html-view = { workspace = true }

@@ -50,6 +50,7 @@ mod suite_ui;
 mod task_editor;
 mod today;
 mod today_bg;
+mod today_news;
 mod today_projects;
 mod today_weather;
 mod update_ui;

@@ -553,6 +553,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         "update version actualizar versión nueva",
     ),
     c("help.guide", "User guide", "Guía de uso", "info", Group::App, "help manual guide ayuda guía"),
+    c(
+        "news.play_pause",
+        "News: listen / pause",
+        "Noticias: escuchar / pausar",
+        "sun",
+        Group::App,
+        "news noticias audio play pause escuchar pausar resumen podcast",
+    ),
+    c(
+        "news.stop",
+        "News: stop audio",
+        "Noticias: detener el audio",
+        "sun",
+        Group::App,
+        "news noticias audio stop detener",
+    ),
     // F4.2: asistente ✦, suite e importación (los atiende la UI: `Outcome::Assist`).
     c(
         "ai.summarize",

@@ -461,6 +461,7 @@ impl DeskApp {
         crate::assistant::frame(self, &ctx);
         crate::assistant::bubble(self, &ctx);
         crate::today_weather::setup_dialog(self, &ctx);
+        crate::today_news::setup_dialog(self, &ctx);
         crate::suite_ui::frame(self, &ctx);
         crate::import_ui::frame(self, &ctx);
         crate::security_ui::frame(self, &ctx);
@@ -937,6 +938,14 @@ impl DeskApp {
                         if let Ok(r) = value.downcast::<iuredesk_engine::weather::WeatherResult>() {
                             crate::today_weather::on_weather(self, *r);
                         }
+                    } else if value.is::<iuredesk_engine::news::NewsResult>() {
+                        if let Ok(r) = value.downcast::<iuredesk_engine::news::NewsResult>() {
+                            crate::today_news::on_news(self, *r);
+                        }
+                    } else if value.is::<iuredesk_engine::news::NewsAudio>() {
+                        if let Ok(r) = value.downcast::<iuredesk_engine::news::NewsAudio>() {
+                            crate::today_news::on_audio(self, *r);
+                        }
                     } else if value.is::<iuredesk_engine::weather::PlaceResults>() {
                         if let Ok(r) = value.downcast::<iuredesk_engine::weather::PlaceResults>() {
                             crate::today_weather::on_places(self, *r);
@@ -1056,6 +1065,7 @@ impl DeskApp {
                     )));
                 }
             }
+            Outcome::Assist(id) if id.starts_with("news.") => crate::today_news::command(self, &id),
             Outcome::Assist(id) if id.starts_with("print.") || id.starts_with("security.") => {
                 crate::security_ui::command(self, ctx, &id)
             }

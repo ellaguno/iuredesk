@@ -144,9 +144,16 @@ Not available in the beta yet. If your company uses Microsoft 365, use "Sign in 
 
 ## My day
 
-The first thing you see: today's agenda, tasks due, important mail and reminders. You can move and
-remove cards, change the background (Settings → Appearance) and see the weather. In Settings →
+The first thing you see: today's agenda, tasks due, important mail and reminders. With «Customize»
+(the sliders icon, top right) you drag cards by their handle, change their color or remove them.
+You can also change the background (Settings → Appearance) and see the weather. In Settings →
 General you can have IureDesk open where you left off instead.
+
+Below the day's figures are the **news**: the daily summary from SesoLibre (general news) and from
+the Iurefficient blog (legal news), in Spanish. Press ▶ to listen; it keeps playing when you switch
+modules. Other recent articles show only their title, which opens your browser. In «Sources…» you
+can remove them, add another WordPress site or an RSS/Atom feed (podcasts too), or restore the
+defaults.
 
 ## Iurefficient and the ✦ assistant
 

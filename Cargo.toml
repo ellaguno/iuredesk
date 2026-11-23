@@ -22,6 +22,7 @@ members = [
     "crates/rules",
     "crates/desktop",
     "crates/macos-events",
+    "crates/audio",
     "crates/engine",
     "crates/assistant",
     "crates/html-view",
@@ -61,6 +62,7 @@ iuredesk-import = { path = "crates/import" }
 iuredesk-rules = { path = "crates/rules" }
 iuredesk-desktop = { path = "crates/desktop" }
 iuredesk-macos-events = { path = "crates/macos-events" }
+iuredesk-audio = { path = "crates/audio" }
 iuredesk-engine = { path = "crates/engine" }
 iuredesk-assistant = { path = "crates/assistant" }
 iuredesk-html-view = { path = "crates/html-view" }
@@ -83,6 +85,10 @@ serde_json = "1"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "serde", "clock"] }
 chrono-tz = "0.10"
 quick-xml = "0.41"
+# S1.36: audio de las noticias. Solo MP3 (y WAV para las pruebas); Rust puro, MPL-2.0.
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "wav", "pcm"] }
+# Salida de audio en Windows (WASAPI) y macOS (CoreAudio por objc2); en Linux no se usa (alsa-sys).
+cpal = { version = "0.18", default-features = false }
 tokio = { version = "1", default-features = false }
 # TLS: raíces de Mozilla y además las del sistema (CA internas de empresa, F8.5).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "json"] }

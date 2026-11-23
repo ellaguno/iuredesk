@@ -23,6 +23,7 @@ pub mod crash;
 pub mod iure;
 pub mod lang;
 pub mod migrate;
+pub mod news;
 pub mod notes_fs;
 pub mod onboarding;
 pub mod open;

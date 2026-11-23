@@ -298,6 +298,9 @@ pub struct Prefs {
     /// UX-15: el clima de hoy en la cabecera de «Mi día».
     #[serde(default)]
     pub weather: crate::weather::WeatherPref,
+    /// S1.36: noticias habladas en la cabecera de «Mi día».
+    #[serde(default)]
+    pub news: crate::news::NewsPref,
     /// R3.2: buscar versiones nuevas de IureDesk al arrancar y cada día.
     #[serde(default = "yes")]
     pub update_check: bool,
@@ -480,6 +483,7 @@ impl Default for Prefs {
             microsoft_org: MicrosoftOrg::default(),
             today_layout: Default::default(),
             weather: Default::default(),
+            news: Default::default(),
             update_check: true,
             mindmap_layout: MindmapLayout::Balanced,
             projects: Vec::new(),

@@ -341,7 +341,10 @@ fn cards_are_dragged_and_recolored() {
     assert_eq!(l.right.first(), Some(&TodayCard::Mail), "{l:?}");
     assert_eq!(h.state().today_dragging(), None);
 
-    // Color: rojo, luego sin color.
+    // Color: rojo, luego sin color. Tareas quedó abajo (las noticias ocupan la cabecera): se
+    // desplaza hasta ella como el usuario.
+    h.get_by_label("Color de Tareas").scroll_to_me();
+    settle(&mut h);
     h.get_by_label("Color de Tareas").click();
     settle(&mut h);
     h.get_by_label("#EF4444").click();
@@ -352,4 +355,54 @@ fn cards_are_dragged_and_recolored() {
     h.get_by_label("Sin color").click();
     settle(&mut h);
     assert_eq!(h.state().session.prefs.today_layout.tint(TodayCard::Tasks), None);
+}
+
+/// S1.36: noticias en la cabecera: resumen con ▶ por fuente, el otro artículo solo con título,
+/// ▶ pide el audio (el ejemplo no lo descarga y lo dice) y «Fuentes…» quita, agrega y restaura.
+#[test]
+fn news_with_play_and_sources() {
+    use iuredesk_engine::news::{Topic, default_sources};
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    assert!(h.query_by_label("Manejar la casa desde una sola pantalla").is_some(), "otro artículo, solo título");
+    let play = "Escuchar: Resumen de noticias – miércoles, 21 de octubre";
+    assert_eq!(h.query_all_by_label(play).count(), 2, "un ▶ por fuente");
+    h.query_all_by_label(play).next().unwrap().click();
+    settle(&mut h);
+    assert_eq!(h.state().news_error().as_deref(), Some("El buzón de ejemplo no descarga audio."));
+    assert!(h.query_by_label_contains("no descarga audio").is_some(), "el error se ve junto a la noticia");
+    // El comando de la paleta hace lo mismo con la primera noticia.
+    h.state_mut().session.run("news.play_pause").unwrap();
+
+    // Fuentes: quitar SesoLibre, una dirección inválida, una válida y restaurar.
+    h.get_by_label("Fuentes…").click();
+    settle(&mut h);
+    h.get_by_label("Quitar SesoLibre").click();
+    settle(&mut h);
+    assert_eq!(h.state().session.prefs.news.sources.len(), 1);
+    h.get_by_label("Dirección de la fuente").type_text("ftp://x");
+    h.get_by_label("Agregar").click();
+    settle(&mut h);
+    assert!(h.query_by_label_contains("empezando por https://").is_some());
+    // La dirección inválida se queda para corregirla: se selecciona y se reemplaza.
+    h.get_by_label("Dirección de la fuente").click();
+    h.run_steps(1);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run_steps(1);
+    h.get_by_label("Dirección de la fuente").type_text("https://www.example.org/feed/");
+    h.get_by_label("Agregar").click();
+    settle(&mut h);
+    let s = h.state().session.prefs.news.sources.clone();
+    assert_eq!(s.len(), 2);
+    assert_eq!((s[1].name.as_str(), s[1].topic), ("example.org", Topic::Other));
+    h.get_by_label("Restaurar las de omisión").click();
+    settle(&mut h);
+    assert_eq!(h.state().session.prefs.news.sources, default_sources());
+    h.get_by_label("Mostrar noticias").click();
+    h.get_by_label("Listo").click();
+    settle(&mut h);
+    assert!(!h.state().session.prefs.news.enabled);
+    assert_eq!(h.query_all_by_label(play).count(), 0, "apagadas no se ven");
 }

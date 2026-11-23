@@ -1411,7 +1411,7 @@ impl Session {
             }
             "app.palette" => Ok(Outcome::OpenPalette),
             // R3.2 y R4.2: los atiende la UI (consulta en segundo plano, abrir la guía).
-            "app.check_updates" | "help.guide" => Ok(Outcome::Assist(id.to_string())),
+            "app.check_updates" | "help.guide" | "news.play_pause" | "news.stop" => Ok(Outcome::Assist(id.to_string())),
             "app.add_account" => {
                 self.wizard_begin();
                 Ok(Outcome::AddAccount)
@@ -1765,6 +1765,42 @@ impl Session {
             let result = crate::weather::fetch_today(crate::weather::MET_API, &place, tz, now).await;
             JobOutput::Custom(Box::new(crate::weather::WeatherResult { for_place: place, result }))
         }))
+    }
+
+    /// S1.36: pide las noticias de las fuentes elegidas. Responde con [`Event::Custom`] y un
+    /// [`crate::news::NewsResult`]. `None` si están apagadas. En el buzón de ejemplo, noticias
+    /// fijas (sin red).
+    pub fn request_news(&mut self) -> Option<JobId> {
+        let n = &self.prefs.news;
+        if !n.enabled || n.sources.is_empty() {
+            return None;
+        }
+        if self.sample {
+            let now = self.now();
+            return Some(self.bg.spawn_blocking(move || JobOutput::Custom(Box::new(crate::news::sample(now)))));
+        }
+        let sources = n.sources.clone();
+        Some(self.bg.spawn(async move { JobOutput::Custom(Box::new(crate::news::fetch_all(sources).await)) }))
+    }
+
+    /// S1.36: trae el audio de un artículo (de la caché si ya está). Responde con
+    /// [`Event::Custom`] y un [`crate::news::NewsAudio`].
+    pub fn request_news_audio(&mut self, item: &crate::news::NewsItem) -> JobId {
+        let link = item.link.clone();
+        let audio = item.audio.clone();
+        if self.sample {
+            return self.bg.spawn_blocking(move || {
+                let result = Err(Text::new(
+                    "The sample mailbox doesn't download audio.",
+                    "El buzón de ejemplo no descarga audio.",
+                ));
+                JobOutput::Custom(Box::new(crate::news::NewsAudio { link, result }))
+            });
+        }
+        self.bg.spawn(async move {
+            let result = crate::news::fetch_audio(&link, &audio, &crate::news::cache_dir()).await;
+            JobOutput::Custom(Box::new(crate::news::NewsAudio { link, result }))
+        })
     }
 
     /// R3.2: busca una versión nueva de IureDesk. Responde con [`Event::Custom`] y un

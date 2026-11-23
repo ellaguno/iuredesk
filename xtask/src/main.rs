@@ -189,6 +189,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("iuredesk-rules", 3),
     ("iuredesk-desktop", 3),
     ("iuredesk-macos-events", 3),
+    ("iuredesk-audio", 3),
     ("iuredesk-engine", 4),
     ("iuredesk-integrations", 4),
     ("iuredesk-mcp", 4),
