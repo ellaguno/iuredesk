@@ -783,7 +783,7 @@ pub fn delete_edge(block: &str, code: &str, n: usize) -> Option<String> {
 }
 
 /// Texto comparable: sin etiquetas, entidades básicas resueltas y sin espacios.
-fn norm(s: &str) -> String {
+pub(super) fn norm(s: &str) -> String {
     let mut out = String::new();
     let mut in_tag = false;
     for c in s.chars() {

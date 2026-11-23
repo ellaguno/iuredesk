@@ -4,7 +4,9 @@
 //!
 //! Diagramas de cuadrantes ([`quadrant`]) y de flujo ([`flowchart`]).
 
+pub mod charts;
 pub mod flowchart;
+pub mod sequence;
 
 /// Líneas de un bloque que se revisan como mucho.
 const MAX_LINES: usize = 5_000;
@@ -24,7 +26,8 @@ pub fn clean_label(s: &str) -> String {
             c => c,
         })
         .collect();
-    let t = one.split_whitespace().collect::<Vec<_>>().join(" ");
+    // `%%` empieza un comentario: el punto desaparecería.
+    let t = one.split_whitespace().collect::<Vec<_>>().join(" ").replace("%%", "%");
     t.chars().take(MAX_LABEL).collect()
 }
 
@@ -287,8 +290,10 @@ pub mod quadrant {
 /// Las acciones del dibujo, sin egui: la app las pasa a su editor (iure-doc) y llama a [`apply`] o
 /// [`drag`] con lo que se eligió.
 pub mod actions {
+    use super::charts;
     use super::flowchart::{self, EdgeKind, Shape};
     use super::quadrant;
+    use super::sequence;
     use crate::markdown::NoteStyle;
 
     /// Qué dibuja el botón.
@@ -315,10 +320,10 @@ pub mod actions {
             initial: String,
         },
         /// Elegir una opción (nombres en inglés y español).
-        Choice(Vec<(&'static str, &'static str)>),
+        Choice(Vec<(String, String)>),
         /// Elegir una opción y luego escribir un texto.
         ChoiceText {
-            options: Vec<(&'static str, &'static str)>,
+            options: Vec<(String, String)>,
             prompt: (&'static str, &'static str),
         },
         /// Pulsar otra zona del dibujo.
@@ -367,9 +372,137 @@ pub mod actions {
     const EDGE_DELETE: u32 = 23;
     /// Las zonas de las flechas van desde aquí (las de los nodos, desde 0).
     const EDGE_BASE: usize = 100_000;
+    const SEQ_MESSAGE_TO: u32 = 30;
+    const SEQ_NOTE: u32 = 31;
+    const SEQ_RENAME: u32 = 32;
+    const SEQ_DELETE: u32 = 33;
+    const SEQ_ADD: u32 = 34;
+    const MSG_TEXT: u32 = 40;
+    const MSG_KIND: u32 = 41;
+    const MSG_REVERSE: u32 = 42;
+    const MSG_DELETE: u32 = 43;
+    const NOTE_TEXT: u32 = 50;
+    const NOTE_DELETE: u32 = 51;
+    /// En una secuencia: mensajes desde aquí y notas desde `NOTE_BASE` (participantes desde 0).
+    const MSG_BASE: usize = 100_000;
+    const NOTE_BASE: usize = 200_000;
 
-    fn shapes() -> Vec<(&'static str, &'static str)> {
-        Shape::ALL.iter().map(|s| s.label()).collect()
+    /// El código Mermaid del bloque si es un diagrama de secuencia.
+    fn seq_code(block: &str) -> Option<String> {
+        crate::diagram::mermaid_code(block).filter(|c| sequence::is_sequence(c))
+    }
+
+    /// Los demás participantes de `id` (id y nombre), en orden: las opciones de «Mensaje a…».
+    fn others(t: &sequence::Tree, id: &str) -> Vec<(String, String)> {
+        t.participants.iter().filter(|(p, _)| p != id).cloned().collect()
+    }
+
+    fn seq_spot_actions(block: &str, code: &str, id: usize) -> Vec<Action> {
+        let t = sequence::tree(code);
+        let delete = |id: u32, label: (&'static str, &'static str)| Action {
+            id,
+            icon: IconKind::Delete,
+            label,
+            input: Input::None,
+        };
+        if let Some(k) = id.checked_sub(NOTE_BASE) {
+            let Some((_, text)) = t.notes.get(k) else { return Vec::new() };
+            return vec![
+                Action {
+                    id: NOTE_TEXT,
+                    icon: IconKind::Rename,
+                    label: ("Note text", "Texto de la nota"),
+                    input: Input::Text { prompt: ("Note text", "Texto de la nota"), initial: text.clone() },
+                },
+                delete(NOTE_DELETE, ("Delete note", "Eliminar nota")),
+            ];
+        }
+        if let Some(k) = id.checked_sub(MSG_BASE) {
+            let Some((_, _, text)) = t.messages.get(k) else { return Vec::new() };
+            return vec![
+                Action {
+                    id: MSG_TEXT,
+                    icon: IconKind::Rename,
+                    label: ("Message text", "Texto del mensaje"),
+                    input: Input::Text { prompt: ("Message text", "Texto del mensaje"), initial: text.clone() },
+                },
+                Action {
+                    id: MSG_KIND,
+                    icon: IconKind::Shape,
+                    label: ("Message type", "Tipo de mensaje"),
+                    input: Input::Choice(opts(sequence::MessageKind::ALL.iter().map(|k| k.label()))),
+                },
+                Action { id: MSG_REVERSE, icon: IconKind::Reverse, label: ("Reverse", "Invertir"), input: Input::None },
+                delete(MSG_DELETE, ("Delete message", "Eliminar mensaje")),
+            ];
+        }
+        let Some((pid, display)) = t.participants.get(id) else { return Vec::new() };
+        let _ = block;
+        let mut v = Vec::new();
+        let names: Vec<(String, String)> = others(&t, pid).into_iter().map(|(_, d)| (d.clone(), d)).collect();
+        if !names.is_empty() {
+            v.push(Action {
+                id: SEQ_MESSAGE_TO,
+                icon: IconKind::Connect,
+                label: ("Message to…", "Mensaje a…"),
+                input: Input::ChoiceText { options: names, prompt: ("Message text", "Texto del mensaje") },
+            });
+        }
+        v.push(Action {
+            id: SEQ_NOTE,
+            icon: IconKind::Add,
+            label: ("Add note", "Agregar nota"),
+            input: Input::Text { prompt: ("Note text", "Texto de la nota"), initial: String::new() },
+        });
+        v.push(Action {
+            id: SEQ_RENAME,
+            icon: IconKind::Rename,
+            label: ("Rename", "Cambiar nombre"),
+            input: Input::Text { prompt: ("Name", "Nombre"), initial: display.clone() },
+        });
+        v.push(delete(SEQ_DELETE, ("Delete participant", "Eliminar participante")));
+        v
+    }
+
+    fn seq_apply(block: &str, code: &str, target: Target, action: u32, data: Data) -> Option<String> {
+        let t = sequence::tree(code);
+        let msg = |n: usize| n.checked_sub(MSG_BASE).filter(|_| n < NOTE_BASE);
+        match (target, action, data) {
+            (Target::Canvas(_), SEQ_ADD, Data::Text(name)) => sequence::add_participant(block, code, &name),
+            (Target::Spot(n), NOTE_TEXT, Data::Text(x)) => {
+                sequence::set_note_text(block, code, n.checked_sub(NOTE_BASE)?, &x)
+            }
+            (Target::Spot(n), NOTE_DELETE, _) => sequence::delete_note(block, code, n.checked_sub(NOTE_BASE)?),
+            (Target::Spot(n), MSG_TEXT, Data::Text(x)) => sequence::set_message_text(block, code, msg(n)?, &x),
+            (Target::Spot(n), MSG_KIND, Data::Choice(k)) => {
+                sequence::set_message_kind(block, code, msg(n)?, *sequence::MessageKind::ALL.get(k)?)
+            }
+            (Target::Spot(n), MSG_REVERSE, _) => sequence::reverse_message(block, code, msg(n)?),
+            (Target::Spot(n), MSG_DELETE, _) => sequence::delete_message(block, code, msg(n)?),
+            (Target::Spot(n), a, d) if n < MSG_BASE => {
+                let (pid, _) = t.participants.get(n)?;
+                match (a, d) {
+                    (SEQ_MESSAGE_TO, Data::ChoiceText(k, x)) => {
+                        let (to, _) = others(&t, pid).into_iter().nth(k)?;
+                        sequence::add_message(block, code, pid, &to, &x)
+                    }
+                    (SEQ_NOTE, Data::Text(x)) => sequence::add_note(block, code, pid, &x),
+                    (SEQ_RENAME, Data::Text(x)) => sequence::rename_participant(block, code, pid, &x),
+                    (SEQ_DELETE, _) => sequence::delete_participant(block, code, pid),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Nombres fijos (en inglés y español) como opciones.
+    fn opts(v: impl IntoIterator<Item = (&'static str, &'static str)>) -> Vec<(String, String)> {
+        v.into_iter().map(|(en, es)| (en.to_string(), es.to_string())).collect()
+    }
+
+    fn shapes() -> Vec<(String, String)> {
+        opts(Shape::ALL.iter().map(|s| s.label()))
     }
 
     /// El código Mermaid del bloque si es un diagrama de flujo.
@@ -403,8 +536,312 @@ pub mod actions {
         quadrant::geometry(&svg)
     }
 
+    // --- Pastel, línea de tiempo, Kanban y Gantt ---
+
+    /// Qué gráfico es el bloque y su código.
+    enum Chart {
+        Pie(String),
+        Timeline(String),
+        Kanban(String),
+        Gantt(String),
+    }
+
+    fn chart(block: &str) -> Option<Chart> {
+        let code = crate::diagram::mermaid_code(block)?;
+        Some(if charts::pie::is_pie(&code) {
+            Chart::Pie(code)
+        } else if charts::timeline::is_timeline(&code) {
+            Chart::Timeline(code)
+        } else if charts::kanban::is_kanban(&code) {
+            Chart::Kanban(code)
+        } else if charts::gantt::is_gantt(&code) {
+            Chart::Gantt(code)
+        } else {
+            return None;
+        })
+    }
+
+    /// Las zonas de segundo nivel (eventos, tarjetas, tareas): `SUB + grupo × 1000 + número`.
+    const SUB: usize = 100_000;
+    const PER_GROUP: usize = 1_000;
+
+    fn sub(id: usize) -> Option<(usize, usize)> {
+        let r = id.checked_sub(SUB)?;
+        Some((r / PER_GROUP, r % PER_GROUP))
+    }
+
+    /// Zonas de dos niveles (grupos y sus elementos).
+    fn two_level(v: Vec<(Option<[f32; 4]>, Vec<Option<[f32; 4]>>)>) -> Vec<Spot> {
+        let mut out = Vec::new();
+        for (g, (gb, items)) in v.into_iter().enumerate().take(SUB / PER_GROUP) {
+            if let Some(rect) = gb {
+                out.push(Spot { id: g, rect, draggable: false });
+            }
+            for (k, b) in items.into_iter().enumerate().take(PER_GROUP) {
+                if let Some(rect) = b {
+                    out.push(Spot { id: SUB + g * PER_GROUP + k, rect, draggable: false });
+                }
+            }
+        }
+        out
+    }
+
+    const PIE_VALUE: u32 = 60;
+    const PIE_RENAME: u32 = 61;
+    const PIE_DELETE: u32 = 62;
+    const PIE_ADD: u32 = 63;
+    const TL_ADD_EVENT: u32 = 70;
+    const TL_RENAME: u32 = 71;
+    const TL_DELETE: u32 = 72;
+    const TL_ADD: u32 = 73;
+    const KB_ADD_CARD: u32 = 80;
+    const KB_RENAME: u32 = 81;
+    const KB_DELETE: u32 = 82;
+    const KB_MOVE: u32 = 83;
+    const KB_ADD: u32 = 84;
+    const GT_ADD_TASK: u32 = 90;
+    const GT_RENAME: u32 = 91;
+    const GT_DELETE: u32 = 92;
+    const GT_DURATION: u32 = 93;
+    const GT_ADD: u32 = 94;
+
+    fn text_input(prompt: (&'static str, &'static str), initial: String) -> Input {
+        Input::Text { prompt, initial }
+    }
+
+    fn act(id: u32, icon: IconKind, label: (&'static str, &'static str), input: Input) -> Action {
+        Action { id, icon, label, input }
+    }
+
+    fn chart_spot_actions(c: &Chart, block: &str, id: usize) -> Vec<Action> {
+        let rename = |initial: String| {
+            act(TL_RENAME, IconKind::Rename, ("Rename", "Cambiar nombre"), text_input(("Name", "Nombre"), initial))
+        };
+        let _ = block;
+        match c {
+            Chart::Pie(code) => {
+                let Some((label, value)) = charts::pie::entries(code).into_iter().nth(id) else { return Vec::new() };
+                vec![
+                    act(
+                        PIE_VALUE,
+                        IconKind::Shape,
+                        ("Change value", "Cambiar valor"),
+                        text_input(("Value", "Valor"), value.to_string()),
+                    ),
+                    act(
+                        PIE_RENAME,
+                        IconKind::Rename,
+                        ("Rename", "Cambiar nombre"),
+                        text_input(("Name", "Nombre"), label),
+                    ),
+                    act(PIE_DELETE, IconKind::Delete, ("Delete slice", "Eliminar porción"), Input::None),
+                ]
+            }
+            Chart::Timeline(code) => {
+                let ps = charts::timeline::periods(code);
+                match sub(id) {
+                    Some((p, e)) => {
+                        let Some(ev) = ps.get(p).and_then(|(_, es)| es.get(e)) else { return Vec::new() };
+                        vec![
+                            rename(ev.clone()),
+                            act(TL_DELETE, IconKind::Delete, ("Delete event", "Eliminar evento"), Input::None),
+                        ]
+                    }
+                    None => {
+                        let Some((label, _)) = ps.get(id) else { return Vec::new() };
+                        vec![
+                            act(
+                                TL_ADD_EVENT,
+                                IconKind::Add,
+                                ("Add event", "Agregar evento"),
+                                text_input(("Event", "Evento"), String::new()),
+                            ),
+                            rename(label.clone()),
+                            act(TL_DELETE, IconKind::Delete, ("Delete period", "Eliminar periodo"), Input::None),
+                        ]
+                    }
+                }
+            }
+            Chart::Kanban(code) => {
+                let cols = charts::kanban::columns(code);
+                let kb_rename = |initial: String| {
+                    let mut a = rename(initial);
+                    a.id = KB_RENAME;
+                    a
+                };
+                match sub(id) {
+                    Some((col, card)) => {
+                        let Some((_, text)) = cols.get(col).and_then(|(_, _, t)| t.get(card)) else {
+                            return Vec::new();
+                        };
+                        let names: Vec<(String, String)> =
+                            cols.iter().map(|(_, l, _)| (l.clone(), l.clone())).collect();
+                        vec![
+                            act(
+                                KB_MOVE,
+                                IconKind::Connect,
+                                ("Move to column", "Mover a la columna"),
+                                Input::Choice(names),
+                            ),
+                            kb_rename(text.clone()),
+                            act(KB_DELETE, IconKind::Delete, ("Delete card", "Eliminar tarjeta"), Input::None),
+                        ]
+                    }
+                    None => {
+                        let Some((_, label, _)) = cols.get(id) else { return Vec::new() };
+                        vec![
+                            act(
+                                KB_ADD_CARD,
+                                IconKind::Add,
+                                ("Add card", "Agregar tarjeta"),
+                                text_input(("Card text", "Texto de la tarjeta"), String::new()),
+                            ),
+                            kb_rename(label.clone()),
+                            act(KB_DELETE, IconKind::Delete, ("Delete column", "Eliminar columna"), Input::None),
+                        ]
+                    }
+                }
+            }
+            Chart::Gantt(code) => {
+                let secs = charts::gantt::sections(code);
+                let gt_rename = |initial: String| {
+                    let mut a = rename(initial);
+                    a.id = GT_RENAME;
+                    a
+                };
+                match sub(id) {
+                    Some((s, t)) => {
+                        let Some(name) = secs.get(s).and_then(|(_, ts)| ts.get(t)) else { return Vec::new() };
+                        let d = charts::gantt::task_duration(block, code, s, t).unwrap_or_default();
+                        vec![
+                            act(
+                                GT_DURATION,
+                                IconKind::Shape,
+                                ("Duration", "Duración"),
+                                text_input(("Duration (5d, 2w, 4h)", "Duración (5d, 2w, 4h)"), d),
+                            ),
+                            gt_rename(name.clone()),
+                            act(GT_DELETE, IconKind::Delete, ("Delete task", "Eliminar tarea"), Input::None),
+                        ]
+                    }
+                    None => {
+                        let Some((name, _)) = secs.get(id) else { return Vec::new() };
+                        vec![
+                            act(
+                                GT_ADD_TASK,
+                                IconKind::Add,
+                                ("Add task", "Agregar tarea"),
+                                text_input(("Task name", "Nombre de la tarea"), String::new()),
+                            ),
+                            gt_rename(name.clone()),
+                            act(GT_DELETE, IconKind::Delete, ("Delete section", "Eliminar sección"), Input::None),
+                        ]
+                    }
+                }
+            }
+        }
+    }
+
+    fn chart_canvas(c: &Chart) -> Action {
+        match c {
+            Chart::Pie(_) => act(
+                PIE_ADD,
+                IconKind::Add,
+                ("Add slice", "Agregar porción"),
+                text_input(("Name and value (Civil 30)", "Nombre y valor (Civil 30)"), String::new()),
+            ),
+            Chart::Timeline(_) => act(
+                TL_ADD,
+                IconKind::Add,
+                ("Add period", "Agregar periodo"),
+                text_input(("Period: event (2027: Ruling)", "Periodo: evento (2027: Sentencia)"), String::new()),
+            ),
+            Chart::Kanban(_) => act(
+                KB_ADD,
+                IconKind::Add,
+                ("Add column", "Agregar columna"),
+                text_input(("Column name", "Nombre de la columna"), String::new()),
+            ),
+            Chart::Gantt(_) => act(
+                GT_ADD,
+                IconKind::Add,
+                ("Add section", "Agregar sección"),
+                text_input(("Section name", "Nombre de la sección"), String::new()),
+            ),
+        }
+    }
+
+    fn chart_apply(c: &Chart, block: &str, target: Target, action: u32, data: Data) -> Option<String> {
+        use charts::{gantt, kanban, pie, timeline};
+        let text = match &data {
+            Data::Text(t) => Some(t.as_str()),
+            _ => None,
+        };
+        match (c, target) {
+            (Chart::Pie(code), Target::Canvas(_)) if action == PIE_ADD => pie::add(block, code, text?),
+            (Chart::Timeline(code), Target::Canvas(_)) if action == TL_ADD => timeline::add_period(block, code, text?),
+            (Chart::Kanban(code), Target::Canvas(_)) if action == KB_ADD => kanban::add_column(block, code, text?),
+            (Chart::Gantt(code), Target::Canvas(_)) if action == GT_ADD => gantt::add_section(block, code, text?),
+            (Chart::Pie(code), Target::Spot(k)) => match action {
+                PIE_VALUE => pie::set_value(block, code, k, text?),
+                PIE_RENAME => pie::rename(block, code, k, text?),
+                PIE_DELETE => pie::delete(block, code, k),
+                _ => None,
+            },
+            (Chart::Timeline(code), Target::Spot(id)) => match (sub(id), action) {
+                (Some((p, e)), TL_RENAME) => timeline::rename_event(block, code, p, e, text?),
+                (Some((p, e)), TL_DELETE) => timeline::delete_event(block, code, p, e),
+                (None, TL_ADD_EVENT) => timeline::add_event(block, code, id, text?),
+                (None, TL_RENAME) => timeline::rename_period(block, code, id, text?),
+                (None, TL_DELETE) => timeline::delete_period(block, code, id),
+                _ => None,
+            },
+            (Chart::Kanban(code), Target::Spot(id)) => match (sub(id), action, &data) {
+                (Some((col, card)), KB_MOVE, Data::Choice(to)) => kanban::move_card(block, code, col, card, *to),
+                (Some((col, card)), KB_RENAME, _) => kanban::rename_card(block, code, col, card, text?),
+                (Some((col, card)), KB_DELETE, _) => kanban::delete_card(block, code, col, card),
+                (None, KB_ADD_CARD, _) => kanban::add_card(block, code, id, text?),
+                (None, KB_RENAME, _) => kanban::rename_column(block, code, id, text?),
+                (None, KB_DELETE, _) => kanban::delete_column(block, code, id),
+                _ => None,
+            },
+            (Chart::Gantt(code), Target::Spot(id)) => match (sub(id), action) {
+                (Some((s, t)), GT_DURATION) => gantt::set_duration(block, code, s, t, text?),
+                (Some((s, t)), GT_RENAME) => gantt::rename_task(block, code, s, t, text?),
+                (Some((s, t)), GT_DELETE) => gantt::delete_task(block, code, s, t),
+                (None, GT_ADD_TASK) => gantt::add_task(block, code, id, text?),
+                (None, GT_RENAME) => gantt::rename_section(block, code, id, text?),
+                (None, GT_DELETE) => gantt::delete_section(block, code, id),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Las zonas de un SVG ya dibujado de este bloque (para no dibujarlo dos veces).
     pub fn spots(block: &str, svg: &str) -> Vec<Spot> {
+        if let Some(c) = chart(block) {
+            return match &c {
+                Chart::Pie(code) => charts::pie::boxes(svg, code)
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(id, b)| b.map(|rect| Spot { id, rect, draggable: false }))
+                    .collect(),
+                Chart::Timeline(code) => two_level(charts::timeline::boxes(svg, code)),
+                Chart::Kanban(code) => two_level(charts::kanban::boxes(svg, code)),
+                Chart::Gantt(code) => two_level(charts::gantt::boxes(svg, code)),
+            };
+        }
+        if let Some(code) = seq_code(block) {
+            let t = sequence::tree(&code);
+            let (p, m, n) = sequence::boxes(svg, &t);
+            let zone = |base: usize, v: Vec<Option<[f32; 4]>>| {
+                v.into_iter()
+                    .enumerate()
+                    .filter_map(move |(k, b)| b.map(|rect| Spot { id: base + k, rect, draggable: false }))
+            };
+            return zone(0, p).chain(zone(MSG_BASE, m)).chain(zone(NOTE_BASE, n)).collect();
+        }
         if let Some(code) = flow_code(block) {
             let nodes = flowchart::nodes(&code);
             let edges = flowchart::edges(&code).len();
@@ -435,6 +872,12 @@ pub mod actions {
 
     /// Las acciones de la zona `id`.
     pub fn spot_actions(block: &str, id: usize) -> Vec<Action> {
+        if let Some(c) = chart(block) {
+            return chart_spot_actions(&c, block, id);
+        }
+        if let Some(code) = seq_code(block) {
+            return seq_spot_actions(block, &code, id);
+        }
         if let Some(code) = flow_code(block)
             && let Some(e) = id.checked_sub(EDGE_BASE)
         {
@@ -453,7 +896,7 @@ pub mod actions {
                     id: EDGE_KIND,
                     icon: IconKind::Shape,
                     label: ("Arrow type", "Tipo de flecha"),
-                    input: Input::Choice(EdgeKind::ALL.iter().map(|k| k.label()).collect()),
+                    input: Input::Choice(opts(EdgeKind::ALL.iter().map(|k| k.label()))),
                 },
             ];
             if flowchart::can_reverse(block, &code, e) {
@@ -525,6 +968,17 @@ pub mod actions {
 
     /// Las acciones de un hueco en `at`.
     pub fn canvas_actions(block: &str, at: [f32; 2], style: &NoteStyle) -> Vec<Action> {
+        if let Some(c) = chart(block) {
+            return vec![chart_canvas(&c)];
+        }
+        if seq_code(block).is_some() {
+            return vec![Action {
+                id: SEQ_ADD,
+                icon: IconKind::Add,
+                label: ("Add participant", "Agregar participante"),
+                input: Input::Text { prompt: ("Participant name", "Nombre del participante"), initial: String::new() },
+            }];
+        }
         if flow_code(block).is_some() {
             return vec![Action {
                 id: FLOW_LOOSE,
@@ -550,6 +1004,12 @@ pub mod actions {
 
     /// Hace la acción: el bloque nuevo.
     pub fn apply(block: &str, style: &NoteStyle, target: Target, action: u32, data: Data) -> Option<String> {
+        if let Some(c) = chart(block) {
+            return chart_apply(&c, block, target, action, data);
+        }
+        if let Some(code) = seq_code(block) {
+            return seq_apply(block, &code, target, action, data);
+        }
         if let Some(code) = flow_code(block) {
             if let Target::Spot(id) = target
                 && let Some(e) = id.checked_sub(EDGE_BASE)
@@ -627,6 +1087,8 @@ mod tests {
         let out = add_point(empty, "Uno", 0.5, 0.5).unwrap();
         assert_eq!(out, "```mermaid\nquadrantChart\n  title T\n  Uno: [0.5, 0.5]\n```\n");
         assert!(add_point(Q, "  \n ", 0.1, 0.1).is_none(), "sin etiqueta");
+        // Regresión: `%%` es comentario en Mermaid.
+        assert_eq!(points(&add_point(Q, "%% raro", 0.1, 0.1).unwrap()).len(), 3);
     }
 
     #[test]
@@ -719,6 +1181,47 @@ mod tests {
         let loose =
             actions::apply(b, &style, Target::Canvas([1.0, 1.0]), 15, Data::ChoiceText(0, "Suelto".into())).unwrap();
         assert!(loose.contains("    N1[Suelto]\n```"), "{loose}");
+    }
+
+    #[test]
+    fn sequence_actions_on_the_real_drawing() {
+        use super::actions::{self, Data, Target};
+        let style = crate::markdown::NoteStyle::default();
+        let b = "```mermaid\nsequenceDiagram\n    participant C as Cliente\n    participant A as Abogado\n    C->>A: Consulta\n```\n";
+        let svg = crate::diagram::render_drawn(&mermaid_code(b), &style).unwrap().svg;
+        let ids: Vec<usize> = actions::spots(b, &svg).iter().map(|s| s.id).collect();
+        assert_eq!(ids, [0, 1, 100_000]);
+        let to = actions::spot_actions(b, 0);
+        assert_eq!(to[0].label.1, "Mensaje a…");
+        let out = actions::apply(b, &style, Target::Spot(0), 30, Data::ChoiceText(0, "¿Cuándo?".into())).unwrap();
+        assert!(out.contains("    C->>A: ¿Cuándo?\n```"), "{out}");
+        let out = actions::apply(b, &style, Target::Spot(100_000), 41, Data::Choice(1)).unwrap();
+        assert!(out.contains("    C-->>A: Consulta\n"), "{out}");
+        let out = actions::apply(b, &style, Target::Canvas([0.0, 0.0]), 34, Data::Text("Juez".into())).unwrap();
+        assert!(out.contains("    participant A as Abogado\n    participant Juez\n"), "{out}");
+    }
+
+    #[test]
+    fn chart_actions_on_the_real_drawing() {
+        use super::actions::{self, Data, Target};
+        let style = crate::markdown::NoteStyle::default();
+        let kb = "```mermaid\nkanban\n    Pendiente\n        t1[Redactar]\n    Hecho\n        t2[Firmar]\n```\n";
+        let svg = crate::diagram::render_drawn(&mermaid_code(kb), &style).unwrap().svg;
+        let ids: Vec<usize> = actions::spots(kb, &svg).iter().map(|s| s.id).collect();
+        assert_eq!(ids, [0, 100_000, 1, 101_000]);
+        let moved = actions::apply(kb, &style, Target::Spot(100_000), 83, Data::Choice(1)).unwrap();
+        assert!(moved.contains("    Hecho\n        t2[Firmar]\n        t1[Redactar]\n"), "{moved}");
+        let gt =
+            "```mermaid\ngantt\n    dateFormat YYYY-MM-DD\n    section Demanda\n    Redactar :2026-01-05, 5d\n```\n";
+        let svg = crate::diagram::render_drawn(&mermaid_code(gt), &style).unwrap().svg;
+        assert_eq!(actions::spots(gt, &svg).len(), 2);
+        let acts = actions::spot_actions(gt, 100_000);
+        assert_eq!(acts[0].label.1, "Duración");
+        let out = actions::apply(gt, &style, Target::Spot(100_000), 93, Data::Text("2w".into())).unwrap();
+        assert!(out.contains("    Redactar :2026-01-05, 2w\n"), "{out}");
+        let pie = "```mermaid\npie\n    \"A\" : 1\n```\n";
+        let out = actions::apply(pie, &style, Target::Canvas([0.0, 0.0]), 63, Data::Text("B 2".into())).unwrap();
+        assert!(out.contains("    \"B\" : 2\n"), "{out}");
     }
 
     proptest! {
