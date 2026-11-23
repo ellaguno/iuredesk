@@ -357,8 +357,9 @@ fn cards_are_dragged_and_recolored() {
     assert_eq!(h.state().session.prefs.today_layout.tint(TodayCard::Tasks), None);
 }
 
-/// S1.36: noticias en la cabecera: resumen con ▶ por fuente, el otro artículo solo con título,
-/// ▶ pide el audio (el ejemplo no lo descarga y lo dice) y «Fuentes…» quita, agrega y restaura.
+/// S1.36: noticias en la cabecera: de cada fuente su último artículo (▶ si tiene audio); ▶ pide el
+/// audio (el ejemplo no lo descarga y lo dice); en «Fuentes de noticias» se eligen 1 a 3 por
+/// fuente, se quita, agrega y restaura.
 #[test]
 fn news_with_play_and_sources() {
     use iuredesk_engine::news::{Topic, default_sources};
@@ -366,9 +367,10 @@ fn news_with_play_and_sources() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(app(dir.path()));
     settle(&mut h);
-    assert!(h.query_by_label("Manejar la casa desde una sola pantalla").is_some(), "otro artículo, solo título");
     let play = "Escuchar: Resumen de noticias – miércoles, 21 de octubre";
     assert_eq!(h.query_all_by_label(play).count(), 2, "un ▶ por fuente");
+    let other = "Manejar la casa desde una sola pantalla";
+    assert!(h.query_by_label(other).is_none(), "por omisión, solo el último de cada fuente");
     h.query_all_by_label(play).next().unwrap().click();
     settle(&mut h);
     assert_eq!(h.state().news_error().as_deref(), Some("El buzón de ejemplo no descarga audio."));
@@ -376,9 +378,16 @@ fn news_with_play_and_sources() {
     // El comando de la paleta hace lo mismo con la primera noticia.
     h.state_mut().session.run("news.play_pause").unwrap();
 
-    // Fuentes: quitar SesoLibre, una dirección inválida, una válida y restaurar.
-    h.get_by_label("Fuentes…").click();
+    // Dos por fuente: aparece el otro artículo, sin ▶ (no tiene audio).
+    h.get_by_label("Fuentes de noticias…").click();
     settle(&mut h);
+    h.get_by_label("2 por fuente").click();
+    settle(&mut h);
+    assert_eq!(h.state().session.prefs.news.per_source, 2);
+    assert!(h.query_by_label(other).is_some());
+    assert!(h.query_by_label(&format!("Escuchar: {other}")).is_none());
+
+    // Fuentes: quitar SesoLibre, una dirección inválida, una válida y restaurar.
     h.get_by_label("Quitar SesoLibre").click();
     settle(&mut h);
     assert_eq!(h.state().session.prefs.news.sources.len(), 1);

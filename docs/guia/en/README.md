@@ -149,11 +149,11 @@ The first thing you see: today's agenda, tasks due, important mail and reminders
 You can also change the background (Settings → Appearance) and see the weather. In Settings →
 General you can have IureDesk open where you left off instead.
 
-Below the day's figures are the **news**: the daily summary from SesoLibre (general news) and from
-the Iurefficient blog (legal news), in Spanish. Press ▶ to listen; it keeps playing when you switch
-modules. Other recent articles show only their title, which opens your browser. In «Sources…» you
-can remove them, add another WordPress site or an RSS/Atom feed (podcasts too), or restore the
-defaults.
+Next to the greeting are the **news**: the latest article from SesoLibre (general news) and from the
+Iurefficient blog (legal news), in Spanish. If it has audio, press ▶ to listen; it keeps playing
+when you switch modules. The title opens the article in your browser. The gear opens «News
+sources»: how many articles to show from each (1 to 3), remove them, add another WordPress site or
+an RSS/Atom feed (podcasts too), or restore the defaults.
 
 ## Iurefficient and the ✦ assistant
 

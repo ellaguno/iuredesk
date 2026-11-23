@@ -25,6 +25,8 @@ use crate::app::DeskApp;
 const MAX_WIDTH: f32 = 1180.0;
 /// Separación entre tarjetas.
 const GAP: f32 = 16.0;
+/// S1.36: desde este ancho, las noticias van entre el saludo y el clima.
+const NEWS_BESIDE: f32 = 900.0;
 /// Por debajo de este ancho, una sola columna.
 const TWO_COLUMNS: f32 = 720.0;
 /// Color de la insignia «Iurefficient» (el del calendario de la instancia).
@@ -154,9 +156,31 @@ fn header(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, ac
     let hour = chrono::Timelike::hour(&zone.local(now));
     let hello = today::greeting(hour);
     let title = if s.user.is_empty() { hello.get().to_string() } else { format!("{}, {}", hello.get(), s.user) };
-    ui.horizontal(|ui| {
-        // UX-15: a la derecha, «Personalizar» y el clima de hoy; el saludo ocupa el resto.
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    let day = capitalize(&today::long_day(s.date));
+    // S1.36: con sitio, las noticias van entre el saludo y el clima; si no, debajo del saludo.
+    let news = crate::today_news::shown(app);
+    let beside = news && ui.available_width() >= NEWS_BESIDE;
+    let title_font = theme::semibold_font(&ctx, 26.0);
+    let greet_w = {
+        // Icono (30), su espacio (4) y los dos huecos entre elementos de la fila.
+        let gaps = 34.0 + 2.0 * ui.spacing().item_spacing.x;
+        let t = ui.painter().layout_no_wrap(title.clone(), title_font.clone(), c.text).size().x + gaps;
+        let d = ui.painter().layout_no_wrap(day.clone(), egui::FontId::proportional(15.0), c.text).size().x;
+        t.max(d) + 8.0
+    };
+    let greeting = |ui: &mut Ui| {
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
+            icons::paint(ui.painter(), r, Icon::Sun, c.warning, c.warning);
+            ui.add_space(4.0);
+            ui.add(egui::Label::new(RichText::new(title.clone()).font(title_font.clone()).color(c.text)).truncate());
+        });
+        ui.add_space(2.0);
+        ui.add(egui::Label::new(RichText::new(day.clone()).size(15.0).color(c.text_muted)).truncate());
+    };
+    ui.horizontal_top(|ui| {
+        // UX-15: a la derecha, «Personalizar» y el clima de hoy; el saludo (y las noticias) el resto.
+        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
             let tip = if app.today.editing {
                 pick("Done customizing", "Terminar de personalizar")
             } else {
@@ -167,19 +191,30 @@ fn header(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, ac
             }
             ui.add_space(6.0);
             crate::today_weather::widget(app, ui);
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
-                icons::paint(ui.painter(), r, Icon::Sun, c.warning, c.warning);
-                ui.add_space(4.0);
-                ui.add(
-                    egui::Label::new(RichText::new(title).font(theme::semibold_font(&ctx, 26.0)).color(c.text))
-                        .truncate(),
-                );
+            ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                if !beside {
+                    ui.vertical(greeting);
+                    return;
+                }
+                let left = greet_w.min(ui.available_width() * 0.42);
+                ui.allocate_ui_with_layout(vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.set_width(left);
+                    greeting(ui);
+                });
+                ui.add_space(24.0);
+                let rest = ui.available_width() - 16.0;
+                ui.allocate_ui_with_layout(vec2(rest, 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.set_width(rest);
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    crate::today_news::panel(app, ui);
+                });
             });
         });
     });
-    ui.add_space(2.0);
-    ui.label(RichText::new(capitalize(&today::long_day(s.date))).size(15.0).color(c.text_muted));
+    if news && !beside {
+        ui.add_space(8.0);
+        crate::today_news::panel(app, ui);
+    }
     ui.add_space(14.0);
 
     // Cifras del día.
@@ -241,8 +276,6 @@ fn header(app: &mut DeskApp, ui: &mut Ui, s: &DaySummary, now: DateTime<Utc>, ac
             }
         }
     });
-    // S1.36: el resumen de noticias de cada fuente con su ▶.
-    crate::today_news::panel(app, ui);
 }
 
 /// Píldora con icono y texto; `tint` = color de alerta (borde y texto).

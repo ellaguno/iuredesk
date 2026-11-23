@@ -1,5 +1,6 @@
-//! S1.36: noticias en el encabezado de «Mi día» (lo pidió el dueño 2026-11-23): el resumen diario
-//! de cada fuente con su audio (▶) y, de los otros artículos recientes, solo el título con su liga.
+//! S1.36: noticias en el encabezado de «Mi día» (lo pidió el dueño 2026-11-23): de cada fuente,
+//! sus últimos 1 a 3 artículos (lo elige el usuario); el que tiene audio lleva ▶, los demás solo
+//! el título con su liga.
 //!
 //! - **Fuentes por omisión**: SesoLibre (noticias generales) y el blog de Iurefficient (noticias
 //!   jurídicas). Las dos son WordPress; la lista sale de su API REST (`wp/v2/posts`), porque
@@ -38,10 +39,8 @@ const MAX_ITEMS: usize = 20;
 pub const REFRESH: Duration = Duration::from_secs(60 * 60);
 /// Tras un error, cuándo se reintenta.
 pub const RETRY: Duration = Duration::from_secs(10 * 60);
-/// Los otros artículos se muestran si son de los últimos días.
-pub const RECENT_DAYS: i64 = 4;
-/// Otros artículos por fuente, como mucho.
-pub const MAX_OTHERS: usize = 2;
+/// Artículos por fuente que se pueden mostrar (1 a 3).
+pub const MAX_PER_SOURCE: u8 = 3;
 /// Audios guardados en caché.
 const KEEP_AUDIO: usize = 6;
 const TIMEOUT: Duration = Duration::from_secs(15);
@@ -90,15 +89,29 @@ pub struct NewsPref {
     pub enabled: bool,
     #[serde(default = "default_sources")]
     pub sources: Vec<NewsSource>,
+    /// Artículos por fuente (1 a [`MAX_PER_SOURCE`]).
+    #[serde(default = "one")]
+    pub per_source: u8,
 }
 
 fn yes() -> bool {
     true
 }
 
+fn one() -> u8 {
+    1
+}
+
 impl Default for NewsPref {
     fn default() -> Self {
-        NewsPref { enabled: true, sources: default_sources() }
+        NewsPref { enabled: true, sources: default_sources(), per_source: 1 }
+    }
+}
+
+impl NewsPref {
+    /// Artículos por fuente, ya acotado.
+    pub fn count(&self) -> usize {
+        usize::from(self.per_source.clamp(1, MAX_PER_SOURCE))
     }
 }
 
@@ -152,23 +165,9 @@ pub struct SourceNews {
     pub result: Result<Vec<NewsItem>, Text>,
 }
 
-/// Lo que se muestra de una fuente: el último con audio y los otros recientes (solo título).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Shown<'a> {
-    pub audio: Option<&'a NewsItem>,
-    pub others: Vec<&'a NewsItem>,
-}
-
-/// Elige qué mostrar de `items` (ordenados del más nuevo al más viejo).
-pub fn shown(items: &[NewsItem], now: DateTime<Utc>) -> Shown<'_> {
-    let audio = items.iter().find(|i| i.has_audio());
-    let others = items
-        .iter()
-        .filter(|i| !i.has_audio())
-        .filter(|i| i.date.is_some_and(|d| (now - d).num_days() < RECENT_DAYS))
-        .take(MAX_OTHERS)
-        .collect();
-    Shown { audio, others }
+/// Los últimos `n` artículos de una fuente (ya vienen del más nuevo al más viejo).
+pub fn latest(items: &[NewsItem], n: usize) -> &[NewsItem] {
+    items.get(..n.min(items.len())).unwrap_or(&[])
 }
 
 /// Respuesta de [`crate::Session::request_news`].
@@ -311,8 +310,9 @@ fn link_ok(s: &str) -> Option<String> {
     parse_url(s).map(|u| u.to_string())
 }
 
-/// Artículos de `wp/v2/posts` (con `_fields=date_gmt,link,title`).
-pub fn parse_wp(json: &Value, audio: bool) -> Vec<NewsItem> {
+/// Artículos de `wp/v2/posts` (con `_fields=date_gmt,link,title,categories`). Los de
+/// `audio_category` llevan su audio en la página.
+pub fn parse_wp(json: &Value, audio_category: Option<u64>) -> Vec<NewsItem> {
     let Some(arr) = json.as_array() else { return Vec::new() };
     arr.iter()
         .take(MAX_ITEMS)
@@ -324,6 +324,9 @@ pub fn parse_wp(json: &Value, audio: bool) -> Vec<NewsItem> {
                 .and_then(Value::as_str)
                 .and_then(|d| NaiveDateTime::parse_from_str(d, "%Y-%m-%dT%H:%M:%S").ok())
                 .map(|d| d.and_utc());
+            let audio = audio_category.is_some_and(|cat| {
+                p.get("categories").and_then(Value::as_array).is_some_and(|c| c.iter().any(|x| x.as_u64() == Some(cat)))
+            });
             (!title.is_empty()).then_some(NewsItem {
                 title,
                 link,
@@ -485,23 +488,12 @@ fn looks_like_feed(u: &Url) -> bool {
     p.contains("feed") || p.contains("rss") || p.contains("atom") || p.ends_with(".xml")
 }
 
-async fn wp_posts(client: &reqwest::Client, origin: &str, query: &str, audio: bool) -> Option<Vec<NewsItem>> {
-    let url = format!("{origin}/wp-json/wp/v2/posts?{query}&_fields=date_gmt,link,title");
+/// Los últimos artículos de un WordPress (los que se pueden mostrar como mucho).
+async fn wordpress(client: &reqwest::Client, origin: &str, audio_category: Option<u64>) -> Option<Vec<NewsItem>> {
+    let url = format!("{origin}/wp-json/wp/v2/posts?per_page={MAX_PER_SOURCE}&_fields=date_gmt,link,title,categories");
     let body = get(client, &url, MAX_LIST).await?;
     let json: Value = serde_json::from_slice(&body).ok()?;
-    json.is_array().then(|| parse_wp(&json, audio))
-}
-
-async fn wordpress(client: &reqwest::Client, origin: &str, audio_category: Option<u64>) -> Option<Vec<NewsItem>> {
-    let mut items = match audio_category {
-        Some(cat) => {
-            let mut v = wp_posts(client, origin, &format!("categories={cat}&per_page=1"), true).await?;
-            let others = wp_posts(client, origin, &format!("categories_exclude={cat}&per_page=3"), false).await;
-            v.extend(others.unwrap_or_default());
-            v
-        }
-        None => wp_posts(client, origin, "per_page=4", false).await?,
-    };
+    let mut items = json.is_array().then(|| parse_wp(&json, audio_category))?;
     items.sort_by_key(|i| std::cmp::Reverse(i.date));
     Some(items)
 }
@@ -640,10 +632,6 @@ mod tests {
     use chrono::TimeZone;
     use proptest::prelude::*;
 
-    fn now() -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 11, 23, 18, 0, 0).unwrap()
-    }
-
     #[test]
     fn defaults_are_sesolibre_and_iurefficient() {
         let p = NewsPref::default();
@@ -666,17 +654,19 @@ mod tests {
     fn wordpress_posts_with_entities() {
         let json: Value = serde_json::from_str(
             r#"[{"date_gmt":"2026-11-23T06:00:52","link":"https://sesolibre.com/2026/11/23/resumen/",
-                 "title":{"rendered":"Resumen de noticias &#8211; lunes, 23 de noviembre"}},
+                 "title":{"rendered":"Resumen de noticias &#8211; lunes, 23 de noviembre"},"categories":[3,14]},
                 {"date_gmt":"bad","link":"javascript:alert(1)","title":{"rendered":"malo"}},
                 {"link":"https://sesolibre.com/x/","title":{"rendered":"<b>Caf&eacute;</b> &amp; m&aacute;s"}}]"#,
         )
         .unwrap();
-        let v = parse_wp(&json, true);
+        let v = parse_wp(&json, Some(14));
         assert_eq!(v.len(), 2, "sin enlace https no entra");
         assert_eq!(v[0].title, "Resumen de noticias – lunes, 23 de noviembre");
         assert_eq!(v[0].date, Some(Utc.with_ymd_and_hms(2026, 11, 23, 6, 0, 52).unwrap()));
         assert_eq!(v[0].audio, AudioRef::Page);
         assert_eq!(v[1].title, "Café & más");
+        assert_eq!(v[1].audio, AudioRef::None, "no es de la categoría con audio");
+        assert!(parse_wp(&json, None).iter().all(|i| !i.has_audio()), "sin categoría, solo títulos");
         assert_eq!(v[1].date, None);
     }
 
@@ -728,19 +718,24 @@ mod tests {
     }
 
     #[test]
-    fn shows_the_latest_audio_and_recent_others() {
-        let at = |h: i64| Some(now() - chrono::Duration::hours(h));
-        let it = |t: &str, h, audio: bool| NewsItem {
+    fn latest_n_per_source() {
+        let it = |t: &str, audio: bool| NewsItem {
             title: t.into(),
             link: format!("https://x.org/{t}"),
-            date: at(h),
+            date: None,
             audio: if audio { AudioRef::Page } else { AudioRef::None },
         };
-        let items =
-            vec![it("nuevo", 2, false), it("resumen", 12, true), it("ayer", 30, false), it("viejo", 24 * 9, false)];
-        let s = shown(&items, now());
-        assert_eq!(s.audio.map(|i| i.title.as_str()), Some("resumen"));
-        assert_eq!(s.others.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(), ["nuevo", "ayer"]);
+        let items = vec![it("nuevo", false), it("resumen", true), it("ayer", false)];
+        let t = |n| latest(&items, n).iter().map(|i| i.title.as_str()).collect::<Vec<_>>();
+        assert_eq!(t(1), ["nuevo"], "el último, aunque no tenga audio");
+        assert_eq!(t(2), ["nuevo", "resumen"]);
+        assert_eq!(t(9), ["nuevo", "resumen", "ayer"]);
+        let mut p = NewsPref::default();
+        assert_eq!(p.count(), 1);
+        p.per_source = 0;
+        assert_eq!(p.count(), 1);
+        p.per_source = 200;
+        assert_eq!(p.count(), 3);
     }
 
     #[test]

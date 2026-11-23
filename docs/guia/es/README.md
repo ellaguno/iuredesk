@@ -156,11 +156,11 @@ Con «Personalizar» (el icono de controles, arriba a la derecha) arrastras las 
 les cambias el color o las quitas. También puedes cambiar el fondo (Ajustes → Apariencia) y ver el
 clima. En Ajustes → General puedes pedir que IureDesk abra donde lo dejaste.
 
-Bajo las cifras del día están las **noticias**: el resumen diario de SesoLibre (noticias generales)
-y del blog de Iurefficient (noticias jurídicas). Pulsa ▶ para escucharlo; sigue sonando aunque
-cambies de módulo. Los otros artículos recientes aparecen solo con su título, que abre el
-navegador. En «Fuentes…» puedes quitarlas, agregar otro sitio WordPress o un feed RSS/Atom (también
-pódcasts) o volver a las de omisión.
+Junto al saludo están las **noticias**: el último artículo de SesoLibre (noticias generales) y del
+blog de Iurefficient (noticias jurídicas). Si tiene audio, pulsa ▶ para escucharlo; sigue sonando
+aunque cambies de módulo. El título abre el artículo en el navegador. El engrane abre «Fuentes de
+noticias»: cuántos artículos ver de cada una (1 a 3), quitarlas, agregar otro sitio WordPress o un
+feed RSS/Atom (también pódcasts) o volver a las de omisión.
 
 ## Iurefficient y el asistente ✦
 

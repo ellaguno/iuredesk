@@ -1,6 +1,7 @@
-//! S1.36: noticias en la cabecera de «Mi día». Por fuente, el último resumen con ▶ (su audio
-//! suena aquí, aunque se cambie de módulo) y los otros artículos recientes solo con su título, que
-//! abre el navegador. «Fuentes…» abre un diálogo para quitar, agregar o restaurar las de omisión.
+//! S1.36: noticias en la cabecera de «Mi día», entre el saludo y el clima (debajo del saludo si la
+//! ventana es angosta). De cada fuente, sus últimos 1 a 3 artículos: ▶ en los que tienen audio
+//! (suena aunque se cambie de módulo); el título abre el navegador. El engrane abre «Fuentes de
+//! noticias»: cuántos artículos, quitar, agregar o restaurar las de omisión.
 //!
 //! Los datos los trae el motor ([`iuredesk_engine::news`]); el sonido, [`iuredesk_audio`].
 
@@ -183,112 +184,123 @@ fn play_button(ui: &mut Ui, playing: bool, loading: bool, tip: &str) -> egui::Re
 }
 
 /// Título que abre el artículo en el navegador. Devuelve si se pulsó.
-fn title_link(ui: &mut Ui, text: &str, ink: Color32, small: bool) -> bool {
+fn title_link(ui: &mut Ui, text: &str, ink: Color32, small: bool, hover: &str) -> bool {
     let font = if small { theme::small_font(ui.ctx()) } else { theme::body_font(ui.ctx()) };
     let r = ui.add(egui::Label::new(RichText::new(text).font(font).color(ink)).truncate().sense(Sense::click()));
     if r.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    r.on_hover_text(pick("Open the article in your browser", "Abrir el artículo en el navegador")).clicked()
+    r.on_hover_text(hover).clicked()
 }
 
-/// Las noticias (bajo las cifras del día).
+/// ¿Se muestran noticias (para reservarles sitio en la cabecera)?
+pub fn shown(app: &DeskApp) -> bool {
+    app.session.prefs.news.enabled && !app.session.prefs.news.sources.is_empty()
+}
+
+/// Las noticias: de cada fuente sus últimos artículos; ▶ solo en los que tienen audio. El tema
+/// («Noticias generales») va antes del primero de cada fuente; la fuente se ve en «Fuentes…» y
+/// al pasar el ratón.
 pub fn panel(app: &mut DeskApp, ui: &mut Ui) {
     ensure(app);
-    if !app.session.prefs.news.enabled {
+    if !shown(app) {
         return;
     }
     let c = theme::colors(ui);
-    let now = app.session.now();
     let status = app.today.news.player.status();
     if matches!(status.state, State::Playing) || app.today.news.loading.is_some() {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
     }
     let data = app.today.news.data.clone();
+    let count = app.session.prefs.news.count();
     let mut press: Option<NewsItem> = None;
     let mut seek: Option<f64> = None;
     let mut setup = false;
     let mut open: Option<String> = None;
-    ui.add_space(12.0);
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(pick("NEWS", "NOTICIAS")).font(theme::semibold_font(ui.ctx(), 11.5)).color(c.text_muted),
-        );
-        if app.today.news.fetching && data.is_empty() {
-            ui.add(egui::Spinner::new().size(11.0));
+    let mut first_row = true;
+    // El engrane de «Fuentes…» va en la primera fila, a la derecha.
+    let mut gear = |ui: &mut Ui, first: &mut bool| {
+        if std::mem::take(first)
+            && icons::icon_button(ui, Icon::Settings, pick("News sources…", "Fuentes de noticias…"), true).clicked()
+        {
+            setup = true;
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let r = ui.add(
-                egui::Button::new(RichText::new(pick("Sources…", "Fuentes…")).small().color(c.text_muted))
-                    .frame_when_inactive(false),
-            );
-            if r.clicked() {
-                setup = true;
-            }
+    };
+    if data.is_empty() {
+        ui.horizontal(|ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                gear(ui, &mut first_row);
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    if app.today.news.fetching {
+                        ui.add(egui::Spinner::new().size(12.0));
+                    }
+                    ui.label(RichText::new(pick("Loading news…", "Cargando noticias…")).color(c.text_muted));
+                });
+            });
         });
-    });
+    }
     for s in &data {
         let topic = s.source.topic.label();
-        match &s.result {
+        let items = match &s.result {
             Err(t) => {
-                ui.label(RichText::new(t.get()).small().color(c.text_muted));
+                ui.horizontal(|ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        gear(ui, &mut first_row);
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            ui.add(egui::Label::new(RichText::new(t.get()).small().color(c.text_muted)).truncate());
+                        });
+                    });
+                });
+                continue;
             }
-            Ok(items) => {
-                let shown = news::shown(items, now);
-                if let Some(a) = shown.audio {
-                    let mine = app.today.news.playing.as_ref().is_some_and(|p| p.link == a.link);
-                    let loading = app.today.news.loading.as_deref() == Some(a.link.as_str());
-                    let on = mine && status.state == State::Playing;
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        let tip = if on {
-                            pick("Pause", "Pausar").to_string()
-                        } else {
-                            format!("{} {}", pick("Listen:", "Escuchar:"), a.title)
-                        };
-                        if play_button(ui, on, loading, &tip).clicked() {
-                            press = Some(a.clone());
+            Ok(items) => news::latest(items, count),
+        };
+        for (k, a) in items.iter().enumerate() {
+            let mine = app.today.news.playing.as_ref().is_some_and(|p| p.link == a.link);
+            let loading = app.today.news.loading.as_deref() == Some(a.link.as_str());
+            let on = mine && status.state == State::Playing;
+            let hover = format!("{} · {}", s.source.name, pick("open in your browser", "abrir en el navegador"));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if a.has_audio() {
+                    let tip = if on {
+                        pick("Pause", "Pausar").to_string()
+                    } else {
+                        format!("{} {}", pick("Listen:", "Escuchar:"), a.title)
+                    };
+                    if play_button(ui, on, loading, &tip).clicked() {
+                        press = Some(a.clone());
+                    }
+                } else {
+                    let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
+                    let ir = Rect::from_center_size(r.center(), vec2(13.0, 13.0));
+                    icons::paint(ui.painter(), ir, Icon::Hyperlink, c.text_muted, c.text_muted);
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    gear(ui, &mut first_row);
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        if k == 0 {
+                            ui.label(RichText::new(format!("{topic} ·")).color(c.text_muted));
                         }
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(RichText::new(&s.source.name).small().color(c.text_muted));
-                            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                ui.label(RichText::new(format!("{topic} ·")).color(c.text_muted));
-                                if title_link(ui, &a.title, c.text, false) {
-                                    open = Some(a.link.clone());
-                                }
-                            });
-                        });
+                        if title_link(ui, &a.title, c.text, false, &hover) {
+                            open = Some(a.link.clone());
+                        }
                     });
-                    if mine
-                        && matches!(status.state, State::Playing | State::Paused)
-                        && let Some(to) = progress(ui, status.position, status.duration)
-                    {
-                        seek = Some(to);
-                    }
-                    if mine && let State::Failed(e) = status.state {
-                        ui.label(RichText::new(audio_error(e).get()).small().color(c.danger));
-                    }
-                    if let Some((link, t)) = &app.today.news.error
-                        && *link == a.link
-                    {
-                        ui.label(RichText::new(t.get()).small().color(c.danger));
-                    }
-                }
-                for o in shown.others {
-                    ui.horizontal(|ui| {
-                        ui.add_space(34.0);
-                        let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
-                        icons::paint(ui.painter(), r, Icon::Hyperlink, c.text_muted, c.text_muted);
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(RichText::new(&s.source.name).small().color(c.text_muted));
-                            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                if title_link(ui, &o.title, c.text_muted, true) {
-                                    open = Some(o.link.clone());
-                                }
-                            });
-                        });
-                    });
-                }
+                });
+            });
+            if mine
+                && matches!(status.state, State::Playing | State::Paused)
+                && let Some(to) = progress(ui, status.position, status.duration)
+            {
+                seek = Some(to);
+            }
+            if mine && let State::Failed(e) = status.state {
+                ui.label(RichText::new(audio_error(e).get()).small().color(c.danger));
+            }
+            if let Some((link, t)) = &app.today.news.error
+                && *link == a.link
+            {
+                ui.label(RichText::new(t.get()).small().color(c.danger));
             }
         }
     }
@@ -370,6 +382,7 @@ pub fn setup_dialog(app: &mut DeskApp, ctx: &egui::Context) {
     }
     let pref = app.session.prefs.news.clone();
     let mut enabled = pref.enabled;
+    let mut per_source = pref.count() as u8;
     let mut remove: Option<usize> = None;
     let mut add = false;
     let mut restore = false;
@@ -384,8 +397,8 @@ pub fn setup_dialog(app: &mut DeskApp, ctx: &egui::Context) {
         ui.add(
             egui::Label::new(
                 RichText::new(pick(
-                    "Each source shows its latest summary with ▶ to listen to it, and other recent articles by title. A source is a WordPress site or an RSS/Atom feed (podcasts too).",
-                    "Cada fuente muestra su último resumen con ▶ para escucharlo y, de los otros artículos recientes, el título. Una fuente es un sitio WordPress o un feed RSS/Atom (también pódcasts).",
+                    "Each source shows its latest articles; the ones with audio have ▶ to listen to them. A source is a WordPress site or an RSS/Atom feed (podcasts too).",
+                    "Cada fuente muestra sus últimos artículos; los que tienen audio llevan ▶ para escucharlos. Una fuente es un sitio WordPress o un feed RSS/Atom (también pódcasts).",
                 ))
                 .color(c.text_muted),
             )
@@ -394,6 +407,20 @@ pub fn setup_dialog(app: &mut DeskApp, ctx: &egui::Context) {
         ui.add_space(8.0);
         let r = ui.checkbox(&mut enabled, pick("Show news in My day", "Mostrar noticias en «Mi día»"));
         crate::widgets::named(&r, egui::Role::CheckBox, pick("Show news", "Mostrar noticias"));
+        ui.horizontal(|ui| {
+            ui.label(pick("Articles per source:", "Artículos por fuente:"));
+            for n in 1..=news::MAX_PER_SOURCE {
+                let r = ui.selectable_label(per_source == n, n.to_string());
+                crate::widgets::named(
+                    &r,
+                    egui::Role::Button,
+                    &format!("{n} {}", pick("per source", "por fuente")),
+                );
+                if r.clicked() {
+                    per_source = n;
+                }
+            }
+        });
         ui.add_space(6.0);
         for (i, s) in pref.sources.iter().enumerate() {
             ui.horizontal(|ui| {
@@ -453,6 +480,9 @@ pub fn setup_dialog(app: &mut DeskApp, ctx: &egui::Context) {
         if !enabled {
             app.today.news.player.stop();
         }
+    }
+    if per_source != pref.per_source {
+        save(app, |p| p.per_source = per_source);
     }
     if let Some(i) = remove {
         save(app, |p| {
