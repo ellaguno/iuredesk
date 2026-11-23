@@ -632,7 +632,7 @@ fn num_attr(tag: &str, name: &str) -> Option<f32> {
 }
 
 /// Caja de la primera figura de `group` (rect, circle, ellipse, polygon o path).
-fn shape_box(group: &str) -> Option<(f32, f32, f32, f32)> {
+pub(crate) fn shape_box(group: &str) -> Option<(f32, f32, f32, f32)> {
     let starts = ["<rect", "<circle", "<ellipse", "<polygon", "<path"];
     let (pos, kind) = starts.iter().filter_map(|k| group.find(k).map(|p| (p, *k))).min_by_key(|(p, _)| *p)?;
     let tag = group.get(pos..pos + group.get(pos..)?.find('>')?)?;

@@ -2,7 +2,9 @@
 //! en el bloque (insertar una línea, cambiar un número, una etiqueta): lo demás —comentarios, orden,
 //! estilos— queda byte a byte. Sin egui; la app dibuja la barra y pide los datos.
 //!
-//! Por ahora, diagramas de cuadrantes ([`quadrant`]).
+//! Diagramas de cuadrantes ([`quadrant`]) y de flujo ([`flowchart`]).
+
+pub mod flowchart;
 
 /// Líneas de un bloque que se revisan como mucho.
 const MAX_LINES: usize = 5_000;
@@ -285,6 +287,7 @@ pub mod quadrant {
 /// Las acciones del dibujo, sin egui: la app las pasa a su editor (iure-doc) y llama a [`apply`] o
 /// [`drag`] con lo que se eligió.
 pub mod actions {
+    use super::flowchart::{self, Shape};
     use super::quadrant;
     use crate::markdown::NoteStyle;
 
@@ -294,6 +297,10 @@ pub mod actions {
         Add,
         Rename,
         Delete,
+        /// Unir con otro elemento.
+        Connect,
+        /// Cambiar la forma.
+        Shape,
     }
 
     /// Lo que pide la acción.
@@ -305,6 +312,15 @@ pub mod actions {
             prompt: (&'static str, &'static str),
             initial: String,
         },
+        /// Elegir una opción (nombres en inglés y español).
+        Choice(Vec<(&'static str, &'static str)>),
+        /// Elegir una opción y luego escribir un texto.
+        ChoiceText {
+            options: Vec<(&'static str, &'static str)>,
+            prompt: (&'static str, &'static str),
+        },
+        /// Pulsar otra zona del dibujo.
+        OtherSpot((&'static str, &'static str)),
     }
 
     /// Una acción.
@@ -329,11 +345,34 @@ pub mod actions {
     pub enum Data {
         None,
         Text(String),
+        Choice(usize),
+        ChoiceText(usize, String),
+        Spot(usize),
     }
 
     const ADD: u32 = 1;
     const RENAME: u32 = 2;
     const DELETE: u32 = 3;
+    const FLOW_NEXT: u32 = 10;
+    const FLOW_CONNECT: u32 = 11;
+    const FLOW_TEXT: u32 = 12;
+    const FLOW_SHAPE: u32 = 13;
+    const FLOW_DELETE: u32 = 14;
+    const FLOW_LOOSE: u32 = 15;
+
+    fn shapes() -> Vec<(&'static str, &'static str)> {
+        Shape::ALL.iter().map(|s| s.label()).collect()
+    }
+
+    /// El código Mermaid del bloque si es un diagrama de flujo.
+    fn flow_code(block: &str) -> Option<String> {
+        crate::diagram::mermaid_code(block).filter(|c| flowchart::is_flowchart(c))
+    }
+
+    /// El id del nodo `n` (orden del árbol) y su texto.
+    fn flow_node(code: &str, n: usize) -> Option<(String, String)> {
+        flowchart::nodes(code).into_iter().nth(n).map(|(id, text, _)| (id, text))
+    }
 
     /// Una zona pulsable del dibujo: número, rectángulo `[x0, y0, x1, y1]` (unidades del dibujo) y si
     /// se arrastra.
@@ -358,6 +397,14 @@ pub mod actions {
 
     /// Las zonas de un SVG ya dibujado de este bloque (para no dibujarlo dos veces).
     pub fn spots(block: &str, svg: &str) -> Vec<Spot> {
+        if let Some(code) = flow_code(block) {
+            let nodes = flowchart::nodes(&code);
+            return flowchart::boxes(svg, &nodes)
+                .into_iter()
+                .enumerate()
+                .filter_map(|(id, b)| b.map(|rect| Spot { id, rect, draggable: false }))
+                .collect();
+        }
         if quadrant_code(block).is_none() {
             return Vec::new();
         }
@@ -374,6 +421,44 @@ pub mod actions {
 
     /// Las acciones de la zona `id`.
     pub fn spot_actions(block: &str, id: usize) -> Vec<Action> {
+        if let Some(code) = flow_code(block) {
+            let Some((_, text)) = flow_node(&code, id) else { return Vec::new() };
+            return vec![
+                Action {
+                    id: FLOW_NEXT,
+                    icon: IconKind::Add,
+                    label: ("Add next step", "Agregar siguiente"),
+                    input: Input::ChoiceText {
+                        options: shapes(),
+                        prompt: ("Text of the new step", "Texto del paso nuevo"),
+                    },
+                },
+                Action {
+                    id: FLOW_CONNECT,
+                    icon: IconKind::Connect,
+                    label: ("Connect to…", "Conectar con…"),
+                    input: Input::OtherSpot(("Click the step to connect to", "Pulsa el paso con el que se une")),
+                },
+                Action {
+                    id: FLOW_TEXT,
+                    icon: IconKind::Rename,
+                    label: ("Change text", "Cambiar texto"),
+                    input: Input::Text { prompt: ("Text of the step", "Texto del paso"), initial: text },
+                },
+                Action {
+                    id: FLOW_SHAPE,
+                    icon: IconKind::Shape,
+                    label: ("Change shape", "Cambiar forma"),
+                    input: Input::Choice(shapes()),
+                },
+                Action {
+                    id: FLOW_DELETE,
+                    icon: IconKind::Delete,
+                    label: ("Delete step", "Eliminar paso"),
+                    input: Input::None,
+                },
+            ];
+        }
         let Some(code) = quadrant_code(block) else { return Vec::new() };
         let Some(p) = quadrant::points(&code).into_iter().nth(id) else { return Vec::new() };
         vec![
@@ -389,6 +474,17 @@ pub mod actions {
 
     /// Las acciones de un hueco en `at`.
     pub fn canvas_actions(block: &str, at: [f32; 2], style: &NoteStyle) -> Vec<Action> {
+        if flow_code(block).is_some() {
+            return vec![Action {
+                id: FLOW_LOOSE,
+                icon: IconKind::Add,
+                label: ("Add a step", "Agregar paso"),
+                input: Input::ChoiceText {
+                    options: shapes(),
+                    prompt: ("Text of the new step", "Texto del paso nuevo"),
+                },
+            }];
+        }
         let inside = geometry(block, style).is_some_and(|g| g.to_coords(at[0], at[1]).is_some());
         if !inside {
             return Vec::new();
@@ -403,6 +499,25 @@ pub mod actions {
 
     /// Hace la acción: el bloque nuevo.
     pub fn apply(block: &str, style: &NoteStyle, target: Target, action: u32, data: Data) -> Option<String> {
+        if let Some(code) = flow_code(block) {
+            let node = |n: usize| flow_node(&code, n).map(|(id, _)| id);
+            let shape = |k: usize| Shape::ALL.get(k).copied();
+            return match (target, action, data) {
+                (Target::Spot(n), FLOW_NEXT, Data::ChoiceText(k, text)) => {
+                    flowchart::add_after(block, &code, &node(n)?, shape(k)?, &text)
+                }
+                (Target::Spot(a), FLOW_CONNECT, Data::Spot(b)) => {
+                    flowchart::connect(block, &code, &node(a)?, &node(b)?)
+                }
+                (Target::Spot(n), FLOW_TEXT, Data::Text(text)) => flowchart::set_text(block, &node(n)?, &text),
+                (Target::Spot(n), FLOW_SHAPE, Data::Choice(k)) => flowchart::set_shape(block, &node(n)?, shape(k)?),
+                (Target::Spot(n), FLOW_DELETE, _) => flowchart::delete(block, &node(n)?),
+                (Target::Canvas(_), FLOW_LOOSE, Data::ChoiceText(k, text)) => {
+                    flowchart::add_loose(block, &code, shape(k)?, &text)
+                }
+                _ => None,
+            };
+        }
         match (target, action, data) {
             (Target::Canvas([x, y]), ADD, Data::Text(label)) => {
                 let (cx, cy) = geometry(block, style)?.to_coords(x, y)?;
@@ -513,6 +628,28 @@ mod tests {
         let deleted = actions::apply(Q, &style, Target::Spot(1), 3, Data::None).unwrap();
         assert!(!deleted.contains("Campaña B"));
         assert!(actions::spot_actions(Q, 9).is_empty());
+    }
+
+    #[test]
+    fn flowchart_actions_on_the_real_drawing() {
+        use super::actions::{self, Data, Target};
+        let style = crate::markdown::NoteStyle::default();
+        let b = "```mermaid\nflowchart TD\n    A[Inicio] --> B{¿Listo?}\n    B -->|sí| C(Fin)\n```\n";
+        let svg = crate::diagram::render_drawn(&mermaid_code(b), &style).unwrap().svg;
+        let spots = actions::spots(b, &svg);
+        assert_eq!(spots.iter().map(|s| s.id).collect::<Vec<_>>(), [0, 1, 2]);
+        assert_eq!(actions::spot_actions(b, 1).len(), 5);
+        let next = actions::apply(b, &style, Target::Spot(2), 10, Data::ChoiceText(3, "¿Otra?".into())).unwrap();
+        assert!(next.contains("    C --> N1{¿Otra?}\n"), "{next}");
+        let con = actions::apply(b, &style, Target::Spot(2), 11, Data::Spot(0)).unwrap();
+        assert!(con.contains("    C --> A\n"), "{con}");
+        let shp = actions::apply(b, &style, Target::Spot(0), 13, Data::Choice(2)).unwrap();
+        assert!(shp.contains("A([Inicio])"), "{shp}");
+        let del = actions::apply(b, &style, Target::Spot(2), 14, Data::None).unwrap();
+        assert!(!del.contains("Fin"), "{del}");
+        let loose =
+            actions::apply(b, &style, Target::Canvas([1.0, 1.0]), 15, Data::ChoiceText(0, "Suelto".into())).unwrap();
+        assert!(loose.contains("    N1[Suelto]\n```"), "{loose}");
     }
 
     proptest! {
