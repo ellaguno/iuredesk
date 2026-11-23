@@ -20,6 +20,27 @@ fn ident(s: &str) -> Option<String> {
     (!t.is_empty() && !t.starts_with(|c: char| c.is_ascii_digit())).then_some(t)
 }
 
+/// Un miembro o atributo que no se lee como relación: sin flechas (`--`, `..`, `<|`, `|>`) y con
+/// al menos una letra o número.
+fn member_text(s: &str) -> Option<String> {
+    let mut t = clean(&s.replace(['{', '}'], " "))?;
+    for _ in 0..50 {
+        let before = t.len();
+        t = t
+            .replace("--", "-")
+            .replace("..", ".")
+            .replace("<|", "<")
+            .replace("|>", ">")
+            .replace("*-", "*")
+            .replace("o-", "o -");
+        if t.len() == before {
+            break;
+        }
+    }
+    let t = t.trim().to_string();
+    t.chars().any(char::is_alphanumeric).then_some(t)
+}
+
 /// ¿Aparece `id` como palabra completa en `line`? Devuelve dónde.
 fn word_positions(line: &str, id: &str) -> Vec<usize> {
     let mut out = Vec::new();
@@ -91,7 +112,8 @@ fn open_line(block: &str, id: &str, class_kw: bool) -> Option<usize> {
     block.lines().take(MAX_LINES).position(|l| {
         let t = l.trim();
         let t = if class_kw { t.strip_prefix("class ").map(str::trim_start).unwrap_or("") } else { t };
-        t.ends_with('{') && t.strip_prefix(id).is_some_and(|r| r.trim_start().starts_with('{') || r.trim_start().starts_with('['))
+        t.ends_with('{')
+            && t.strip_prefix(id).is_some_and(|r| r.trim_start().starts_with('{') || r.trim_start().starts_with('['))
     })
 }
 
@@ -118,7 +140,13 @@ fn is_header(code: &str, header: &str) -> bool {
     code.lines()
         .take(40)
         .map(str::trim)
-        .find(|l| !(l.is_empty() || l.starts_with("```") || l.starts_with("~~~") || l.starts_with("%%") || l.starts_with("---")))
+        .find(|l| {
+            !(l.is_empty()
+                || l.starts_with("```")
+                || l.starts_with("~~~")
+                || l.starts_with("%%")
+                || l.starts_with("---"))
+        })
         .is_some_and(|l| l.starts_with(header))
 }
 
@@ -132,7 +160,9 @@ fn titled_box(els: &[El], from: usize, want: &str) -> Option<(usize, [f32; 4])> 
         let tb = text_box(*x, *y, *middle, text.chars().count());
         // La caja de la clase: el rectángulo más cercano antes que contiene el título.
         let rect = els.get(i.saturating_sub(6)..i)?.iter().rev().find_map(|e| match e {
-            El::Shape { tag, rect } if tag.starts_with("<rect") && rect[0] <= *x && rect[2] >= *x && rect[1] <= *y => Some(*rect),
+            El::Shape { tag, rect } if tag.starts_with("<rect") && rect[0] <= *x && rect[2] >= *x && rect[1] <= *y => {
+                Some(*rect)
+            }
             _ => None,
         });
         Some((i, rect.map_or(tb, |r| union(r, tb))))
@@ -193,7 +223,7 @@ pub mod class {
         if !exists(code, id) {
             return None;
         }
-        let m = clean(&member.replace(['{', '}'], " "))?;
+        let m = member_text(member)?;
         if let Some(open) = open_line(block, id, true)
             && let Some((_, close)) = brace_block(block, open)
         {
@@ -275,7 +305,9 @@ pub mod er {
     /// Las entidades (nombre y nombre visible) en el orden del árbol.
     pub fn entities(code: &str) -> Vec<(String, String)> {
         match mermaid_svg::parse(code) {
-            Ok(mermaid_svg::Diagram::Er(e)) => e.entities.into_iter().take(MAX_ITEMS).map(|k| (k.name, k.label)).collect(),
+            Ok(mermaid_svg::Diagram::Er(e)) => {
+                e.entities.into_iter().take(MAX_ITEMS).map(|k| (k.name, k.label)).collect()
+            }
             _ => Vec::new(),
         }
     }
@@ -309,7 +341,7 @@ pub mod er {
         if !exists(code, id) {
             return None;
         }
-        let a = clean(&attr.replace(['{', '}', '"', ':'], " "))?;
+        let a = member_text(&attr.replace(['"', ':'], " "))?;
         // Un atributo necesita tipo y nombre: con una sola palabra, el tipo es `string`.
         let a = if a.split_whitespace().count() == 1 { format!("string {a}") } else { a };
         if let Some(open) = open_line(block, id, false)
@@ -345,7 +377,11 @@ pub mod er {
         }
         let (arrow, _) = KINDS.get(kind)?;
         let label = clean(&label.replace('"', "'")).unwrap_or_default();
-        Some(insert_at(block, None, &format!("{}{id} {arrow} {to} : \"{label}\"", body_indent_after(block, "erDiagram"))))
+        Some(insert_at(
+            block,
+            None,
+            &format!("{}{id} {arrow} {to} : \"{label}\"", body_indent_after(block, "erDiagram")),
+        ))
     }
 
     pub fn rename(block: &str, code: &str, id: &str, new: &str) -> Option<String> {
@@ -419,10 +455,19 @@ mod tests {
         let out = class::relate(&out, &code(&out), "Audiencia", "Expediente", 1, "").unwrap();
         assert!(out.contains("    Expediente <|-- Audiencia\n```"), "{out}");
         let out = class::rename(CL, &c, "Parte", "Persona").unwrap();
-        assert!(out.contains("    class Persona\n    Expediente --> Persona : tiene\n    Persona : +String nombre\n"), "{out}");
+        assert!(
+            out.contains("    class Persona\n    Expediente --> Persona : tiene\n    Persona : +String nombre\n"),
+            "{out}"
+        );
         let out = class::delete(CL, &c, "Expediente").unwrap();
         assert_eq!(out, "```mermaid\nclassDiagram\n    class Parte\n    Parte : +String nombre\n```\n");
         assert!(class::rename(CL, &c, "Parte", "Expediente").is_none(), "ya existe");
+        // Regresión: un miembro con `..` o `--` se leía como relación (y creaba clases).
+        for m in ["..", "a -- b", "x <|-- y"] {
+            if let Some(out) = class::add_member(CL, &c, "Parte", m) {
+                assert_eq!(class::classes(&code(&out)).len(), 2, "{m}: {out}");
+            }
+        }
     }
 
     const ER: &str = "```mermaid\nerDiagram\n    CLIENTE ||--o{ CASO : abre\n    CLIENTE {\n        string nombre\n    }\n    CASO\n```\n";

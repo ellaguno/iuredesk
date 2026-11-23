@@ -7,6 +7,7 @@
 pub mod charts;
 pub mod flowchart;
 pub mod sequence;
+pub mod structure;
 
 /// Líneas de un bloque que se revisan como mucho.
 const MAX_LINES: usize = 5_000;
@@ -294,6 +295,7 @@ pub mod actions {
     use super::flowchart::{self, EdgeKind, Shape};
     use super::quadrant;
     use super::sequence;
+    use super::structure;
     use crate::markdown::NoteStyle;
 
     /// Qué dibuja el botón.
@@ -818,8 +820,132 @@ pub mod actions {
         }
     }
 
+    // --- Clases y entidad-relación ---
+
+    /// Clases o entidades: el bloque es uno u otro.
+    enum Structure {
+        Class(String),
+        Er(String),
+    }
+
+    fn structure_of(block: &str) -> Option<Structure> {
+        let code = crate::diagram::mermaid_code(block)?;
+        if structure::class::is_class(&code) {
+            Some(Structure::Class(code))
+        } else if structure::er::is_er(&code) {
+            Some(Structure::Er(code))
+        } else {
+            None
+        }
+    }
+
+    const ST_MEMBER: u32 = 100;
+    const ST_RELATE: u32 = 101;
+    const ST_INHERIT: u32 = 102;
+    const ST_RENAME: u32 = 103;
+    const ST_DELETE: u32 = 104;
+    const ST_ADD: u32 = 105;
+
+    /// Los nombres (id y visible) de las clases o entidades.
+    fn names(st: &Structure) -> Vec<(String, String)> {
+        match st {
+            Structure::Class(c) => structure::class::classes(c),
+            Structure::Er(c) => structure::er::entities(c),
+        }
+    }
+
+    fn structure_spot_actions(st: &Structure, id: usize) -> Vec<Action> {
+        let all = names(st);
+        let Some((me, _)) = all.get(id) else { return Vec::new() };
+        let others: Vec<(String, String)> =
+            all.iter().filter(|(n, _)| n != me).map(|(_, s)| (s.clone(), s.clone())).collect();
+        let is_class = matches!(st, Structure::Class(_));
+        let mut v = vec![act(
+            ST_MEMBER,
+            IconKind::Add,
+            if is_class {
+                ("Add attribute or method", "Agregar atributo o método")
+            } else {
+                ("Add attribute", "Agregar atributo")
+            },
+            text_input(
+                if is_class {
+                    ("+name: Type, or +method()", "+nombre: Tipo, o +método()")
+                } else {
+                    ("type name (string rfc PK)", "tipo nombre (string rfc PK)")
+                },
+                String::new(),
+            ),
+        )];
+        if !others.is_empty() {
+            v.push(act(
+                ST_RELATE,
+                IconKind::Connect,
+                ("Relate to…", "Relacionar con…"),
+                Input::ChoiceText {
+                    options: others.clone(),
+                    prompt: ("Text of the relation (optional)", "Texto de la relación (opcional)"),
+                },
+            ));
+            if is_class {
+                v.push(act(ST_INHERIT, IconKind::Shape, ("Inherits from…", "Hereda de…"), Input::Choice(others)));
+            }
+        }
+        v.push(act(
+            ST_RENAME,
+            IconKind::Rename,
+            ("Rename", "Cambiar nombre"),
+            text_input(("Name (letters, numbers, _)", "Nombre (letras, números, _)"), me.clone()),
+        ));
+        v.push(act(ST_DELETE, IconKind::Delete, ("Delete", "Eliminar"), Input::None));
+        v
+    }
+
+    fn structure_apply(st: &Structure, block: &str, target: Target, action: u32, data: Data) -> Option<String> {
+        use structure::{class, er};
+        let all = names(st);
+        let other = |me: &str, k: usize| all.iter().filter(|(n, _)| n != me).nth(k).map(|(n, _)| n.clone());
+        match (st, target, action, data) {
+            (Structure::Class(c), Target::Canvas(_), ST_ADD, Data::Text(t)) => class::add_class(block, c, &t),
+            (Structure::Er(c), Target::Canvas(_), ST_ADD, Data::Text(t)) => er::add_entity(block, c, &t),
+            (st, Target::Spot(n), a, d) => {
+                let (me, _) = all.get(n)?;
+                match (st, a, d) {
+                    (Structure::Class(c), ST_MEMBER, Data::Text(t)) => class::add_member(block, c, me, &t),
+                    (Structure::Er(c), ST_MEMBER, Data::Text(t)) => er::add_attribute(block, c, me, &t),
+                    (Structure::Class(c), ST_RELATE, Data::ChoiceText(k, t)) => {
+                        class::relate(block, c, me, &other(me, k)?, 0, &t)
+                    }
+                    (Structure::Er(c), ST_RELATE, Data::ChoiceText(k, t)) => {
+                        er::relate(block, c, me, &other(me, k)?, 0, &t)
+                    }
+                    (Structure::Class(c), ST_INHERIT, Data::Choice(k)) => {
+                        class::relate(block, c, me, &other(me, k)?, 1, "")
+                    }
+                    (Structure::Class(c), ST_RENAME, Data::Text(t)) => class::rename(block, c, me, &t),
+                    (Structure::Er(c), ST_RENAME, Data::Text(t)) => er::rename(block, c, me, &t),
+                    (Structure::Class(c), ST_DELETE, _) => class::delete(block, c, me),
+                    (Structure::Er(c), ST_DELETE, _) => er::delete(block, c, me),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Las zonas de un SVG ya dibujado de este bloque (para no dibujarlo dos veces).
     pub fn spots(block: &str, svg: &str) -> Vec<Spot> {
+        if let Some(st) = structure_of(block) {
+            let b = match &st {
+                Structure::Class(c) => structure::class::boxes(svg, c),
+                Structure::Er(c) => structure::er::boxes(svg, c),
+            };
+            return b
+                .into_iter()
+                .enumerate()
+                .filter_map(|(id, b)| b.map(|rect| Spot { id, rect, draggable: false }))
+                .collect();
+        }
         if let Some(c) = chart(block) {
             return match &c {
                 Chart::Pie(code) => charts::pie::boxes(svg, code)
@@ -872,6 +998,9 @@ pub mod actions {
 
     /// Las acciones de la zona `id`.
     pub fn spot_actions(block: &str, id: usize) -> Vec<Action> {
+        if let Some(st) = structure_of(block) {
+            return structure_spot_actions(&st, id);
+        }
         if let Some(c) = chart(block) {
             return chart_spot_actions(&c, block, id);
         }
@@ -968,6 +1097,13 @@ pub mod actions {
 
     /// Las acciones de un hueco en `at`.
     pub fn canvas_actions(block: &str, at: [f32; 2], style: &NoteStyle) -> Vec<Action> {
+        if let Some(st) = structure_of(block) {
+            let (label, prompt) = match st {
+                Structure::Class(_) => (("Add class", "Agregar clase"), ("Class name", "Nombre de la clase")),
+                Structure::Er(_) => (("Add entity", "Agregar entidad"), ("Entity name", "Nombre de la entidad")),
+            };
+            return vec![act(ST_ADD, IconKind::Add, label, text_input(prompt, String::new()))];
+        }
         if let Some(c) = chart(block) {
             return vec![chart_canvas(&c)];
         }
@@ -1004,6 +1140,9 @@ pub mod actions {
 
     /// Hace la acción: el bloque nuevo.
     pub fn apply(block: &str, style: &NoteStyle, target: Target, action: u32, data: Data) -> Option<String> {
+        if let Some(st) = structure_of(block) {
+            return structure_apply(&st, block, target, action, data);
+        }
         if let Some(c) = chart(block) {
             return chart_apply(&c, block, target, action, data);
         }
@@ -1222,6 +1361,23 @@ mod tests {
         let pie = "```mermaid\npie\n    \"A\" : 1\n```\n";
         let out = actions::apply(pie, &style, Target::Canvas([0.0, 0.0]), 63, Data::Text("B 2".into())).unwrap();
         assert!(out.contains("    \"B\" : 2\n"), "{out}");
+    }
+
+    #[test]
+    fn structure_actions_on_the_real_drawing() {
+        use super::actions::{self, Data, Target};
+        let style = crate::markdown::NoteStyle::default();
+        let cl = "```mermaid\nclassDiagram\n    class Expediente\n    class Parte\n```\n";
+        let svg = crate::diagram::render_drawn(&mermaid_code(cl), &style).unwrap().svg;
+        assert_eq!(actions::spots(cl, &svg).len(), 2);
+        assert_eq!(actions::spot_actions(cl, 1).len(), 5);
+        let out = actions::apply(cl, &style, Target::Spot(1), 102, Data::Choice(0)).unwrap();
+        assert!(out.contains("    Expediente <|-- Parte\n"), "{out}");
+        let er = "```mermaid\nerDiagram\n    CLIENTE\n    CASO\n```\n";
+        let svg = crate::diagram::render_drawn(&mermaid_code(er), &style).unwrap().svg;
+        assert_eq!(actions::spots(er, &svg).len(), 2);
+        let out = actions::apply(er, &style, Target::Spot(0), 101, Data::ChoiceText(0, "abre".into())).unwrap();
+        assert!(out.contains("    CLIENTE ||--o{ CASO : \"abre\"\n"), "{out}");
     }
 
     proptest! {

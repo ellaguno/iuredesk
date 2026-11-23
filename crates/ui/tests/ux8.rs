@@ -705,3 +705,79 @@ fn sequence_adds_a_message_from_the_drawing() {
         std::thread::sleep(Duration::from_millis(30));
     }
 }
+
+/// Abre una nota con un diagrama, pulsa la zona `zone` (en unidades del dibujo) y devuelve el
+/// arnés listo para usar la barra.
+fn open_diagram_and_click(
+    code: &str,
+    zone: impl Fn(&str) -> [f32; 4],
+) -> (Harness<'static, DeskApp>, tempfile::TempDir) {
+    use iuredesk_html_view as hv;
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    let id = h.state().session.note_focus().unwrap();
+    h.state_mut().session.save_note(id, "Diagrama", &format!("```mermaid\n{code}\n```\n")).unwrap();
+    h.get_by_label("Editar aquí").click();
+    let start = Instant::now();
+    while h.query_by_label("Diagrama 1").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(20), "no se dibujó");
+        h.run_steps(2);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    h.run_steps(3);
+    let svg = hv::diagram::render_drawn(code, &hv::markdown::NoteStyle::default()).unwrap().svg;
+    let (w, _) = hv::diagram::svg_size(&svg).unwrap();
+    let [x0, y0, x1, y1] = zone(&svg);
+    let img = h.get_by_label("Diagrama 1").rect();
+    let k = img.width() / w;
+    let p = img.min + egui::vec2((x0 + x1) / 2.0 * k, (y0 + y1) / 2.0 * k);
+    h.event(egui::Event::PointerMoved(p));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(3);
+    (h, dir)
+}
+
+fn wait_body(h: &mut Harness<'static, DeskApp>, want: &str) {
+    let start = Instant::now();
+    while !body(h).contains(want) {
+        assert!(start.elapsed() < Duration::from_secs(15), "falta «{want}»: {}", body(h));
+        h.run_steps(5);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+}
+
+/// S1.33 (fase 2): una tarjeta de Kanban se mueve a otra columna desde su barra.
+#[test]
+fn kanban_card_moves_from_the_drawing() {
+    use iuredesk_html_view::mermaid_edit::charts::kanban;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let code = "kanban\n    Pendiente\n        t1[Redactar]\n    Hecho\n        t2[Firmar]";
+    let (mut h, _dir) = open_diagram_and_click(code, |svg| kanban::boxes(svg, code)[0].1[0].unwrap());
+    h.get_by_label("Mover a la columna").click();
+    h.run_steps(3);
+    h.get_by_label("Hecho").click();
+    wait_body(&mut h, "    Hecho\n        t2[Firmar]\n        t1[Redactar]");
+}
+
+/// S1.33 (fase 2): a una clase se le agrega un atributo desde su barra.
+#[test]
+fn class_gets_a_member_from_the_drawing() {
+    use iuredesk_html_view::mermaid_edit::structure::class;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let code = "classDiagram\n    class Expediente {\n        +String numero\n    }\n    class Parte\n    Expediente --> Parte";
+    let (mut h, _dir) = open_diagram_and_click(code, |svg| class::boxes(svg, code)[0].unwrap());
+    h.get_by_label("Agregar atributo o método").click();
+    h.run_steps(3);
+    h.event(egui::Event::Text("+Date apertura".into()));
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    wait_body(&mut h, "        +String numero\n        +Date apertura\n    }");
+}
