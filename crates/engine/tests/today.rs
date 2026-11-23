@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
 use iuredesk_accounts::MemoryStore;
+use iuredesk_engine::iuredesk_rules::Category;
 use iuredesk_engine::{FolderSel, Module, OfflineTransport, Session, SessionConfig, StartPref, Zone};
+use iuredesk_model::FolderRole;
 use iuredesk_store::{Store, sample};
 
 fn now() -> chrono::DateTime<Utc> {
@@ -185,4 +187,34 @@ fn calendar_shared_by_two_accounts_shows_once() {
     assert_eq!(vis, 1);
     assert_eq!(count(&mut s), 1);
     s.shutdown();
+}
+
+/// Un correo de «Hoy» abre su carpeta y queda seleccionado aunque la Entrada muestre otra pestaña
+/// de categoría (antes la lista no lo tenía y la petición se perdía: se abría el correo sin él).
+#[test]
+fn today_mail_opens_the_message_from_another_category_tab() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = open(sample_store(dir.path()), None);
+    settle(&mut s);
+    let day = summary(&mut s);
+    let items: Vec<_> = day.needs_reply.iter().chain(&day.flagged).cloned().collect();
+    assert!(!items.is_empty());
+    let mut in_inbox = 0;
+    for m in items {
+        let Some((c, _)) = s.category_of(m.id) else { continue };
+        let other = Category::ALL.iter().copied().find(|x| *x != c).unwrap();
+        s.module = Module::Today;
+        s.select_folder(FolderSel::Unified(FolderRole::Inbox));
+        s.set_category_tab(other);
+        settle(&mut s);
+        assert!(s.reveal_message(m.id));
+        settle(&mut s);
+        assert_eq!(s.module, Module::Mail);
+        let (idx, row) = s.take_focus_request().unwrap_or_else(|| panic!("«{}» no está en la lista", m.subject));
+        assert_eq!(s.rows().get(idx).map(|r| r.id), Some(row));
+        if s.folder_sel() == FolderSel::Folder(m.folder) && s.category_tab() == c {
+            in_inbox += 1;
+        }
+    }
+    assert!(in_inbox > 0, "algún correo de la Entrada cambió de pestaña");
 }

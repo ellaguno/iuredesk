@@ -1087,9 +1087,10 @@ fn today(app: &mut DeskApp, ui: &mut Ui) {
     if rows.is_empty() {
         ui.label(RichText::new(pick("Nothing pending.", "Nada pendiente.")).color(c.text_muted));
     }
-    if let Some(id) = open {
+    if let Some(id) = open
+        && !app.session.reveal_message(id)
+    {
         app.session.select_folder(iuredesk_engine::FolderSel::Unified(iuredesk_model::FolderRole::Inbox));
-        app.session.request_focus(id);
     }
 }
 

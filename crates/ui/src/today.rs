@@ -1237,9 +1237,11 @@ fn apply(app: &mut DeskApp, ctx: &egui::Context, a: Act) {
         }
         Act::Tasks => app.session.module = Module::Tasks,
         Act::Complete(dt) => complete(app, ctx, &dt),
+        // La carpeta del mensaje y la pestaña de su categoría: en otra pestaña no se abría.
         Act::Message(m) => {
-            app.session.select_folder(FolderSel::Folder(m.folder));
-            app.session.request_focus(m.id);
+            if !app.session.reveal_message(m.id) {
+                app.session.select_folder(FolderSel::Folder(m.folder));
+            }
         }
         Act::Inbox(f) => match f {
             Some(f) => app.session.select_folder(FolderSel::Folder(f)),
@@ -1248,8 +1250,9 @@ fn apply(app: &mut DeskApp, ctx: &egui::Context, a: Act) {
         Act::Flagged => app.session.select_folder(FolderSel::Flagged),
         Act::Triage => crate::assistant::request_triage(app),
         Act::TriageOpen(id) => {
-            app.session.select_folder(FolderSel::Unified(iuredesk_model::FolderRole::Inbox));
-            app.session.request_focus(id);
+            if !app.session.reveal_message(id) {
+                app.session.select_folder(FolderSel::Unified(iuredesk_model::FolderRole::Inbox));
+            }
         }
         Act::Iure(it) => {
             app.session.iure_mark_read(it.mention, &it.id);
