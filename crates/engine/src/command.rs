@@ -376,6 +376,22 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("notes.new", "New note", "Nueva nota", "notes", Group::App, "note create nota crear apunte"),
     c("notes.delete", "Delete note", "Eliminar nota", "trash", Group::App, "note delete nota borrar eliminar"),
     c("tasks.edit", "Edit task…", "Editar tarea…", "edit", Group::App, "task todo edit tarea editar pendiente"),
+    c(
+        "tasks.open_iure",
+        "Open task in Iurefficient",
+        "Abrir tarea en Iurefficient",
+        "cloud",
+        Group::App,
+        "task open web iurefficient tarea abrir pagina",
+    ),
+    c(
+        "tasks.open_project",
+        "Open task in IureProject",
+        "Abrir tarea en IureProject",
+        "gantt",
+        Group::App,
+        "task open plan project iureproject tarea abrir plan proyecto",
+    ),
     c("tasks.view.list", "Tasks: list", "Tareas: lista", "list", Group::App, "tasks list tareas lista vista"),
     c(
         "tasks.view.board",

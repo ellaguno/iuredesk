@@ -22,6 +22,65 @@ pub(crate) enum BoardAct {
     OpenProject(std::path::PathBuf),
 }
 
+/// S1.35: dónde se puede abrir una tarea fuera de IureDesk: su página en Iurefficient y el plan de
+/// IureProject de su caso (si se sigue), con su id en Iurefficient.
+pub(crate) struct Origin {
+    pub web: Option<String>,
+    pub plan: Option<(std::path::PathBuf, String)>,
+}
+
+pub(crate) fn origin(app: &DeskApp, t: &Task) -> Origin {
+    let web = app.session.iure_task_url(t);
+    let plan = app.session.iure_task_id(t).and_then(|id| {
+        let case = app.session.task_case(t)?;
+        let (file, _) = crate::today_projects::plans_for_case(app, &case.id).into_iter().next()?;
+        Some((file, id))
+    });
+    Origin { web, plan }
+}
+
+/// Las opciones «Abrir en Iurefficient» y «Abrir en IureProject» del menú de una tarea.
+pub(crate) fn origin_menu(app: &DeskApp, ui: &mut Ui, t: &Task) -> Option<RowAct> {
+    let o = origin(app, t);
+    let mut act = None;
+    if o.web.is_some()
+        && icons::menu_item(ui, Some(Icon::Cloud), pick("Open in Iurefficient", "Abrir en Iurefficient")).clicked()
+    {
+        act = Some(RowAct::OpenIure);
+        ui.close();
+    }
+    if o.plan.is_some()
+        && icons::menu_item(ui, Some(Icon::Gantt), pick("Open in IureProject", "Abrir en IureProject")).clicked()
+    {
+        act = Some(RowAct::OpenProject);
+        ui.close();
+    }
+    act
+}
+
+/// Abre la tarea en Iurefficient (`project` = false) o en su plan de IureProject; si no se puede,
+/// lo explica.
+pub(crate) fn open_origin(app: &mut DeskApp, id: TaskId, project: bool) {
+    let Some(t) = app.session.task(id) else { return };
+    let o = origin(app, &t);
+    match (project, o.web, o.plan) {
+        (false, Some(url), _) => {
+            crate::open_url(&url);
+        }
+        (true, _, Some((file, task))) => {
+            app.suite.hub.run(iuredesk_engine::suite::SuiteAction::OpenProjectTask { file, task });
+        }
+        (false, None, _) => app.notice(iuredesk_engine::Notice::info(
+            "This task does not come from Iurefficient.",
+            "Esta tarea no viene de Iurefficient.",
+        )),
+        (true, _, None) => app.notice(iuredesk_engine::Notice::info(
+            "This task's case has no IureProject plan that you follow.",
+            "El caso de esta tarea no tiene un plan de IureProject que sigas.",
+        )),
+    }
+}
+
 /// Las columnas del tablero de una lista (sin «En curso» si la lista no lo tiene).
 fn columns(in_progress: bool) -> Vec<(TaskStatus, &'static str)> {
     let mut v = vec![(TaskStatus::NeedsAction, pick("To do", "Por hacer"))];
@@ -117,6 +176,9 @@ fn card(
         if icons::menu_item(ui, Some(Icon::Rename), pick("Edit…", "Editar…")).clicked() {
             act = Some(BoardAct::Row(t.id, RowAct::Edit));
             ui.close();
+        }
+        if let Some(a) = origin_menu(app, ui, t) {
+            act = Some(BoardAct::Row(t.id, a));
         }
         if writable {
             ui.menu_button(pick("Move to", "Mover a"), |ui| {

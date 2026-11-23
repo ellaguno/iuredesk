@@ -214,6 +214,14 @@ fn task_status_changes_and_task_cases() {
     assert!(t.is_done() && t.percent_complete == 100);
     s.run("undo").unwrap();
     assert_eq!(s.task(local.id).unwrap().status, TaskStatus::InProcess);
+    // S1.35: la página de una tarea de Iurefficient; una local no tiene.
+    let it = iure.iter().find(|t| t.remote_id.as_deref() == Some("iure:it-1")).unwrap();
+    assert_eq!(
+        s.iure_task_url(it).as_deref(),
+        Some("https://demo.iurefficient.com/dashboard/tasks?taskId=it-1&view=list")
+    );
+    assert_eq!(s.iure_task_id(it).as_deref(), Some("it-1"));
+    assert!(s.iure_task_url(&local).is_none());
     // De vuelta por hacer: sin fecha de terminada ni avance.
     s.set_task_status(local.id, TaskStatus::NeedsAction).unwrap();
     let t = s.task(local.id).unwrap();

@@ -367,6 +367,33 @@ impl Session {
         Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
     }
 
+    /// S1.35: el id en Iurefficient de una tarea que viene de la instancia.
+    pub fn iure_task_id(&self, t: &Task) -> Option<String> {
+        if !self.is_iure_task(t.list) {
+            return None;
+        }
+        let id = t.remote_id.as_deref()?.strip_prefix("iure:")?.trim();
+        (!id.is_empty()).then(|| id.to_string())
+    }
+
+    /// S1.35: la página de esa tarea en la web de Iurefficient (la lista de tareas, con ella
+    /// marcada: la instancia no tiene una página por tarea).
+    pub fn iure_task_url(&self, t: &Task) -> Option<String> {
+        let id = self.iure_task_id(t)?;
+        let base = self.iure_web_url()?;
+        let enc: String = id
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                    (b as char).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        Some(format!("{}/dashboard/tasks?taskId={enc}&view=list", base.trim_end_matches('/')))
+    }
+
     /// S1.34: la vista de las tareas.
     pub fn task_view(&self) -> crate::tasks_view::TaskView {
         self.prefs.task_view

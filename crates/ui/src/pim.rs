@@ -982,6 +982,9 @@ pub(crate) enum RowAct {
     Edit,
     /// UX-6: cambiar el nombre en la lista (F2).
     Rename,
+    /// S1.35: abrir en Iurefficient / en el plan de IureProject.
+    OpenIure,
+    OpenProject,
 }
 
 pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
@@ -1160,6 +1163,8 @@ fn apply_board_acts(
                     Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
                 },
                 RowAct::Select => app.pim.task_sel = Some(id),
+                RowAct::OpenIure => crate::task_board::open_origin(app, id, false),
+                RowAct::OpenProject => crate::task_board::open_origin(app, id, true),
                 RowAct::Edit => {
                     app.pim.task_sel = Some(id);
                     crate::task_editor::open(app, id);
@@ -1202,6 +1207,9 @@ pub(crate) fn task_row(app: &mut DeskApp, ui: &mut Ui, t: &Task, writable: bool)
         if icons::menu_item(ui, Some(Icon::Rename), pick("Edit…", "Editar…")).clicked() {
             act = Some(RowAct::Edit);
             ui.close();
+        }
+        if let Some(a) = crate::task_board::origin_menu(app, ui, t) {
+            act = Some(a);
         }
         if writable {
             if icons::menu_item(ui, None, pick("Rename (F2)", "Cambiar nombre (F2)")).clicked() {

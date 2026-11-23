@@ -194,3 +194,38 @@ fn tasks_by_case() {
     // La vista se recuerda.
     assert_eq!(h.state().session.task_view(), iuredesk_engine::tasks_view::TaskView::ByCase);
 }
+
+/// S1.35: una tarea de Iurefficient se abre en su página (clic derecho → «Abrir en Iurefficient»,
+/// o el comando de la paleta con la tarea elegida).
+#[test]
+fn an_iurefficient_task_opens_in_its_page() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    iuredesk_ui::capture_opened_urls();
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    h.state_mut().session.module = Module::Tasks;
+    h.run_steps(3);
+    // En «Por caso» están las tareas de todas las listas.
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "tasks.view.case");
+    h.run_steps(3);
+    let row = h.get_by_label("Tarea Revisar escrito de contestación");
+    row.click_secondary();
+    h.run_steps(3);
+    h.get_by_label("Abrir en Iurefficient").click();
+    h.run_steps(3);
+    assert_eq!(
+        iuredesk_ui::opened_urls().last().map(String::as_str),
+        Some("https://demo.iurefficient.com/dashboard/tasks?taskId=it-1&view=list")
+    );
+    // Sin un plan de IureProject que se siga para su caso, el comando lo explica.
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    h.get_by_label("Tarea Revisar escrito de contestación").click();
+    h.run_steps(2);
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "tasks.open_project");
+    h.run_steps(3);
+    assert!(h.query_all_by_label_contains("no tiene un plan de IureProject").next().is_some());
+}
