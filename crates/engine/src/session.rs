@@ -1230,6 +1230,7 @@ impl Session {
             b if (b == "nav.assistant" || b.starts_with("ai.")) && !self.ai_available => false,
             "notes.delete" | "notes.open_editor" | "notes.toggle_edit" => self.note_focus.is_some(),
             "tasks.edit" => self.module == Module::Tasks || self.module == Module::Today,
+            b if b.starts_with("tasks.view.") => self.module == Module::Tasks,
             "contacts.edit" => self.contact_selection.len() == 1,
             "mail.delete" | "contacts.delete" if self.module == Module::Contacts || base == "contacts.delete" => {
                 !self.contact_selection.is_empty()
@@ -1332,6 +1333,12 @@ impl Session {
             "notes.open_editor" => Ok(Outcome::Assist("notes.open_editor".into())),
             "notes.toggle_edit" => Ok(Outcome::Assist("notes.toggle_edit".into())),
             "tasks.edit" => Ok(Outcome::Assist("tasks.edit".into())),
+            b if b.starts_with("tasks.view.") => {
+                if let Some(v) = b.strip_prefix("tasks.view.").and_then(crate::tasks_view::TaskView::from_key) {
+                    self.set_task_view(v);
+                }
+                Ok(Outcome::Done)
+            }
             "mail.archive" => self.archive(),
             "mail.delete" => self.delete(),
             "mail.toggle_read" => self.toggle_read(),

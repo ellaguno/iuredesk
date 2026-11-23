@@ -1199,6 +1199,7 @@ pub mod sample {
                     title: "Revisar escrito de contestación".into(),
                     status: "pending".into(),
                     due_date: Some(due(2)),
+                    case_id: Some("c-1452/2026".into()),
                     case_title: Some("1452/2026".into()),
                     ..Default::default()
                 },
@@ -1208,6 +1209,7 @@ pub mod sample {
                     status: "pending".into(),
                     priority: Some("high".into()),
                     due_date: Some(due(0)),
+                    case_id: Some("c-241/2026".into()),
                     case_title: Some("241/2026".into()),
                     ..Default::default()
                 },
@@ -1216,6 +1218,7 @@ pub mod sample {
                     title: "Llamar a la contraparte".into(),
                     status: "pending".into(),
                     due_date: Some(due(-1)),
+                    case_id: Some("c-1452/2026".into()),
                     case_title: Some("1452/2026".into()),
                     ..Default::default()
                 },

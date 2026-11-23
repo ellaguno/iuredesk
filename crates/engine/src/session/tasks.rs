@@ -56,6 +56,8 @@ pub struct TaskCaps {
     pub recurrence: bool,
     /// Mover a otra lista de la misma cuenta.
     pub move_list: bool,
+    /// S1.34: estados «en curso» y «cancelada» (Google Tareas solo tiene pendiente y terminada).
+    pub in_progress: bool,
 }
 
 impl Session {
@@ -182,14 +184,21 @@ impl Session {
             reminder: true,
             recurrence: true,
             move_list: true,
+            in_progress: true,
         };
         match source {
             TaskSource::Local => all,
             TaskSource::CalDav => all,
             TaskSource::MicrosoftToDo => TaskCaps { due_time: false, ..all },
-            TaskSource::GoogleTasks => {
-                TaskCaps { due_time: false, start: false, priority: false, reminder: false, recurrence: false, ..all }
-            }
+            TaskSource::GoogleTasks => TaskCaps {
+                due_time: false,
+                start: false,
+                priority: false,
+                reminder: false,
+                recurrence: false,
+                in_progress: false,
+                ..all
+            },
             TaskSource::Iurefficient => TaskCaps {
                 editable: self.iure_can_write(),
                 due_time: false,
@@ -301,6 +310,88 @@ impl Session {
         self.data_gen = self.data_gen.wrapping_add(1);
         self.push_undo(text.clone(), vec![(Inverse::Task(Box::new(old)), None)]);
         Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
+    }
+
+    /// S1.34: cambia el estado de una tarea (el tablero: arrastrarla a otra columna), con deshacer.
+    /// Pone también su avance y la fecha de terminada. Las listas sin «en curso» ni «cancelada»
+    /// (Google Tareas) lo explican en vez de perder el estado al sincronizar.
+    pub fn set_task_status(&mut self, id: TaskId, status: TaskStatus) -> Result<Outcome> {
+        let old = self.store.get_task(id).map_err(store_err)?.ok_or(EngineError::NoSelection)?;
+        if old.status == status && (status == TaskStatus::Completed) == old.is_done() {
+            return Ok(Outcome::Done);
+        }
+        let caps = self.task_caps(old.list);
+        if !caps.editable {
+            return Ok(Outcome::Notice(Notice::error(Text::new(
+                "Iurefficient is not connected: change this task there.",
+                "Iurefficient no está conectado: cambia esta tarea allá.",
+            ))));
+        }
+        if !caps.in_progress && matches!(status, TaskStatus::InProcess | TaskStatus::Cancelled) {
+            return Ok(Outcome::Notice(Notice::error(Text::new(
+                "Google Tasks only knows pending and done.",
+                "Google Tareas solo distingue pendiente y terminada.",
+            ))));
+        }
+        let mut new = old.clone();
+        new.status = status.clone();
+        match status {
+            TaskStatus::Completed => {
+                new.completed = old.completed.or(Some(self.now()));
+                new.percent_complete = 100;
+            }
+            TaskStatus::NeedsAction => {
+                new.completed = None;
+                new.percent_complete = 0;
+            }
+            TaskStatus::InProcess => {
+                new.completed = None;
+                if new.percent_complete >= 100 || new.percent_complete == 0 {
+                    new.percent_complete = 50;
+                }
+            }
+            TaskStatus::Cancelled => {
+                new.completed = None;
+            }
+        }
+        self.write_task(&new)?;
+        self.data_gen = self.data_gen.wrapping_add(1);
+        let (en, es) = match status {
+            TaskStatus::NeedsAction => ("to do", "por hacer"),
+            TaskStatus::InProcess => ("in progress", "en curso"),
+            TaskStatus::Completed => ("done", "terminada"),
+            TaskStatus::Cancelled => ("cancelled", "cancelada"),
+        };
+        let text = Text::new(format!("\"{}\" is now {en}", new.summary), format!("«{}» ahora está {es}", new.summary));
+        self.push_undo(text.clone(), vec![(Inverse::Task(Box::new(old)), None)]);
+        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
+    }
+
+    /// S1.34: la vista de las tareas.
+    pub fn task_view(&self) -> crate::tasks_view::TaskView {
+        self.prefs.task_view
+    }
+
+    /// S1.34: la vista de las tareas (se recuerda).
+    pub fn set_task_view(&mut self, v: crate::tasks_view::TaskView) {
+        if self.prefs.task_view != v {
+            self.prefs.task_view = v;
+            self.save_prefs();
+        }
+    }
+
+    /// S1.34: el caso de Iurefficient de una tarea (las que vienen de la instancia).
+    pub fn task_case(&self, t: &Task) -> Option<iuredesk_store::TaskCase> {
+        let rid = t.remote_id.as_deref()?;
+        if !self.is_iure_task(t.list) {
+            return None;
+        }
+        self.store.task_case(rid).ok().flatten()
+    }
+
+    /// S1.34: el caso de cada tarea de Iurefficient (id remoto → caso), de una lectura.
+    pub fn task_cases(&self) -> std::collections::HashMap<String, iuredesk_store::TaskCase> {
+        self.store.task_cases().unwrap_or_default().into_iter().collect()
     }
 
     /// Cambia solo el título (edición rápida en la lista, F2).

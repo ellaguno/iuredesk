@@ -376,6 +376,23 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("notes.new", "New note", "Nueva nota", "notes", Group::App, "note create nota crear apunte"),
     c("notes.delete", "Delete note", "Eliminar nota", "trash", Group::App, "note delete nota borrar eliminar"),
     c("tasks.edit", "Edit task…", "Editar tarea…", "edit", Group::App, "task todo edit tarea editar pendiente"),
+    c("tasks.view.list", "Tasks: list", "Tareas: lista", "list", Group::App, "tasks list tareas lista vista"),
+    c(
+        "tasks.view.board",
+        "Tasks: board",
+        "Tareas: tablero",
+        "board",
+        Group::App,
+        "tasks board kanban tareas tablero columnas estado",
+    ),
+    c(
+        "tasks.view.case",
+        "Tasks: by case",
+        "Tareas: por caso",
+        "outline",
+        Group::App,
+        "tasks case project tareas caso proyecto plan agrupar",
+    ),
     c(
         "notes.toggle_edit",
         "Edit note here / view it",
@@ -731,6 +748,10 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
         "cal.view.week" => Some(view(if scheme == Outlook { "Num3" } else { "Num2" })),
         "cal.view.month" => Some(view(if scheme == Outlook { "Num4" } else { "Num3" })),
         "cal.view.agenda" => Some(view("Num5")),
+        // S1.34: las vistas de las tareas (Ctrl+Mayús+1/2/3; solo en el módulo de tareas).
+        "tasks.view.list" => Some(Chord::cmd_shift("Num1")),
+        "tasks.view.board" => Some(Chord::cmd_shift("Num2")),
+        "tasks.view.case" => Some(Chord::cmd_shift("Num3")),
         _ => None,
     };
     if cal.is_some() {
