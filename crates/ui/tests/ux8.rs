@@ -504,3 +504,284 @@ fn wiki_links_open_or_create_notes() {
     assert_eq!(h.state().session.notes().len(), before + 1);
     assert_eq!(h.state().session.note_focus(), Some(id));
 }
+
+/// S1.33: en un diagrama de cuadrantes, un clic en un hueco de la gráfica ofrece «Agregar
+/// elemento aquí»; pide el nombre y escribe el punto con las coordenadas del clic.
+#[test]
+fn quadrant_chart_adds_a_point_where_clicked() {
+    use iuredesk_html_view as hv;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    let code = "quadrantChart\n    title Prioridades\n    Campaña A: [0.3, 0.6]";
+    let id = h.state().session.note_focus().unwrap();
+    h.state_mut().session.save_note(id, "Cuadrante", &format!("```mermaid\n{code}\n```\n")).unwrap();
+    h.get_by_label("Editar aquí").click();
+    let start = Instant::now();
+    while h.query_by_label("Diagrama 1").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(20), "no se dibujó");
+        h.run_steps(2);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    h.run_steps(3);
+    let svg = hv::diagram::render_drawn(code, &hv::markdown::NoteStyle::default()).unwrap().svg;
+    let (w, _) = hv::diagram::svg_size(&svg).unwrap();
+    let g = hv::mermaid_edit::quadrant::geometry(&svg).unwrap();
+    let img = h.get_by_label("Diagrama 1").rect();
+    let k = img.width() / w;
+    let [x0, y0, x1, y1] = g.plot;
+    let p = img.min + egui::vec2((x0 + x1) / 2.0 * k, (y0 + y1) / 2.0 * k);
+    h.event(egui::Event::PointerMoved(p));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(3);
+    h.get_by_label("Agregar elemento aquí").click();
+    h.run_steps(3);
+    h.event(egui::Event::Text("Centro".into()));
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    let start = Instant::now();
+    while !body(&h).contains("Centro: [0.5, 0.5]") {
+        assert!(start.elapsed() < Duration::from_secs(15), "no se agregó: {}", body(&h));
+        h.run_steps(5);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(body(&h).contains("Campaña A: [0.3, 0.6]"), "lo demás igual");
+}
+
+/// S1.33: en un diagrama de flujo, un clic en un paso abre su barra; «Agregar siguiente» pide la
+/// forma y el texto y escribe el paso nuevo con su flecha.
+#[test]
+fn flowchart_adds_the_next_step_from_the_drawing() {
+    use iuredesk_html_view as hv;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    let code = "flowchart TD\n    A[Inicio] --> B{¿Listo?}\n    B -->|sí| C(Fin)";
+    let id = h.state().session.note_focus().unwrap();
+    h.state_mut().session.save_note(id, "Flujo", &format!("```mermaid\n{code}\n```\n")).unwrap();
+    h.get_by_label("Editar aquí").click();
+    let start = Instant::now();
+    while h.query_by_label("Diagrama 1").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(20), "no se dibujó");
+        h.run_steps(2);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    h.run_steps(3);
+    let svg = hv::diagram::render_drawn(code, &hv::markdown::NoteStyle::default()).unwrap().svg;
+    let (w, _) = hv::diagram::svg_size(&svg).unwrap();
+    let nodes = hv::mermaid_edit::flowchart::nodes(code);
+    // Accesibilidad: cada paso y cada flecha tienen su nombre (lector de pantalla y teclado).
+    assert!(h.query_by_label("Inicio").is_some() && h.query_by_label("Inicio → ¿Listo?").is_some());
+    let [x0, y0, x1, y1] = hv::mermaid_edit::flowchart::boxes(&svg, &nodes)[2].unwrap();
+    let img = h.get_by_label("Diagrama 1").rect();
+    let k = img.width() / w;
+    let p = img.min + egui::vec2((x0 + x1) / 2.0 * k, (y0 + y1) / 2.0 * k);
+    h.event(egui::Event::PointerMoved(p));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(3);
+    h.get_by_label("Agregar siguiente").click();
+    h.run_steps(3);
+    h.get_by_label("Decisión").click();
+    h.run_steps(3);
+    h.event(egui::Event::Text("¿Otra vez?".into()));
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    let start = Instant::now();
+    while !body(&h).contains("C --> N1{¿Otra vez?}") {
+        assert!(start.elapsed() < Duration::from_secs(15), "no se agregó: {}", body(&h));
+        h.run_steps(5);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+}
+
+/// S1.33: un clic en una flecha (en su etiqueta) abre su barra; «Tipo de flecha» la cambia.
+#[test]
+fn flowchart_arrow_type_changes_from_the_drawing() {
+    use iuredesk_html_view as hv;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    let code = "flowchart TD\n    A[Inicio] --> B{¿Listo?}\n    B -->|sí| C(Fin)";
+    let id = h.state().session.note_focus().unwrap();
+    h.state_mut().session.save_note(id, "Flujo", &format!("```mermaid\n{code}\n```\n")).unwrap();
+    h.get_by_label("Editar aquí").click();
+    let start = Instant::now();
+    while h.query_by_label("Diagrama 1").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(20), "no se dibujó");
+        h.run_steps(2);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    h.run_steps(3);
+    let svg = hv::diagram::render_drawn(code, &hv::markdown::NoteStyle::default()).unwrap().svg;
+    let (w, _) = hv::diagram::svg_size(&svg).unwrap();
+    let [x0, y0, x1, y1] = hv::mermaid_edit::flowchart::edge_boxes(&svg, 2)[1];
+    let img = h.get_by_label("Diagrama 1").rect();
+    let k = img.width() / w;
+    let p = img.min + egui::vec2((x0 + x1) / 2.0 * k, (y0 + y1) / 2.0 * k);
+    h.event(egui::Event::PointerMoved(p));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(3);
+    h.get_by_label("Tipo de flecha").click();
+    h.run_steps(3);
+    h.get_by_label("Flecha punteada").click();
+    let start = Instant::now();
+    while !body(&h).contains("B -.->|sí| C(Fin)") {
+        assert!(start.elapsed() < Duration::from_secs(15), "no cambió: {}", body(&h));
+        h.run_steps(5);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+}
+
+/// S1.33 (fase 2): en un diagrama de secuencia, un clic en un participante ofrece «Mensaje a…»;
+/// se elige el destino y se escribe el texto.
+#[test]
+fn sequence_adds_a_message_from_the_drawing() {
+    use iuredesk_html_view as hv;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    let code = "sequenceDiagram\n    participant C as Cliente\n    participant A as Abogado\n    C->>A: Consulta";
+    let id = h.state().session.note_focus().unwrap();
+    h.state_mut().session.save_note(id, "Secuencia", &format!("```mermaid\n{code}\n```\n")).unwrap();
+    h.get_by_label("Editar aquí").click();
+    let start = Instant::now();
+    while h.query_by_label("Diagrama 1").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(20), "no se dibujó");
+        h.run_steps(2);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    h.run_steps(3);
+    let svg = hv::diagram::render_drawn(code, &hv::markdown::NoteStyle::default()).unwrap().svg;
+    let (w, _) = hv::diagram::svg_size(&svg).unwrap();
+    let t = hv::mermaid_edit::sequence::tree(code);
+    let [x0, y0, x1, y1] = hv::mermaid_edit::sequence::boxes(&svg, &t).0[1].unwrap();
+    let img = h.get_by_label("Diagrama 1").rect();
+    let k = img.width() / w;
+    let p = img.min + egui::vec2((x0 + x1) / 2.0 * k, (y0 + y1) / 2.0 * k);
+    h.event(egui::Event::PointerMoved(p));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(3);
+    h.get_by_label("Mensaje a…").click();
+    h.run_steps(3);
+    // La opción del menú (el elemento del dibujo con ese nombre se crea antes).
+    h.get_all_by_label("Cliente").last().unwrap().click();
+    h.run_steps(3);
+    h.event(egui::Event::Text("Propuesta".into()));
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    let start = Instant::now();
+    while !body(&h).contains("A->>C: Propuesta") {
+        assert!(start.elapsed() < Duration::from_secs(15), "no se agregó: {}", body(&h));
+        h.run_steps(5);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+}
+
+/// Abre una nota con un diagrama, pulsa la zona `zone` (en unidades del dibujo) y devuelve el
+/// arnés listo para usar la barra.
+fn open_diagram_and_click(
+    code: &str,
+    zone: impl Fn(&str) -> [f32; 4],
+) -> (Harness<'static, DeskApp>, tempfile::TempDir) {
+    use iuredesk_html_view as hv;
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    let id = h.state().session.note_focus().unwrap();
+    h.state_mut().session.save_note(id, "Diagrama", &format!("```mermaid\n{code}\n```\n")).unwrap();
+    h.get_by_label("Editar aquí").click();
+    let start = Instant::now();
+    while h.query_by_label("Diagrama 1").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(20), "no se dibujó");
+        h.run_steps(2);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    h.run_steps(3);
+    let svg = hv::diagram::render_drawn(code, &hv::markdown::NoteStyle::default()).unwrap().svg;
+    let (w, _) = hv::diagram::svg_size(&svg).unwrap();
+    let [x0, y0, x1, y1] = zone(&svg);
+    let img = h.get_by_label("Diagrama 1").rect();
+    let k = img.width() / w;
+    let p = img.min + egui::vec2((x0 + x1) / 2.0 * k, (y0 + y1) / 2.0 * k);
+    h.event(egui::Event::PointerMoved(p));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run_steps(3);
+    (h, dir)
+}
+
+fn wait_body(h: &mut Harness<'static, DeskApp>, want: &str) {
+    let start = Instant::now();
+    while !body(h).contains(want) {
+        assert!(start.elapsed() < Duration::from_secs(15), "falta «{want}»: {}", body(h));
+        h.run_steps(5);
+        std::thread::sleep(Duration::from_millis(30));
+    }
+}
+
+/// S1.33 (fase 2): una tarjeta de Kanban se mueve a otra columna desde su barra.
+#[test]
+fn kanban_card_moves_from_the_drawing() {
+    use iuredesk_html_view::mermaid_edit::charts::kanban;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let code = "kanban\n    Pendiente\n        t1[Redactar]\n    Hecho\n        t2[Firmar]";
+    let (mut h, _dir) = open_diagram_and_click(code, |svg| kanban::boxes(svg, code)[0].1[0].unwrap());
+    h.get_by_label("Mover a la columna").click();
+    h.run_steps(3);
+    // La opción del menú (el elemento del dibujo con ese nombre se crea antes).
+    h.get_all_by_label("Hecho").last().unwrap().click();
+    wait_body(&mut h, "    Hecho\n        t2[Firmar]\n        t1[Redactar]");
+}
+
+/// S1.33 (fase 2): a una clase se le agrega un atributo desde su barra.
+#[test]
+fn class_gets_a_member_from_the_drawing() {
+    use iuredesk_html_view::mermaid_edit::structure::class;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let code = "classDiagram\n    class Expediente {\n        +String numero\n    }\n    class Parte\n    Expediente --> Parte";
+    let (mut h, _dir) = open_diagram_and_click(code, |svg| class::boxes(svg, code)[0].unwrap());
+    h.get_by_label("Agregar atributo o método").click();
+    h.run_steps(3);
+    h.event(egui::Event::Text("+Date apertura".into()));
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    wait_body(&mut h, "        +String numero\n        +Date apertura\n    }");
+}
