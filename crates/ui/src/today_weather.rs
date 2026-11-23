@@ -416,4 +416,9 @@ impl DeskApp {
     pub fn demo_today_edit(&mut self) {
         self.today.editing = true;
     }
+
+    /// UX-19: tarjeta de «Mi día» que se está arrastrando (pruebas).
+    pub fn today_dragging(&self) -> Option<iuredesk_engine::today_layout::TodayCard> {
+        self.today.drag
+    }
 }

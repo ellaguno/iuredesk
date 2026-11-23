@@ -2,13 +2,18 @@
 //! (lo pidió el dueño 2026-11-09: «reordenar los widgets y poner o quitar algunos, de forma
 //! minimalista»). Se guarda en las preferencias; lo desconocido (una tarjeta de una versión más
 //! nueva) se ignora y lo nuevo que no esté en ningún sitio se agrega al final de la derecha.
+//!
+//! UX-19 (dueño 2026-11-23): las tarjetas se arrastran a otro sitio y cada una lleva un color suave
+//! que la distingue (por omisión, los tonos del calendario); el usuario lo cambia o lo quita.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::lang::pick;
 
 /// Una tarjeta de «Mi día».
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TodayCard {
     Agenda,
@@ -46,6 +51,34 @@ impl TodayCard {
             TodayCard::Unknown => "",
         }
     }
+
+    /// UX-19: tono por omisión (el de su módulo; la agenda, el azul del calendario; Iurefficient,
+    /// el de su calendario). La UI lo aclara hasta un pastel.
+    pub fn default_tint(self) -> u32 {
+        match self {
+            TodayCard::Agenda => 0x3B82F6,
+            TodayCard::Tasks => 0x10B981,
+            TodayCard::Mail => 0xF59E0B,
+            TodayCard::Iurefficient => 0x0F766E,
+            TodayCard::Reminders => 0xEC4899,
+            TodayCard::Projects => 0x8B5CF6,
+            TodayCard::Unknown => 0x64748B,
+        }
+    }
+}
+
+/// UX-19: tonos que se ofrecen para las tarjetas (los del calendario y compañía).
+pub const TINTS: [u32; 10] =
+    [0x3B82F6, 0x0EA5E9, 0x0F766E, 0x10B981, 0x84CC16, 0xF59E0B, 0xF97316, 0xEF4444, 0xEC4899, 0x8B5CF6];
+
+/// UX-19: color elegido para una tarjeta (sin entrada: el de por omisión).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CardTint {
+    /// Sin color (la superficie del tema).
+    None,
+    /// Un tono `0xRRGGBB`.
+    Color(u32),
 }
 
 /// Columna de una tarjeta (con poco ancho, la izquierda va antes que la derecha).
@@ -65,6 +98,9 @@ pub struct TodayLayout {
     /// Quitadas por el usuario.
     #[serde(default)]
     pub hidden: Vec<TodayCard>,
+    /// UX-19: colores cambiados (las demás, su tono por omisión).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tints: BTreeMap<TodayCard, CardTint>,
 }
 
 impl Default for TodayLayout {
@@ -73,6 +109,7 @@ impl Default for TodayLayout {
             left: vec![TodayCard::Agenda, TodayCard::Mail],
             right: vec![TodayCard::Tasks, TodayCard::Projects, TodayCard::Iurefficient, TodayCard::Reminders],
             hidden: Vec::new(),
+            tints: BTreeMap::new(),
         }
     }
 }
@@ -96,7 +133,43 @@ impl TodayLayout {
                 right.push(c);
             }
         }
-        TodayLayout { left, right, hidden }
+        let mut tints = self.tints.clone();
+        tints.remove(&TodayCard::Unknown);
+        TodayLayout { left, right, hidden, tints }
+    }
+
+    /// UX-19: tono de una tarjeta (`None`: sin color).
+    pub fn tint(&self, c: TodayCard) -> Option<u32> {
+        match self.tints.get(&c) {
+            Some(CardTint::None) => None,
+            Some(CardTint::Color(rgb)) => Some(rgb & 0xFF_FFFF),
+            None => Some(c.default_tint()),
+        }
+    }
+
+    /// UX-19: cambia el color de una tarjeta (`None` vuelve al de por omisión).
+    pub fn set_tint(&mut self, c: TodayCard, t: Option<CardTint>) {
+        if c == TodayCard::Unknown {
+            return;
+        }
+        match t {
+            Some(t) => {
+                self.tints.insert(c, t);
+            }
+            None => {
+                self.tints.remove(&c);
+            }
+        }
+    }
+
+    /// UX-19: lleva una tarjeta visible a `col` en la posición `index` (contada sin ella; se
+    /// recorta al final). Lo que hace soltarla al arrastrar.
+    pub fn move_to(&mut self, c: TodayCard, col: Column, index: usize) {
+        let Some((from, i)) = self.find(c) else { return };
+        self.col_mut(from).remove(i);
+        let v = self.col_mut(col);
+        let at = index.min(v.len());
+        v.insert(at, c);
     }
 
     /// Dónde está una tarjeta visible (columna e índice).
@@ -230,6 +303,49 @@ mod tests {
         assert_eq!(serde_json::to_string(&TodayCard::Projects).unwrap(), "\"projects\"");
     }
 
+    #[test]
+    fn drag_to_another_place() {
+        let mut l = TodayLayout::default();
+        // Dentro de su columna: la agenda debajo del correo.
+        l.move_to(TodayCard::Agenda, Column::Left, 1);
+        assert_eq!(l.left, vec![TodayCard::Mail, TodayCard::Agenda]);
+        // A la otra columna, en medio.
+        l.move_to(TodayCard::Mail, Column::Right, 1);
+        assert_eq!(l.left, vec![TodayCard::Agenda]);
+        assert_eq!(
+            l.right,
+            vec![TodayCard::Tasks, TodayCard::Mail, TodayCard::Projects, TodayCard::Iurefficient, TodayCard::Reminders]
+        );
+        // Más allá del final: al final. Una quitada no se mueve.
+        l.move_to(TodayCard::Tasks, Column::Left, 50);
+        assert_eq!(l.left, vec![TodayCard::Agenda, TodayCard::Tasks]);
+        l.hide(TodayCard::Reminders);
+        l.move_to(TodayCard::Reminders, Column::Left, 0);
+        assert_eq!(l.left, vec![TodayCard::Agenda, TodayCard::Tasks]);
+        assert_eq!(l.normalized(), l);
+    }
+
+    #[test]
+    fn tints_default_change_and_survive_a_round_trip() {
+        let mut l = TodayLayout::default();
+        assert_eq!(l.tint(TodayCard::Agenda), Some(0x3B82F6), "el azul del calendario");
+        assert!(TodayCard::ALL.iter().all(|c| l.tint(*c).is_some()), "todas con color por omisión");
+        l.set_tint(TodayCard::Mail, Some(CardTint::None));
+        l.set_tint(TodayCard::Tasks, Some(CardTint::Color(0x1EF4444)));
+        assert_eq!(l.tint(TodayCard::Mail), None);
+        assert_eq!(l.tint(TodayCard::Tasks), Some(0xEF4444), "solo 24 bits");
+        let json = serde_json::to_string(&l).unwrap();
+        let back: TodayLayout = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.normalized(), l.normalized());
+        l.set_tint(TodayCard::Mail, None);
+        assert_eq!(l.tint(TodayCard::Mail), Some(TodayCard::Mail.default_tint()));
+        // Una preferencia anterior (sin colores) y una con tarjeta desconocida se leen.
+        let old = r#"{"left":["agenda"],"right":[],"hidden":[],"tints":{"radar":"none","mail":{"color":255}}}"#;
+        let n = serde_json::from_str::<TodayLayout>(old).unwrap().normalized();
+        assert_eq!(n.tint(TodayCard::Mail), Some(255));
+        assert!(!n.tints.contains_key(&TodayCard::Unknown));
+    }
+
     fn card() -> impl Strategy<Value = TodayCard> {
         prop::sample::select(vec![
             TodayCard::Projects,
@@ -249,15 +365,17 @@ mod tests {
             left in prop::collection::vec(card(), 0..12),
             right in prop::collection::vec(card(), 0..12),
             hidden in prop::collection::vec(card(), 0..12),
-            ops in prop::collection::vec((0u8..5, card()), 0..40),
+            ops in prop::collection::vec((0u8..7, card()), 0..40),
         ) {
-            let mut l = TodayLayout { left, right, hidden }.normalized();
+            let mut l = TodayLayout { left, right, hidden, tints: BTreeMap::new() }.normalized();
             for (op, c) in ops {
                 match op {
                     0 => l.move_card(c, true),
                     1 => l.move_card(c, false),
                     2 => l.switch_column(c),
                     3 => l.hide(c),
+                    4 => l.move_to(c, Column::Left, 1),
+                    5 => l.move_to(c, Column::Right, 99),
                     _ => l.show(c),
                 }
             }
