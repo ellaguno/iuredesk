@@ -695,6 +695,118 @@ pub mod gantt {
         replace_line(block, n, None)
     }
 
+    // --- Arrastrar una barra (cambiar su inicio) ---
+
+    /// Días desde 1970-01-01 de una fecha civil (algoritmo de H. Hinnant).
+    fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+        let y = if m <= 2 { y - 1 } else { y };
+        let era = y.div_euclid(400);
+        let yoe = y - era * 400;
+        let mp = (m + 9) % 12;
+        let doy = (153 * mp + 2) / 5 + d - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        era * 146_097 + doe - 719_468
+    }
+
+    fn civil_from_days(z: i64) -> (i64, i64, i64) {
+        let z = z + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        (if m <= 2 { yoe + era * 400 + 1 } else { yoe + era * 400 }, m, d)
+    }
+
+    /// `AAAA-MM-DD` en días (solo fechas válidas de 1900 a 2200).
+    pub(crate) fn parse_date(s: &str) -> Option<i64> {
+        let s = s.trim();
+        let mut it = s.split('-');
+        let (y, m, d) =
+            (it.next()?.parse::<i64>().ok()?, it.next()?.parse::<i64>().ok()?, it.next()?.parse::<i64>().ok()?);
+        let ok = it.next().is_none()
+            && s.len() == 10
+            && (1900..=2200).contains(&y)
+            && (1..=12).contains(&m)
+            && (1..=31).contains(&d);
+        let days = ok.then(|| days_from_civil(y, m, d))?;
+        (civil_from_days(days) == (y, m, d)).then_some(days)
+    }
+
+    pub(crate) fn format_date(days: i64) -> String {
+        let (y, m, d) = civil_from_days(days);
+        format!("{y:04}-{m:02}-{d:02}")
+    }
+
+    /// ¿Se pueden arrastrar las barras? Solo con fechas `YYYY-MM-DD` (el formato por omisión).
+    pub fn draggable(code: &str) -> bool {
+        match mermaid_svg::parse(code) {
+            Ok(mermaid_svg::Diagram::Gantt(g)) => g.date_format.as_deref().is_none_or(|f| f.trim() == "YYYY-MM-DD"),
+            _ => false,
+        }
+    }
+
+    /// La escala del eje: (x del primer día marcado, ese día, píxeles por día), leída de las
+    /// fechas `AAAA-MM-DD` del eje.
+    pub fn scale(svg: &str) -> Option<(f32, i64, f32)> {
+        let ticks: Vec<(f32, i64)> = elements(svg)
+            .into_iter()
+            .filter_map(|e| match e {
+                El::Text { x, text, middle: false, .. } => parse_date(&text).map(|d| (x - 2.0, d)),
+                _ => None,
+            })
+            .take(400)
+            .collect();
+        let (a, b) = (ticks.first()?, ticks.iter().find(|t| t.1 != ticks.first().map_or(0, |f| f.1))?);
+        let ppd = (b.0 - a.0) / (b.1 - a.1) as f32;
+        (ppd.is_finite() && ppd > 0.0).then_some((a.0, a.1, ppd))
+    }
+
+    /// Las barras (sin su nombre) de las tareas, en orden.
+    pub fn bars(svg: &str, code: &str) -> Vec<Option<[f32; 4]>> {
+        let els = elements(svg);
+        let mut cursor = 0;
+        sections(code)
+            .into_iter()
+            .flat_map(|(_, ts)| ts)
+            .map(|t| {
+                let (i, _) = text_with_shape(&els, cursor, &norm(&t), true)?;
+                cursor = i + 1;
+                match els.get(i.checked_sub(1)?)? {
+                    El::Shape { tag, rect } if tag.starts_with("<rect") => Some(*rect),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    /// Pone el inicio de la tarea en `start` (días): cambia su fecha de inicio o su `after x` por la
+    /// fecha; si no tenía inicio, se la agrega.
+    pub fn set_start(block: &str, code: &str, s: usize, t: usize, start: i64) -> Option<String> {
+        if !draggable(code) {
+            return None;
+        }
+        let n = task_line(block, code, s, t)?;
+        let line = block.lines().nth(n)?;
+        let colon = line.find(':')?;
+        let meta = line.get(colon + 1..)?;
+        let lead = meta.get(..meta.len() - meta.trim_start().len())?;
+        let mut parts: Vec<String> = meta.split(',').map(|p| p.trim().to_string()).collect();
+        let date = format_date(start);
+        let at = parts.iter().position(|p| parse_date(p).is_some() || p.starts_with("after "));
+        match at {
+            // Una fecha que es el fin (la última, con una fecha de inicio antes) no se toca.
+            Some(i) => *parts.get_mut(i)? = date,
+            None => {
+                let i = parts.len().saturating_sub(1);
+                parts.insert(i, date);
+            }
+        }
+        replace_line(block, n, Some(format!("{}{lead}{}", line.get(..colon + 1)?, parts.join(", "))))
+    }
+
     /// Zonas: cada sección (su nombre) y cada tarea (su barra con su nombre).
     pub fn boxes(svg: &str, code: &str) -> Vec<(Option<[f32; 4]>, Vec<Option<[f32; 4]>>)> {
         let els = elements(svg);
@@ -838,6 +950,31 @@ mod tests {
         let svg = mermaid_svg::render(&c).unwrap();
         let b = gantt::boxes(&svg, &c);
         assert!(b.iter().all(|(s, ts)| s.is_some() && ts.iter().all(Option::is_some)), "{b:?}");
+    }
+
+    #[test]
+    fn gantt_bars_move_by_days() {
+        assert_eq!(gantt::format_date(gantt::parse_date("2026-02-28").unwrap() + 1), "2026-03-01");
+        assert_eq!(gantt::format_date(gantt::parse_date("2028-02-28").unwrap() + 1), "2028-02-29");
+        assert!(gantt::parse_date("2026-02-30").is_none());
+        let c = code(GT);
+        let svg = mermaid_svg::render(&c).unwrap();
+        let (x0, d0, ppd) = gantt::scale(&svg).unwrap();
+        assert_eq!(gantt::format_date(d0), "2026-01-05");
+        // La barra de «Redactar» empieza en su fecha.
+        let bar = gantt::bars(&svg, &c)[0].unwrap();
+        assert!(((bar[0] - x0) / ppd).abs() < 0.5, "{bar:?} {x0} {ppd}");
+        // Con fecha: se cambia; con `after`: se vuelve fecha; sin inicio: se agrega.
+        let out = gantt::set_start(GT, &c, 0, 0, d0 + 3).unwrap();
+        assert!(out.contains("    Redactar :a1, 2026-01-08, 5d\n"), "{out}");
+        let out = gantt::set_start(GT, &c, 0, 1, d0 + 10).unwrap();
+        assert!(out.contains("    Presentar :2026-01-15, 2d\n"), "{out}");
+        let g = "```mermaid\ngantt\n    section S\n    A :2026-01-01, 1d\n    B :3d\n```\n";
+        let out = gantt::set_start(g, &code(g), 0, 1, d0).unwrap();
+        assert!(out.contains("    B :2026-01-05, 3d\n"), "{out}");
+        // Otro formato de fecha: no se arrastra.
+        let h = "```mermaid\ngantt\n    dateFormat DD-MM-YYYY\n    section S\n    A :01-01-2026, 1d\n```\n";
+        assert!(gantt::set_start(h, &code(h), 0, 0, d0).is_none());
     }
 
     proptest! {

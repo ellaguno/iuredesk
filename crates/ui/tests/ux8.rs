@@ -579,6 +579,8 @@ fn flowchart_adds_the_next_step_from_the_drawing() {
     let svg = hv::diagram::render_drawn(code, &hv::markdown::NoteStyle::default()).unwrap().svg;
     let (w, _) = hv::diagram::svg_size(&svg).unwrap();
     let nodes = hv::mermaid_edit::flowchart::nodes(code);
+    // Accesibilidad: cada paso y cada flecha tienen su nombre (lector de pantalla y teclado).
+    assert!(h.query_by_label("Inicio").is_some() && h.query_by_label("Inicio → ¿Listo?").is_some());
     let [x0, y0, x1, y1] = hv::mermaid_edit::flowchart::boxes(&svg, &nodes)[2].unwrap();
     let img = h.get_by_label("Diagrama 1").rect();
     let k = img.width() / w;
@@ -693,7 +695,8 @@ fn sequence_adds_a_message_from_the_drawing() {
     h.run_steps(3);
     h.get_by_label("Mensaje a…").click();
     h.run_steps(3);
-    h.get_by_label("Cliente").click();
+    // La opción del menú (el elemento del dibujo con ese nombre se crea antes).
+    h.get_all_by_label("Cliente").last().unwrap().click();
     h.run_steps(3);
     h.event(egui::Event::Text("Propuesta".into()));
     h.run_steps(2);
@@ -763,7 +766,8 @@ fn kanban_card_moves_from_the_drawing() {
     let (mut h, _dir) = open_diagram_and_click(code, |svg| kanban::boxes(svg, code)[0].1[0].unwrap());
     h.get_by_label("Mover a la columna").click();
     h.run_steps(3);
-    h.get_by_label("Hecho").click();
+    // La opción del menú (el elemento del dibujo con ese nombre se crea antes).
+    h.get_all_by_label("Hecho").last().unwrap().click();
     wait_body(&mut h, "    Hecho\n        t2[Firmar]\n        t1[Redactar]");
 }
 

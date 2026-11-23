@@ -121,3 +121,11 @@ pasan las zonas y las acciones de `html-view`; nada propio de cada app.
 2. **Cuadrantes**: los puntos se arrastran para moverlos (cambian sus coordenadas en el código).
 3. **Flujo**: el nodo nuevo hereda el estilo (`:::clase`) del anterior, por omisión.
 4. **Fase 2**: primero los diagramas de secuencia.
+
+## Estado (2026-11-23)
+
+Hecho en IureDesk, IureEditor 2.0 e IureProject (ramas `diagramas-editables`): fase 1 completa
+(cuadrantes y flujo, con flechas), fase 2 completa (secuencia, Gantt —con arrastre de barras—,
+línea de tiempo, pastel, Kanban, clases y entidad-relación), teclado y lector de pantalla, y la guía
+al arrastrar. Pendiente de la propuesta a `mermaid-svg`: que cada figura lleve su id (`data-id`);
+mientras, las figuras se unen con los elementos por su texto y su orden.

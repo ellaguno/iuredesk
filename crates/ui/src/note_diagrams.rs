@@ -96,6 +96,14 @@ impl iure_doc_ui::DiagramRenderer for NoteDiagrams {
         edit::drag(block, &self.style, id, to)
     }
 
+    fn spot_label(&self, block: &str, id: usize) -> Option<String> {
+        edit::spot_label(block, id)
+    }
+
+    fn drag_hint(&self, block: &str, id: usize, to: [f32; 2]) -> Option<String> {
+        edit::drag_hint(block, &self.style, id, to)
+    }
+
     fn placement(&self, block: &str) -> iure_doc_ui::Placement {
         let Some(map) = mindmap::find(block).into_iter().next() else { return iure_doc_ui::Placement::Replace };
         if map.view == mindmap::View::MapOnly {

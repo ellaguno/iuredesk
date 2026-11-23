@@ -577,6 +577,59 @@ pub fn delete(block: &str, id: &str) -> Option<String> {
     Some(out)
 }
 
+/// Pone el color de fondo de un nodo (`style ID fill:#…`), o lo quita con `None`. Cambia su línea
+/// `style` si la tiene; si no, la agrega al final.
+pub fn set_fill(block: &str, id: &str, fill: Option<&str>) -> Option<String> {
+    definition(block, id)?;
+    let fill = match fill {
+        Some(f) => {
+            let f: String = f.chars().filter(|c| c.is_ascii_hexdigit() || *c == '#').take(9).collect();
+            if !f.starts_with('#') || f.len() < 4 {
+                return None;
+            }
+            Some(f)
+        }
+        None => None,
+    };
+    let style_line = block.lines().take(MAX_LINES).position(|l| {
+        let mut w = l.split_whitespace();
+        w.next() == Some("style") && w.next() == Some(id)
+    });
+    match (style_line, fill) {
+        (Some(n), Some(f)) => {
+            let line = block.lines().nth(n)?;
+            let props = line.split_whitespace().nth(2).unwrap_or("");
+            let mut kept: Vec<String> =
+                props.split(',').filter(|p| !p.is_empty() && !p.starts_with("fill:")).map(str::to_string).collect();
+            kept.insert(0, format!("fill:{f}"));
+            replace_line(block, n, &[format!("{}style {id} {}", indent_of(line), kept.join(","))])
+        }
+        (Some(n), None) => {
+            let line = block.lines().nth(n)?;
+            let props = line.split_whitespace().nth(2).unwrap_or("");
+            let kept: Vec<&str> = props.split(',').filter(|p| !p.is_empty() && !p.starts_with("fill:")).collect();
+            if kept.is_empty() {
+                replace_line(block, n, &[])
+            } else {
+                replace_line(block, n, &[format!("{}style {id} {}", indent_of(line), kept.join(","))])
+            }
+        }
+        (None, Some(f)) => Some(insert_after(block, None, &format!("{}style {id} fill:{f}", body_indent(block)))),
+        (None, None) => Some(block.to_string()),
+    }
+}
+
+/// Los colores que se ofrecen para un nodo: nombre (inglés, español) y valor (`None`: sin color).
+pub const FILLS: [((&str, &str), Option<&str>); 7] = [
+    (("Blue", "Azul"), Some("#dbeafe")),
+    (("Green", "Verde"), Some("#dcfce7")),
+    (("Yellow", "Amarillo"), Some("#fef9c3")),
+    (("Red", "Rojo"), Some("#fee2e2")),
+    (("Purple", "Morado"), Some("#ede9fe")),
+    (("Grey", "Gris"), Some("#f3f4f6")),
+    (("No color", "Sin color"), None),
+];
+
 // --- Flechas ---
 
 /// Los tipos de flecha que se ofrecen.
@@ -1024,6 +1077,18 @@ mod tests {
             let (tx, ty) = (num("x"), num("y"));
             assert!(tx >= x0 && tx <= x1 && ty >= y0 && ty <= y1 + 6.0, "{text}: {tx},{ty} fuera de {b:?}");
         }
+    }
+
+    #[test]
+    fn node_fill_color() {
+        let out = set_fill(F, "A", Some("#dbeafe")).unwrap();
+        assert!(out.ends_with("    class D verde\n    style A fill:#dbeafe\n```\n"), "{out}");
+        let out = set_fill(&out, "A", Some("#fee2e2")).unwrap();
+        assert!(out.contains("    style A fill:#fee2e2\n") && !out.contains("#dbeafe"), "{out}");
+        assert_eq!(set_fill(&out, "A", None).unwrap(), F);
+        let g = "```mermaid\ngraph LR\n  a --> b\n  style a fill:#fff,stroke:#333\n```\n";
+        assert!(set_fill(g, "a", None).unwrap().contains("  style a stroke:#333\n"));
+        assert!(set_fill(F, "A", Some("rojo")).is_none());
     }
 
     #[test]

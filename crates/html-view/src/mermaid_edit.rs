@@ -224,6 +224,121 @@ pub mod quadrant {
         with_line(block, p.line, None)
     }
 
+    /// Cambia (o quita, con `None`) un dato de estilo de un punto (`radius`, `color`): lo que va
+    /// después de las coordenadas, `radius: 8, color: #ff0000`.
+    pub fn set_point_style(block: &str, n: usize, key: &str, value: Option<&str>) -> Option<String> {
+        let p = points(block).into_iter().nth(n)?;
+        let line = block.lines().nth(p.line)?;
+        let close = line.find(']')?;
+        let (head, rest) = (line.get(..close + 1)?, line.get(close + 1..)?);
+        let mut pairs: Vec<(String, String)> = rest
+            .split(',')
+            .filter_map(|kv| {
+                let (k, v) = kv.split_once(':')?;
+                Some((k.trim().to_string(), v.trim().to_string()))
+            })
+            .filter(|(k, _)| !k.is_empty())
+            .collect();
+        pairs.retain(|(k, _)| k != key);
+        if let Some(v) = value {
+            let v: String =
+                v.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '#' || *c == '.').take(20).collect();
+            if v.is_empty() {
+                return None;
+            }
+            pairs.push((key.to_string(), v));
+        }
+        let rest = if pairs.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", pairs.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join(", "))
+        };
+        with_line(block, p.line, Some(format!("{head}{rest}")))
+    }
+
+    /// Un texto del diagrama: título, nombre de un cuadrante o un extremo de un eje.
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Label {
+        pub line: usize,
+        /// `title`, `quadrant-1`…`quadrant-4`, `x-axis`, `y-axis`.
+        pub kind: String,
+        /// En un eje: 0 el extremo bajo, 1 el alto.
+        pub part: usize,
+        pub text: String,
+    }
+
+    /// Los textos del diagrama (título, cuadrantes y ejes), en el orden del código.
+    pub fn labels(block: &str) -> Vec<Label> {
+        if !is_quadrant(block) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (i, l) in block.lines().take(MAX_LINES).enumerate() {
+            let t = l.trim();
+            let Some((kind, rest)) = t.split_once(char::is_whitespace) else { continue };
+            let rest = rest.trim();
+            match kind {
+                "title" | "quadrant-1" | "quadrant-2" | "quadrant-3" | "quadrant-4" => {
+                    out.push(Label { line: i, kind: kind.to_string(), part: 0, text: rest.to_string() })
+                }
+                "x-axis" | "y-axis" => {
+                    let parts: Vec<&str> = rest.split("-->").map(str::trim).collect();
+                    for (k, p) in parts.iter().enumerate().take(2) {
+                        if !p.is_empty() {
+                            out.push(Label { line: i, kind: kind.to_string(), part: k, text: p.to_string() });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Cambia el texto `k` de [`labels`].
+    pub fn set_label_text(block: &str, k: usize, text: &str) -> Option<String> {
+        let lb = labels(block).into_iter().nth(k)?;
+        let text = clean_label(text);
+        if text.is_empty() {
+            return None;
+        }
+        let line = block.lines().nth(lb.line)?;
+        let indent = line.get(..line.len() - line.trim_start().len())?;
+        let new = if lb.kind.ends_with("-axis") {
+            let rest = line.trim().get(lb.kind.len()..)?.trim();
+            let mut parts: Vec<String> = rest.split("-->").map(|p| p.trim().to_string()).collect();
+            *parts.get_mut(lb.part)? = text;
+            format!("{indent}{} {}", lb.kind, parts.join(" --> "))
+        } else {
+            format!("{indent}{} {text}", lb.kind)
+        };
+        with_line(block, lb.line, Some(new))
+    }
+
+    /// Dónde se dibujó cada texto de [`labels`] (el primero igual en el SVG).
+    pub fn label_boxes(svg: &str, block: &str) -> Vec<Option<[f32; 4]>> {
+        use super::sequence::{El, elements, text_box};
+        let els = elements(svg);
+        let mut used = vec![false; els.len()];
+        labels(block)
+            .iter()
+            .map(|lb| {
+                let want = super::flowchart::norm(&lb.text);
+                let i = els.iter().enumerate().position(|(i, e)| {
+                    !used.get(i).copied().unwrap_or(true)
+                        && matches!(e, El::Text { text, .. } if !want.is_empty() && *text == want)
+                })?;
+                if let Some(u) = used.get_mut(i) {
+                    *u = true;
+                }
+                match els.get(i)? {
+                    El::Text { x, y, middle, text } => Some(text_box(*x, *y, *middle, text.chars().count())),
+                    El::Shape { .. } => None,
+                }
+            })
+            .collect()
+    }
+
     /// Dónde quedó el diagrama dibujado, en unidades del SVG.
     #[derive(Clone, Debug, PartialEq)]
     pub struct Geometry {
@@ -362,6 +477,29 @@ pub mod actions {
     const ADD: u32 = 1;
     const RENAME: u32 = 2;
     const DELETE: u32 = 3;
+    const POINT_COLOR: u32 = 4;
+    const POINT_SIZE: u32 = 5;
+    const LABEL_TEXT: u32 = 6;
+    const FLOW_FILL: u32 = 16;
+    /// En un cuadrante: los textos (título, cuadrantes, ejes) desde aquí (los puntos, desde 0).
+    const LABEL_BASE: usize = 300_000;
+    /// Colores de un punto: nombre y valor (`None`: el de siempre).
+    const POINT_COLORS: [((&str, &str), Option<&str>); 7] = [
+        (("Blue", "Azul"), Some("#2563eb")),
+        (("Green", "Verde"), Some("#16a34a")),
+        (("Orange", "Naranja"), Some("#ea580c")),
+        (("Red", "Rojo"), Some("#dc2626")),
+        (("Purple", "Morado"), Some("#7c3aed")),
+        (("Grey", "Gris"), Some("#6b7280")),
+        (("Default", "El de siempre"), None),
+    ];
+    /// Tamaños de un punto.
+    const POINT_SIZES: [((&str, &str), Option<&str>); 4] = [
+        (("Small", "Pequeño"), Some("4")),
+        (("Medium", "Mediano"), Some("8")),
+        (("Large", "Grande"), Some("12")),
+        (("Default", "El de siempre"), None),
+    ];
     const FLOW_NEXT: u32 = 10;
     const FLOW_CONNECT: u32 = 11;
     const FLOW_TEXT: u32 = 12;
@@ -955,7 +1093,17 @@ pub mod actions {
                     .collect(),
                 Chart::Timeline(code) => two_level(charts::timeline::boxes(svg, code)),
                 Chart::Kanban(code) => two_level(charts::kanban::boxes(svg, code)),
-                Chart::Gantt(code) => two_level(charts::gantt::boxes(svg, code)),
+                Chart::Gantt(code) => {
+                    // Las barras se arrastran si el eje tiene fechas que leer.
+                    let drag = charts::gantt::draggable(code) && charts::gantt::scale(svg).is_some();
+                    two_level(charts::gantt::boxes(svg, code))
+                        .into_iter()
+                        .map(|mut s| {
+                            s.draggable = drag && s.id >= SUB;
+                            s
+                        })
+                        .collect()
+                }
             };
         }
         if let Some(code) = seq_code(block) {
@@ -986,6 +1134,10 @@ pub mod actions {
             return Vec::new();
         }
         let Some(g) = quadrant::geometry(svg) else { return Vec::new() };
+        let labels = quadrant::label_boxes(svg, block)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(k, b)| b.map(|rect| Spot { id: LABEL_BASE + k, rect, draggable: false }));
         g.points
             .iter()
             .enumerate()
@@ -993,6 +1145,7 @@ pub mod actions {
                 let r = r.max(4.0) + 3.0;
                 Spot { id, rect: [cx - r, cy - r, cx + r, cy + r], draggable: true }
             })
+            .chain(labels)
             .collect()
     }
 
@@ -1074,6 +1227,12 @@ pub mod actions {
                     label: ("Change shape", "Cambiar forma"),
                     input: Input::Choice(shapes()),
                 },
+                act(
+                    FLOW_FILL,
+                    IconKind::Add,
+                    ("Color", "Color"),
+                    Input::Choice(opts(flowchart::FILLS.iter().map(|(l, _)| *l))),
+                ),
                 Action {
                     id: FLOW_DELETE,
                     icon: IconKind::Delete,
@@ -1083,8 +1242,29 @@ pub mod actions {
             ];
         }
         let Some(code) = quadrant_code(block) else { return Vec::new() };
+        if let Some(k) = id.checked_sub(LABEL_BASE) {
+            let Some(lb) = quadrant::labels(block).into_iter().nth(k) else { return Vec::new() };
+            return vec![act(
+                LABEL_TEXT,
+                IconKind::Rename,
+                ("Change text", "Cambiar texto"),
+                text_input(("Text", "Texto"), lb.text),
+            )];
+        }
         let Some(p) = quadrant::points(&code).into_iter().nth(id) else { return Vec::new() };
         vec![
+            act(
+                POINT_COLOR,
+                IconKind::Shape,
+                ("Color", "Color"),
+                Input::Choice(opts(POINT_COLORS.iter().map(|(l, _)| *l))),
+            ),
+            act(
+                POINT_SIZE,
+                IconKind::Add,
+                ("Size", "Tamaño"),
+                Input::Choice(opts(POINT_SIZES.iter().map(|(l, _)| *l))),
+            ),
             Action {
                 id: RENAME,
                 icon: IconKind::Rename,
@@ -1173,6 +1353,9 @@ pub mod actions {
                 (Target::Spot(n), FLOW_TEXT, Data::Text(text)) => flowchart::set_text(block, &node(n)?, &text),
                 (Target::Spot(n), FLOW_SHAPE, Data::Choice(k)) => flowchart::set_shape(block, &node(n)?, shape(k)?),
                 (Target::Spot(n), FLOW_DELETE, _) => flowchart::delete(block, &node(n)?),
+                (Target::Spot(n), FLOW_FILL, Data::Choice(k)) => {
+                    flowchart::set_fill(block, &node(n)?, flowchart::FILLS.get(k)?.1)
+                }
                 (Target::Canvas(_), FLOW_LOOSE, Data::ChoiceText(k, text)) => {
                     flowchart::add_loose(block, &code, shape(k)?, &text)
                 }
@@ -1186,14 +1369,133 @@ pub mod actions {
             }
             (Target::Spot(n), RENAME, Data::Text(label)) => quadrant::set_label(block, n, &label),
             (Target::Spot(n), DELETE, _) => quadrant::delete_point(block, n),
+            (Target::Spot(n), POINT_COLOR, Data::Choice(k)) => {
+                quadrant::set_point_style(block, n, "color", POINT_COLORS.get(k)?.1)
+            }
+            (Target::Spot(n), POINT_SIZE, Data::Choice(k)) => {
+                quadrant::set_point_style(block, n, "radius", POINT_SIZES.get(k)?.1)
+            }
+            (Target::Spot(n), LABEL_TEXT, Data::Text(t)) => {
+                quadrant::set_label_text(block, n.checked_sub(LABEL_BASE)?, &t)
+            }
             _ => None,
         }
     }
 
     /// La zona `id` se soltó en `to`: el bloque nuevo.
     pub fn drag(block: &str, style: &NoteStyle, id: usize, to: [f32; 2]) -> Option<String> {
+        if let Some(Chart::Gantt(code)) = chart(block) {
+            // La barra se mueve tantos días como se arrastró su centro.
+            let svg = crate::diagram::render_drawn(&code, style).ok()?.svg;
+            let (x0, d0, ppd) = charts::gantt::scale(&svg)?;
+            let (s, t) = sub(id)?;
+            let flat: usize = charts::gantt::sections(&code).iter().take(s).map(|(_, ts)| ts.len()).sum::<usize>() + t;
+            let bar = charts::gantt::bars(&svg, &code).into_iter().nth(flat)??;
+            let center = (bar[0] + bar[2]) / 2.0;
+            let shift = ((to[0] - center) / ppd).round() as i64;
+            let start = d0 + ((bar[0] - x0) / ppd).round() as i64 + shift;
+            return if shift == 0 { None } else { charts::gantt::set_start(block, &code, s, t, start) };
+        }
+        if id >= LABEL_BASE {
+            return None;
+        }
         let (x, y) = geometry(block, style)?.to_coords_clamped(to[0], to[1])?;
         quadrant::move_point(block, id, x, y)
+    }
+
+    /// El nombre de la zona `id` (el texto del elemento) para el lector de pantalla.
+    pub fn spot_label(block: &str, id: usize) -> Option<String> {
+        let code = crate::diagram::mermaid_code(block)?;
+        if let Some(st) = structure_of(block) {
+            return names(&st).into_iter().nth(id).map(|(_, s)| s);
+        }
+        if let Some(c) = chart(block) {
+            return match &c {
+                Chart::Pie(code) => charts::pie::entries(code).into_iter().nth(id).map(|(l, v)| format!("{l}: {v}")),
+                Chart::Timeline(code) => {
+                    let ps = charts::timeline::periods(code);
+                    match sub(id) {
+                        Some((p, e)) => ps.get(p).and_then(|(l, es)| es.get(e).map(|ev| format!("{l}: {ev}"))),
+                        None => ps.get(id).map(|(l, _)| l.clone()),
+                    }
+                }
+                Chart::Kanban(code) => {
+                    let cols = charts::kanban::columns(code);
+                    match sub(id) {
+                        Some((c, k)) => cols.get(c).and_then(|(_, _, ts)| ts.get(k)).map(|(_, t)| t.clone()),
+                        None => cols.get(id).map(|(_, l, _)| l.clone()),
+                    }
+                }
+                Chart::Gantt(code) => {
+                    let secs = charts::gantt::sections(code);
+                    match sub(id) {
+                        Some((s, t)) => secs.get(s).and_then(|(_, ts)| ts.get(t)).cloned(),
+                        None => secs.get(id).map(|(n, _)| n.clone()),
+                    }
+                }
+            };
+        }
+        if sequence::is_sequence(&code) {
+            let t = sequence::tree(&code);
+            let shown =
+                |pid: &str| t.participants.iter().find(|(p, _)| p == pid).map_or(pid.to_string(), |(_, d)| d.clone());
+            if let Some(k) = id.checked_sub(NOTE_BASE) {
+                return t.notes.get(k).map(|(_, x)| x.clone());
+            }
+            if let Some(k) = id.checked_sub(MSG_BASE) {
+                return t.messages.get(k).map(|(f, to, x)| format!("{x} ({} → {})", shown(f), shown(to)));
+            }
+            return t.participants.get(id).map(|(_, d)| d.clone());
+        }
+        if flowchart::is_flowchart(&code) {
+            let nodes = flowchart::nodes(&code);
+            let text =
+                |nid: &str| nodes.iter().find(|(i, _, _)| i == nid).map_or(nid.to_string(), |(_, t, _)| t.clone());
+            if let Some(e) = id.checked_sub(EDGE_BASE) {
+                return flowchart::edges(&code).into_iter().nth(e).map(|(f, t, l)| match l {
+                    Some(l) => format!("{} → {} ({l})", text(&f), text(&t)),
+                    None => format!("{} → {}", text(&f), text(&t)),
+                });
+            }
+            return nodes.into_iter().nth(id).map(|(_, t, _)| t);
+        }
+        if quadrant::is_quadrant(&code) {
+            if let Some(k) = id.checked_sub(LABEL_BASE) {
+                return quadrant::labels(block).into_iter().nth(k).map(|l| l.text);
+            }
+            return quadrant::points(&code).into_iter().nth(id).map(|p| p.label);
+        }
+        None
+    }
+
+    /// Lo que se muestra junto al puntero mientras se arrastra la zona `id` hasta `to`: las
+    /// coordenadas (y el cuadrante) de un punto, o la fecha de inicio de una tarea.
+    pub fn drag_hint(block: &str, style: &NoteStyle, id: usize, to: [f32; 2]) -> Option<String> {
+        if let Some(Chart::Gantt(code)) = chart(block) {
+            let svg = crate::diagram::render_drawn(&code, style).ok()?.svg;
+            let (x0, d0, ppd) = charts::gantt::scale(&svg)?;
+            let (s, t) = sub(id)?;
+            let flat: usize = charts::gantt::sections(&code).iter().take(s).map(|(_, ts)| ts.len()).sum::<usize>() + t;
+            let bar = charts::gantt::bars(&svg, &code).into_iter().nth(flat)??;
+            let shift = ((to[0] - (bar[0] + bar[2]) / 2.0) / ppd).round() as i64;
+            return Some(charts::gantt::format_date(d0 + ((bar[0] - x0) / ppd).round() as i64 + shift));
+        }
+        if id >= LABEL_BASE {
+            return None;
+        }
+        let (x, y) = geometry(block, style)?.to_coords_clamped(to[0], to[1])?;
+        let q = match (x >= 0.5, y >= 0.5) {
+            (true, true) => "quadrant-1",
+            (false, true) => "quadrant-2",
+            (false, false) => "quadrant-3",
+            (true, false) => "quadrant-4",
+        };
+        let name = quadrant::labels(block)
+            .into_iter()
+            .find(|l| l.kind == q)
+            .map(|l| format!(" · {}", l.text))
+            .unwrap_or_default();
+        Some(format!("x {x:.2} · y {y:.2}{name}"))
     }
 }
 
@@ -1250,6 +1552,28 @@ mod tests {
     }
 
     #[test]
+    fn point_style_and_texts() {
+        let out = set_point_style(Q, 0, "color", Some("#ff0000")).unwrap();
+        assert!(out.contains("    Campaña A: [0.3, 0.6] color: #ff0000\n"), "{out}");
+        let out = set_point_style(&out, 0, "radius", Some("12")).unwrap();
+        assert!(out.contains("    Campaña A: [0.3, 0.6] color: #ff0000, radius: 12\n"), "{out}");
+        let out = set_point_style(&out, 0, "color", None).unwrap();
+        assert!(out.contains("    Campaña A: [0.3, 0.6] radius: 12\n"), "{out}");
+        assert_eq!(points(&out).len(), 2);
+        let ls = labels(Q);
+        assert_eq!(
+            ls.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+            ["Prioridades", "Bajo esfuerzo", "Alto esfuerzo", "Bajo impacto", "Alto impacto", "Planear"]
+        );
+        let out = set_label_text(Q, 2, "Mucho esfuerzo").unwrap();
+        assert!(out.contains("    x-axis Bajo esfuerzo --> Mucho esfuerzo\n"), "{out}");
+        let out = set_label_text(Q, 5, "Hacer ya").unwrap();
+        assert!(out.contains("    quadrant-1 Hacer ya\n"), "{out}");
+        let svg = mermaid_svg::render(&mermaid_code(Q)).unwrap();
+        assert!(label_boxes(&svg, Q).iter().all(Option::is_some));
+    }
+
+    #[test]
     fn geometry_matches_what_mermaid_svg_draws() {
         let code = mermaid_code(Q);
         let svg = mermaid_svg::render(&code).unwrap();
@@ -1273,8 +1597,9 @@ mod tests {
         let style = crate::markdown::NoteStyle::default();
         let svg = crate::diagram::render_drawn(&mermaid_code(Q), &style).unwrap().svg;
         let spots = actions::spots(Q, &svg);
-        assert_eq!(spots.len(), 2);
-        assert!(spots.iter().all(|s| s.draggable));
+        // Los dos puntos (se arrastran) y los seis textos (título, ejes, cuadrante; no se arrastran).
+        assert_eq!(spots.iter().filter(|s| s.draggable).count(), 2);
+        assert_eq!(spots.len(), 8);
         let g = geometry(&svg).unwrap();
         // Agregar en el centro de la gráfica.
         let [x0, y0, x1, y1] = g.plot;
@@ -1301,7 +1626,7 @@ mod tests {
         let svg = crate::diagram::render_drawn(&mermaid_code(b), &style).unwrap().svg;
         let spots = actions::spots(b, &svg);
         assert_eq!(spots.iter().map(|s| s.id).collect::<Vec<_>>(), [0, 1, 2, 100_000, 100_001]);
-        assert_eq!(actions::spot_actions(b, 1).len(), 5);
+        assert_eq!(actions::spot_actions(b, 1).len(), 6);
         let next = actions::apply(b, &style, Target::Spot(2), 10, Data::ChoiceText(3, "¿Otra?".into())).unwrap();
         assert!(next.contains("    C --> N1{¿Otra?}\n"), "{next}");
         let con = actions::apply(b, &style, Target::Spot(2), 11, Data::Spot(0)).unwrap();
@@ -1358,6 +1683,14 @@ mod tests {
         assert_eq!(acts[0].label.1, "Duración");
         let out = actions::apply(gt, &style, Target::Spot(100_000), 93, Data::Text("2w".into())).unwrap();
         assert!(out.contains("    Redactar :2026-01-05, 2w\n"), "{out}");
+        // Arrastrar la barra dos días a la derecha.
+        let spot = actions::spots(gt, &svg).into_iter().find(|s| s.id == 100_000).unwrap();
+        assert!(spot.draggable);
+        let (_, _, ppd) = super::charts::gantt::scale(&svg).unwrap();
+        let bar = super::charts::gantt::bars(&svg, &mermaid_code(gt))[0].unwrap();
+        let to = [(bar[0] + bar[2]) / 2.0 + 2.0 * ppd, bar[1]];
+        let out = actions::drag(gt, &style, 100_000, to).unwrap();
+        assert!(out.contains("    Redactar :2026-01-07, 5d\n"), "{out}");
         let pie = "```mermaid\npie\n    \"A\" : 1\n```\n";
         let out = actions::apply(pie, &style, Target::Canvas([0.0, 0.0]), 63, Data::Text("B 2".into())).unwrap();
         assert!(out.contains("    \"B\" : 2\n"), "{out}");
@@ -1378,6 +1711,29 @@ mod tests {
         assert_eq!(actions::spots(er, &svg).len(), 2);
         let out = actions::apply(er, &style, Target::Spot(0), 101, Data::ChoiceText(0, "abre".into())).unwrap();
         assert!(out.contains("    CLIENTE ||--o{ CASO : \"abre\"\n"), "{out}");
+    }
+
+    #[test]
+    fn labels_colors_and_hints() {
+        use super::actions::{self, Data, Target};
+        let style = crate::markdown::NoteStyle::default();
+        let svg = crate::diagram::render_drawn(&mermaid_code(Q), &style).unwrap().svg;
+        let spots = actions::spots(Q, &svg);
+        assert!(spots.iter().any(|s| s.id == 300_000 && !s.draggable), "el título es una zona");
+        assert_eq!(actions::spot_label(Q, 300_000).as_deref(), Some("Prioridades"));
+        assert_eq!(actions::spot_label(Q, 1).as_deref(), Some("Campaña B"));
+        let out = actions::apply(Q, &style, Target::Spot(300_000), 6, Data::Text("Plan 2027".into())).unwrap();
+        assert!(out.contains("    title Plan 2027\n"), "{out}");
+        let out = actions::apply(Q, &style, Target::Spot(0), 4, Data::Choice(3)).unwrap();
+        assert!(out.contains("    Campaña A: [0.3, 0.6] color: #dc2626\n"), "{out}");
+        let g = geometry(&svg).unwrap();
+        let [_, y0, x1, _] = g.plot;
+        let hint = actions::drag_hint(Q, &style, 0, [x1 - 1.0, y0 + 1.0]).unwrap();
+        assert!(hint.starts_with("x 1.00 · y 1.00") && hint.ends_with("Planear"), "{hint}");
+        let f = "```mermaid\nflowchart TD\n    A[Inicio] --> B(Fin)\n```\n";
+        assert_eq!(actions::spot_label(f, 100_000).as_deref(), Some("Inicio → Fin"));
+        let out = actions::apply(f, &style, Target::Spot(1), 16, Data::Choice(1)).unwrap();
+        assert!(out.contains("    style B fill:#dcfce7\n"), "{out}");
     }
 
     proptest! {
