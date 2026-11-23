@@ -64,7 +64,9 @@ Accesible (AccessKit, teclado completo). Ver PLAN.md §6.
 
 ## Puerta de calidad
 Antes de cada commit: `cargo xtask ci` (fmt, clippy -D warnings, pruebas, layers, purity, licenses,
-notices, assets). Mensajes de commit con el id de tarea de `docs/gaps.md` (p. ej. `F0.3: …`).
+notices, assets; al final barre `target/`). Tras compilar o probar fuera de `ci`, `cargo xtask sweep`:
+Cargo nunca borra las copias viejas de los binarios de prueba y `target/` llega a cientos de GB.
+Mensajes de commit con el id de tarea de `docs/gaps.md` (p. ej. `F0.3: …`).
 
 ## Ver la aplicación
 - `cargo run -p iuredesk` (con `--sample` carga un buzón de ejemplo). Con

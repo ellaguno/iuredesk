@@ -224,13 +224,15 @@ todo = "warn"
 too_many_arguments = "allow"
 type_complexity = "allow"
 
+# Solo tablas de líneas en el código propio y nada de depuración en las dependencias: con la
+# depuración completa cada binario de prueba o ejemplo pesaba ~700 MB, el enlazador pasaba de
+# ~5 GB de RAM (2026-11-17) y `target/debug` llegó a 330 GB (2026-11-23). `test` hereda de `dev`.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 2
-
-# Pruebas con solo tablas de líneas: cada enlazador de un binario de prueba pasaba de ~5 GB de RAM
-# con la depuración completa y saturaba el equipo (2026-11-17).
-[profile.test]
-debug = "line-tables-only"
+debug = false
 
 [profile.release]
 lto = "thin"

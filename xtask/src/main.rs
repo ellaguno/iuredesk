@@ -96,6 +96,16 @@ fn cargo(args: &[&str]) -> Res {
 }
 
 fn ci() -> Res {
+    let r = ci_steps();
+    // Sin esto `target/` crece cientos de GB con copias viejas de las pruebas; corre también
+    // cuando un paso falla (antes un clippy o una prueba en rojo se saltaba el barrido).
+    sweep::run(&root().join("target"), 7, false)?;
+    r?;
+    println!("xtask ci: todo en verde");
+    Ok(())
+}
+
+fn ci_steps() -> Res {
     cargo(&["fmt", "--all", "--check"])?;
     cargo(&["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"])?;
     cargo(&["test", "--workspace", "-q"])?;
@@ -105,11 +115,7 @@ fn ci() -> Res {
     purity_all()?;
     licenses(&m)?;
     notices_file(&root().join("target/THIRD-PARTY-NOTICES.txt"))?;
-    assets()?;
-    // Sin esto `target/` crece cientos de GB con copias viejas de las pruebas.
-    sweep::run(&root().join("target"), 7, false)?;
-    println!("xtask ci: todo en verde");
-    Ok(())
+    assets()
 }
 
 /// Bancos de rendimiento (R2.1, ver `docs/rendimiento.md`), siempre en release:
