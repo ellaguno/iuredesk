@@ -12,6 +12,11 @@ async fn default_sources_list_news_and_their_audio_downloads() {
         for i in news::latest(items, 3) {
             eprintln!("{} · {} · audio: {}", s.source.name, i.title, i.has_audio());
         }
+        assert!(!items.is_empty(), "{}: sin artículos", s.source.name);
+        // Los artículos de Iurefficient (feed) no traen audio; los WordPress, su resumen.
+        if s.source.audio_category.is_none() {
+            continue;
+        }
         let audio =
             items.iter().find(|i| i.has_audio()).unwrap_or_else(|| panic!("{}: sin artículo con audio", s.source.name));
         let path = news::fetch_audio(&audio.link, &audio.audio, dir.path()).await.unwrap();

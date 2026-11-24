@@ -2,10 +2,11 @@
 //! sus últimos 1 a 3 artículos (lo elige el usuario); el que tiene audio lleva ▶, los demás solo
 //! el título con su liga.
 //!
-//! - **Fuentes por omisión**: SesoLibre (noticias generales) y el blog de Iurefficient (noticias
-//!   jurídicas). Las dos son WordPress; la lista sale de su API REST (`wp/v2/posts`), porque
-//!   SesoLibre tiene el RSS apagado. La categoría «Noticias» de cada una (14 y 46) es la del
-//!   resumen con audio.
+//! - **Fuentes por omisión**, en este orden (lo pidió el dueño 2026-11-24): los artículos de
+//!   Iurefficient (feed RSS de `iurefficient.com/articulos`), SesoLibre (noticias generales) y el
+//!   blog de Iurefficient (noticias jurídicas). Estas dos son WordPress; la lista sale de su API
+//!   REST (`wp/v2/posts`), porque SesoLibre tiene el RSS apagado. La categoría «Noticias» de cada
+//!   una (14 y 46) es la del resumen con audio.
 //! - **El audio** no está en la API ni en el feed: lo pone en la página el reproductor del plugin
 //!   de TTS (`<div class="tts-enhanced-sesolibre-player" data-main-audio="….mp3">`). Se lee al
 //!   pulsar ▶, se acepta solo un MP3 del mismo sitio y se guarda en caché.
@@ -87,7 +88,7 @@ pub struct NewsSource {
 pub struct NewsPref {
     #[serde(default = "yes")]
     pub enabled: bool,
-    #[serde(default = "default_sources")]
+    #[serde(default = "default_sources", deserialize_with = "sources_or_new_defaults")]
     pub sources: Vec<NewsSource>,
     /// Artículos por fuente (1 a [`MAX_PER_SOURCE`]).
     #[serde(default = "one")]
@@ -115,8 +116,23 @@ impl NewsPref {
     }
 }
 
-/// SesoLibre y el blog de Iurefficient.
+/// Los artículos de Iurefficient, SesoLibre y el blog de Iurefficient.
 pub fn default_sources() -> Vec<NewsSource> {
+    let mut v = vec![NewsSource {
+        name: "Iurefficient".into(),
+        url: "https://iurefficient.com/articulos/feed.xml".into(),
+        topic: Topic::Legal,
+        audio_category: None,
+    }];
+    v.extend(first_defaults().into_iter().map(|s| match s.name.as_str() {
+        "Iurefficient" => NewsSource { name: "Blog Iurefficient".into(), ..s },
+        _ => s,
+    }));
+    v
+}
+
+/// Las fuentes por omisión de la 0.1.0-beta.6 a la beta.8 (SesoLibre y el blog).
+fn first_defaults() -> Vec<NewsSource> {
     vec![
         NewsSource {
             name: "SesoLibre".into(),
@@ -131,6 +147,13 @@ pub fn default_sources() -> Vec<NewsSource> {
             audio_category: Some(46),
         },
     ]
+}
+
+/// Quien nunca tocó sus fuentes (tiene las de omisión de antes) recibe las de ahora; una lista
+/// cambiada por el usuario se respeta.
+fn sources_or_new_defaults<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<NewsSource>, D::Error> {
+    let v = Vec::<NewsSource>::deserialize(d)?;
+    Ok(if v == first_defaults() { default_sources() } else { v })
 }
 
 /// Dónde está el audio de un artículo.
@@ -612,9 +635,19 @@ pub fn sample(now: DateTime<Utc>) -> NewsResult {
     let day = |d: i64| Some(now - chrono::Duration::days(d));
     let item = |title: &str, link: &str, date, audio| NewsItem { title: title.into(), link: link.into(), date, audio };
     let sources = default_sources();
+    let src = |i: usize| sources.get(i).cloned().unwrap_or_else(|| default_sources().remove(0));
     let news = vec![
         SourceNews {
-            source: sources.first().cloned().unwrap_or_else(|| default_sources().remove(0)),
+            source: src(0),
+            result: Ok(vec![item(
+                "Formatos y plantillas del despacho: escribir igual de bien siempre",
+                "https://iurefficient.com/articulos/mejores-practicas-derecho-formatos-y-plantillas",
+                day(0),
+                AudioRef::None,
+            )]),
+        },
+        SourceNews {
+            source: src(1),
             result: Ok(vec![
                 item(
                     "Resumen de noticias – miércoles, 21 de octubre",
@@ -631,7 +664,7 @@ pub fn sample(now: DateTime<Utc>) -> NewsResult {
             ]),
         },
         SourceNews {
-            source: sources.get(1).cloned().unwrap_or_else(|| default_sources().remove(1)),
+            source: src(2),
             result: Ok(vec![item(
                 "Resumen de noticias – miércoles, 21 de octubre",
                 "https://blog.iurefficient.com/resumen-de-noticias-ejemplo/",
@@ -650,12 +683,22 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
-    fn defaults_are_sesolibre_and_iurefficient() {
+    fn defaults_are_articles_sesolibre_and_blog() {
         let p = NewsPref::default();
         assert!(p.enabled);
-        assert_eq!(p.sources.len(), 2);
-        assert_eq!(p.sources[0].topic, Topic::General);
-        assert_eq!(p.sources[1].audio_category, Some(46));
+        let urls: Vec<_> = p.sources.iter().map(|s| s.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            ["https://iurefficient.com/articulos/feed.xml", "https://sesolibre.com", "https://blog.iurefficient.com"]
+        );
+        assert!(urls.iter().all(|u| parse_url(u).is_some()));
+        assert_eq!(p.sources[1].topic, Topic::General);
+        assert_eq!(p.sources[2].audio_category, Some(46));
+        // Quien tenía las dos de antes, sin tocar, recibe las tres; una lista propia se respeta.
+        let old = serde_json::json!({ "sources": first_defaults() });
+        assert_eq!(serde_json::from_value::<NewsPref>(old).unwrap().sources, default_sources());
+        let mine = serde_json::json!({ "sources": [first_defaults()[1].clone()] });
+        assert_eq!(serde_json::from_value::<NewsPref>(mine).unwrap().sources, [first_defaults()[1].clone()]);
         // Una preferencia vieja (sin `news`) o con un tema desconocido se lee.
         let n: NewsPref = serde_json::from_str("{}").unwrap();
         assert_eq!(n, NewsPref::default());

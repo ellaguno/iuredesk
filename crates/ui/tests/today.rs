@@ -389,23 +389,26 @@ fn news_with_play_and_sources() {
     assert!(h.query_by_label(other).is_some());
     assert!(h.query_by_label(&format!("Escuchar: {other}")).is_none());
 
-    // El orden: subir Iurefficient la pone primero, en las preferencias y en la pantalla.
-    h.get_by_label("Subir SesoLibre").click();
-    settle(&mut h);
-    assert_eq!(h.state().today_news_order(), ["SesoLibre", "Iurefficient"], "la primera no sube");
+    // El orden: por omisión, los artículos de Iurefficient, SesoLibre y el blog. Subir SesoLibre
+    // la pone primero, en las preferencias y en la pantalla.
+    let order = ["Iurefficient", "SesoLibre", "Blog Iurefficient"];
+    assert_eq!(h.state().today_news_order(), order);
     h.get_by_label("Subir Iurefficient").click();
     settle(&mut h);
-    let names: Vec<_> = h.state().session.prefs.news.sources.iter().map(|s| s.name.clone()).collect();
-    assert_eq!(names, ["Iurefficient", "SesoLibre"]);
-    assert_eq!(h.state().today_news_order(), ["Iurefficient", "SesoLibre"], "se reacomoda sin volver a pedir");
-    h.get_by_label("Bajar Iurefficient").click();
+    assert_eq!(h.state().today_news_order(), order, "la primera no sube");
+    h.get_by_label("Subir SesoLibre").click();
     settle(&mut h);
-    assert_eq!(h.state().today_news_order(), ["SesoLibre", "Iurefficient"]);
+    let names: Vec<_> = h.state().session.prefs.news.sources.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names, ["SesoLibre", "Iurefficient", "Blog Iurefficient"]);
+    assert_eq!(h.state().today_news_order(), names, "se reacomoda sin volver a pedir");
+    h.get_by_label("Bajar SesoLibre").click();
+    settle(&mut h);
+    assert_eq!(h.state().today_news_order(), order);
 
     // Fuentes: quitar SesoLibre, una dirección inválida, una válida y restaurar.
     h.get_by_label("Quitar SesoLibre").click();
     settle(&mut h);
-    assert_eq!(h.state().session.prefs.news.sources.len(), 1);
+    assert_eq!(h.state().session.prefs.news.sources.len(), 2);
     h.get_by_label("Dirección de la fuente").type_text("ftp://x");
     h.get_by_label("Agregar").click();
     settle(&mut h);
@@ -419,8 +422,8 @@ fn news_with_play_and_sources() {
     h.get_by_label("Agregar").click();
     settle(&mut h);
     let s = h.state().session.prefs.news.sources.clone();
-    assert_eq!(s.len(), 2);
-    assert_eq!((s[1].name.as_str(), s[1].topic), ("example.org", Topic::Other));
+    assert_eq!(s.len(), 3);
+    assert_eq!((s[2].name.as_str(), s[2].topic), ("example.org", Topic::Other));
     h.get_by_label("Restaurar las de omisión").click();
     settle(&mut h);
     assert_eq!(h.state().session.prefs.news.sources, default_sources());
