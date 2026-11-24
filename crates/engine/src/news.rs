@@ -498,6 +498,22 @@ async fn wordpress(client: &reqwest::Client, origin: &str, audio_category: Optio
     Some(items)
 }
 
+/// Los artículos fuera de la categoría con audio también pueden traer el reproductor (SesoLibre
+/// lo pone en otros artículos, lo notó el dueño 2026-11-24). No está en la API: se mira la página
+/// de los que se pueden mostrar y, si lo tiene, su MP3 (del mismo sitio) queda como audio.
+async fn probe_pages(client: &reqwest::Client, items: &mut [NewsItem]) {
+    for item in items.iter_mut().take(usize::from(MAX_PER_SOURCE)) {
+        if item.has_audio() {
+            continue;
+        }
+        let Some(page) = parse_url(&item.link) else { continue };
+        let Some(html) = get(client, page.as_str(), MAX_PAGE).await else { continue };
+        if let Some(mp3) = page_audio(&String::from_utf8_lossy(&html), &page) {
+            item.audio = AudioRef::Url(mp3);
+        }
+    }
+}
+
 async fn feed(client: &reqwest::Client, url: &str) -> Option<Vec<NewsItem>> {
     let body = get(client, url, MAX_LIST).await?;
     let items = parse_feed(&body);
@@ -513,7 +529,8 @@ pub async fn fetch_source(src: &NewsSource) -> Result<Vec<NewsItem>, Text> {
         return feed(&client, url.as_str()).await.ok_or_else(fail);
     }
     let origin = url.origin().ascii_serialization();
-    if let Some(items) = wordpress(&client, &origin, src.audio_category).await {
+    if let Some(mut items) = wordpress(&client, &origin, src.audio_category).await {
+        probe_pages(&client, &mut items).await;
         return Ok(items);
     }
     if let Some(items) = feed(&client, url.as_str()).await {
@@ -754,6 +771,53 @@ mod tests {
         assert!(parse_url("http://127.0.0.1:8080/feed").is_some(), "la propia máquina, para pruebas");
         assert!(parse_url("file:///etc/passwd").is_none());
         assert!(parse_url("sesolibre.com").is_none());
+    }
+
+    /// Un WordPress de prueba en la propia máquina: el artículo de la categoría con audio y otro
+    /// que no lo es pero trae el reproductor en su página; el tercero, sin reproductor, solo título.
+    #[tokio::test]
+    async fn player_outside_the_audio_category_is_found_on_its_page() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let posts = format!(
+            r#"[{{"date_gmt":"2026-11-24T17:22:50","link":"{base}/tecnologia/","title":{{"rendered":"Tecnología"}},"categories":[3]}},
+                {{"date_gmt":"2026-11-24T15:00:00","link":"{base}/sin-audio/","title":{{"rendered":"Sin audio"}},"categories":[2]}},
+                {{"date_gmt":"2026-11-24T11:00:33","link":"{base}/resumen/","title":{{"rendered":"Resumen"}},"categories":[14]}}]"#
+        );
+        let b = base.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else { break };
+                let mut buf = vec![0u8; 4096];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let path = req.split_whitespace().nth(1).unwrap_or("").to_string();
+                let (typ, body) = if path.starts_with("/wp-json/") {
+                    ("application/json", posts.clone())
+                } else if path == "/tecnologia/" {
+                    ("text/html", format!(r#"<div data-main-audio="{b}/voz.mp3"></div>"#))
+                } else {
+                    ("text/html", "<p>texto</p>".to_string())
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {typ}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+            }
+        });
+        let src = NewsSource { name: "X".into(), url: base.clone(), topic: Topic::Other, audio_category: Some(14) };
+        let items = fetch_source(&src).await.unwrap();
+        let audio: Vec<_> = items.iter().map(|i| (i.title.as_str(), i.audio.clone())).collect();
+        assert_eq!(
+            audio,
+            [
+                ("Tecnología", AudioRef::Url(format!("{base}/voz.mp3"))),
+                ("Sin audio", AudioRef::None),
+                ("Resumen", AudioRef::Page),
+            ]
+        );
     }
 
     proptest! {

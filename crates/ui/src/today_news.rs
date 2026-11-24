@@ -49,6 +49,22 @@ fn ensure(app: &mut DeskApp) {
     if n.fetching {
         return;
     }
+    // Solo cambió el orden: se reacomoda lo que ya hay, sin volver a pedirlo.
+    if let Some(old) = &n.for_sources
+        && *old != pref.sources
+        && old.len() == pref.sources.len()
+        && pref.sources.iter().all(|s| old.contains(s))
+    {
+        let n = &mut app.today.news;
+        let mut data = std::mem::take(&mut n.data);
+        n.data = pref
+            .sources
+            .iter()
+            .filter_map(|s| data.iter().position(|d| d.source == *s).map(|i| data.swap_remove(i)))
+            .collect();
+        n.for_sources = Some(pref.sources);
+        return;
+    }
     let wait = if n.failed { news::RETRY } else { news::REFRESH };
     let due = n.last.is_none_or(|t| t.elapsed() >= wait);
     if n.for_sources.as_ref() != Some(&pref.sources) || due {
@@ -240,7 +256,6 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui) {
         });
     }
     for s in &data {
-        let topic = s.source.topic.label();
         let items = match &s.result {
             Err(t) => {
                 ui.horizontal(|ui| {
@@ -255,7 +270,7 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui) {
             }
             Ok(items) => news::latest(items, count),
         };
-        for (k, a) in items.iter().enumerate() {
+        for a in items {
             let mine = app.today.news.playing.as_ref().is_some_and(|p| p.link == a.link);
             let loading = app.today.news.loading.as_deref() == Some(a.link.as_str());
             let on = mine && status.state == State::Playing;
@@ -279,9 +294,6 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui) {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     gear(ui, &mut first_row);
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        if k == 0 {
-                            ui.label(RichText::new(format!("{topic} ·")).color(c.text_muted));
-                        }
                         if title_link(ui, &a.title, c.text, false, &hover) {
                             open = Some(a.link.clone());
                         }
@@ -384,6 +396,7 @@ pub fn setup_dialog(app: &mut DeskApp, ctx: &egui::Context) {
     let mut enabled = pref.enabled;
     let mut per_source = pref.count() as u8;
     let mut remove: Option<usize> = None;
+    let mut swap: Option<(usize, usize)> = None;
     let mut add = false;
     let mut restore = false;
     let mut close = false;
@@ -422,6 +435,8 @@ pub fn setup_dialog(app: &mut DeskApp, ctx: &egui::Context) {
             }
         });
         ui.add_space(6.0);
+        // El orden de la lista es el de «Mi día»: ▲/▼ mueven una fuente.
+        let last = pref.sources.len().saturating_sub(1);
         for (i, s) in pref.sources.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(&s.name).strong().color(c.text));
@@ -433,6 +448,14 @@ pub fn setup_dialog(app: &mut DeskApp, ctx: &egui::Context) {
                         .clicked()
                     {
                         remove = Some(i);
+                    }
+                    let tip = format!("{} {}", pick("Move down", "Bajar"), s.name);
+                    if icons::icon_button(ui, Icon::ChevronDown, &tip, i < last).clicked() {
+                        swap = Some((i, i.saturating_add(1)));
+                    }
+                    let tip = format!("{} {}", pick("Move up", "Subir"), s.name);
+                    if icons::icon_button(ui, Icon::ChevronUp, &tip, i > 0).clicked() {
+                        swap = Some((i.saturating_sub(1), i));
                     }
                     ui.add(egui::Label::new(RichText::new(&s.url).small().color(c.text_muted)).truncate());
                 });
@@ -484,6 +507,13 @@ pub fn setup_dialog(app: &mut DeskApp, ctx: &egui::Context) {
     if per_source != pref.per_source {
         save(app, |p| p.per_source = per_source);
     }
+    if let Some((a, b)) = swap {
+        save(app, |p| {
+            if a < b && b < p.sources.len() {
+                p.sources.swap(a, b);
+            }
+        });
+    }
     if let Some(i) = remove {
         save(app, |p| {
             if i < p.sources.len() {
@@ -531,6 +561,11 @@ impl DeskApp {
     /// S1.36: el artículo que suena (pruebas).
     pub fn news_playing(&self) -> Option<(String, State)> {
         self.today.news.playing.as_ref().map(|p| (p.link.clone(), self.today.news.player.status().state))
+    }
+
+    /// S1.36: las fuentes en el orden en que se ven (pruebas).
+    pub fn today_news_order(&self) -> Vec<String> {
+        self.today.news.data.iter().map(|s| s.source.name.clone()).collect()
     }
 
     /// S1.36: el último error de ▶ (pruebas).

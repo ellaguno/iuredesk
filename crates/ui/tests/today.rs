@@ -372,6 +372,7 @@ fn news_with_play_and_sources() {
     assert_eq!(h.query_all_by_label(play).count(), 2, "un ▶ por fuente");
     let other = "Manejar la casa desde una sola pantalla";
     assert!(h.query_by_label(other).is_none(), "por omisión, solo el último de cada fuente");
+    assert!(h.query_by_label_contains("Noticias generales").is_none(), "solo el título, sin la leyenda del tema");
     h.query_all_by_label(play).next().unwrap().click();
     settle(&mut h);
     assert_eq!(h.state().news_error().as_deref(), Some("El buzón de ejemplo no descarga audio."));
@@ -387,6 +388,19 @@ fn news_with_play_and_sources() {
     assert_eq!(h.state().session.prefs.news.per_source, 2);
     assert!(h.query_by_label(other).is_some());
     assert!(h.query_by_label(&format!("Escuchar: {other}")).is_none());
+
+    // El orden: subir Iurefficient la pone primero, en las preferencias y en la pantalla.
+    h.get_by_label("Subir SesoLibre").click();
+    settle(&mut h);
+    assert_eq!(h.state().today_news_order(), ["SesoLibre", "Iurefficient"], "la primera no sube");
+    h.get_by_label("Subir Iurefficient").click();
+    settle(&mut h);
+    let names: Vec<_> = h.state().session.prefs.news.sources.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names, ["Iurefficient", "SesoLibre"]);
+    assert_eq!(h.state().today_news_order(), ["Iurefficient", "SesoLibre"], "se reacomoda sin volver a pedir");
+    h.get_by_label("Bajar Iurefficient").click();
+    settle(&mut h);
+    assert_eq!(h.state().today_news_order(), ["SesoLibre", "Iurefficient"]);
 
     // Fuentes: quitar SesoLibre, una dirección inválida, una válida y restaurar.
     h.get_by_label("Quitar SesoLibre").click();
