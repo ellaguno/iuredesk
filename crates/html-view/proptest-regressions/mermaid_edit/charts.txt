@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 3875eb7777b89bbd80f0ae638cd9899748cad035fbdc6d72c58745aeea4cd723 # shrinks to text = "%%", junk = "", k = 0, j = 0
+cc e4d13438a4226403ae86b0c678791d6dff81cae0b640dc2197d9c18b2f7e878f # shrinks to text = "%%%", junk = "", k = 0, j = 0

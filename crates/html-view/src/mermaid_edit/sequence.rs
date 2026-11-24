@@ -94,6 +94,14 @@ pub fn is_sequence(code: &str) -> bool {
 }
 
 /// Un texto de una línea que no rompe la sintaxis (`;` y `#` tienen sentido en Mermaid).
+/// Sin `%%` (comentario en Mermaid), por largo que sea el tramo de `%`.
+pub(super) fn no_comment(mut t: String) -> String {
+    while t.contains("%%") {
+        t = t.replace("%%", "%");
+    }
+    t
+}
+
 pub(super) fn clean(s: &str) -> Option<String> {
     let one: String = s
         .chars()
@@ -105,8 +113,9 @@ pub(super) fn clean(s: &str) -> Option<String> {
         })
         .collect();
     let t: String = one.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(MAX_TEXT).collect();
-    // `%%` empieza un comentario: el texto desaparecería.
-    let t = t.replace("%%", "%");
+    // `%%` empieza un comentario: el texto desaparecería (también `%%%`, que tras un reemplazo
+    // deja `%%`).
+    let t = no_comment(t);
     (!t.is_empty()).then_some(t)
 }
 

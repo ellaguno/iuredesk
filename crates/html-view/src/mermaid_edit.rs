@@ -28,7 +28,7 @@ pub fn clean_label(s: &str) -> String {
         })
         .collect();
     // `%%` empieza un comentario: el punto desaparecería.
-    let t = one.split_whitespace().collect::<Vec<_>>().join(" ").replace("%%", "%");
+    let t = sequence::no_comment(one.split_whitespace().collect::<Vec<_>>().join(" "));
     t.chars().take(MAX_LABEL).collect()
 }
 
@@ -1530,6 +1530,7 @@ mod tests {
         assert!(add_point(Q, "  \n ", 0.1, 0.1).is_none(), "sin etiqueta");
         // Regresión: `%%` es comentario en Mermaid.
         assert_eq!(points(&add_point(Q, "%% raro", 0.1, 0.1).unwrap()).len(), 3);
+        assert_eq!(points(&add_point(Q, "%%%", 0.1, 0.1).unwrap()).len(), 3, "también con tres");
     }
 
     #[test]
