@@ -39,6 +39,8 @@ pub struct PimState {
     /// UX-10: editor de contactos y contacto que la lista debe seleccionar y mostrar.
     pub(crate) contact_editor: Option<crate::contact_editor::ContactEditor>,
     pub(crate) reveal_contact: Option<ContactId>,
+    /// S1.37: caso al que «Por caso» debe llevar la vista (desde la tarjeta «Proyectos»).
+    pub(crate) reveal_case: Option<String>,
 }
 
 // ---------------------------------------------------------------------------------------------

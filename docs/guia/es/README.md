@@ -130,8 +130,11 @@ Microsoft».
   día o busca «Grabar reunión» en la paleta (Ctrl+K). Arriba verás siempre que se está grabando,
   con pausa y «Detener»; al detener, la grabación se transcribe en tu equipo y queda como nota
   de minuta.
-- **Proyectos en Mi día** (si tienes IureProject): sigue tus planes y verás su avance, las tareas
-  atrasadas y el próximo hito sin abrir IureProject; al pulsar un plan se abre allí.
+- **Proyectos en Mi día**: con Iurefficient, arriba están **tus casos** (los de tus tareas
+  pendientes, con las vencidas en rojo); al pulsar uno vas a Tareas → «Por caso», a ese caso, y su
+  botón «IureProject» lo abre allí (su plan, si lo sigues; si no, el expediente). Si tienes
+  IureProject, sigue tus planes y verás su avance, las tareas atrasadas y el próximo hito sin
+  abrirlo; al pulsar un plan se abre allí.
 
 - **Contactos:** doble clic o `Intro` para editar; «+» para uno nuevo. Se sincronizan con tu
   cuenta (Google, Microsoft, iCloud o CardDAV).

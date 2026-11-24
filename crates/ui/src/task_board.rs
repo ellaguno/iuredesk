@@ -336,6 +336,65 @@ pub(crate) fn known_cases(cases: &HashMap<String, iuredesk_store::TaskCase>) -> 
     v
 }
 
+/// S1.37: un caso de tus tareas con sus cifras (tarjeta «Proyectos» de «Mi día»).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CaseLine {
+    pub case: iuredesk_store::TaskCase,
+    pub pending: usize,
+    pub overdue: usize,
+    pub next_due: Option<chrono::NaiveDate>,
+}
+
+/// S1.37: los casos que tienen tareas tuyas pendientes: primero los que tienen vencidas, luego por
+/// la fecha más próxima y por nombre.
+pub(crate) fn my_cases(app: &DeskApp) -> Vec<CaseLine> {
+    let cases = app.session.task_cases();
+    if cases.is_empty() {
+        return Vec::new();
+    }
+    let known = known_cases(&cases);
+    let today = app.session.today();
+    let zone = app.session.zone();
+    let mut by: HashMap<String, CaseLine> = HashMap::new();
+    for l in app.session.task_lists() {
+        for t in app.session.tasks(l.id).into_iter().filter(|t| !t.is_done() && t.status != TaskStatus::Cancelled) {
+            let Some(case) = case_for(&t, &cases, &known) else { continue };
+            let due = t.due.as_ref().map(|d| match d {
+                iuredesk_model::EventTime::Date(d) => *d,
+                iuredesk_model::EventTime::DateTime { utc, .. } => zone.local(*utc).date(),
+            });
+            let line = by.entry(case.id.clone()).or_insert(CaseLine { case, pending: 0, overdue: 0, next_due: None });
+            line.pending += 1;
+            if due.is_some_and(|d| d < today) {
+                line.overdue += 1;
+            }
+            if let Some(d) = due.filter(|d| *d >= today) {
+                line.next_due = Some(line.next_due.map_or(d, |n| n.min(d)));
+            }
+        }
+    }
+    let mut v: Vec<CaseLine> = by.into_values().collect();
+    v.sort_by(|a, b| {
+        b.overdue
+            .cmp(&a.overdue)
+            .then_with(|| match (a.next_due, b.next_due) {
+                (Some(x), Some(y)) => x.cmp(&y),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            })
+            .then_with(|| a.case.title.to_lowercase().cmp(&b.case.title.to_lowercase()))
+    });
+    v
+}
+
+/// S1.37: lleva a Tareas → «Por caso», a ese caso.
+pub(crate) fn reveal_case(app: &mut DeskApp, case_id: &str) {
+    app.session.set_task_view(iuredesk_engine::tasks_view::TaskView::ByCase);
+    app.session.module = iuredesk_engine::Module::Tasks;
+    app.pim.reveal_case = Some(case_id.to_string());
+}
+
 /// Las tareas pendientes de todas las listas, agrupadas por su caso (las de cada caso, con su plan
 /// de IureProject si se sigue); al final, las que no tienen caso.
 pub(crate) fn by_case(app: &mut DeskApp, ui: &mut Ui) -> Vec<BoardAct> {
@@ -371,7 +430,7 @@ pub(crate) fn by_case(app: &mut DeskApp, ui: &mut Ui) -> Vec<BoardAct> {
         for key in keys {
             let Some(items) = groups.get(&key) else { continue };
             ui.add_space(10.0);
-            ui.horizontal(|ui| {
+            let head = ui.horizontal(|ui| {
                 match &key {
                     Some(case) => {
                         badge(ui, pick("Case", "Caso"), BadgeKind::Accent);
@@ -383,6 +442,13 @@ pub(crate) fn by_case(app: &mut DeskApp, ui: &mut Ui) -> Vec<BoardAct> {
                 }
                 ui.label(RichText::new(items.len().to_string()).color(c.text_muted));
             });
+            // S1.37: venir desde «Mi día» a este caso: la vista llega hasta él.
+            if let Some(case) = &key
+                && app.pim.reveal_case.as_deref() == Some(case.id.as_str())
+            {
+                head.response.scroll_to_me(Some(egui::Align::TOP));
+                app.pim.reveal_case = None;
+            }
             // El plan de IureProject de este caso (si se sigue): su estado y abrirlo.
             if let Some(case) = &key {
                 for (file, line) in crate::today_projects::plans_for_case(app, &case.id) {

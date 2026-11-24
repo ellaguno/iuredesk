@@ -54,6 +54,8 @@ pub enum SuiteAction {
     OpenProject(PathBuf),
     /// S1.35: abrir el plan en una tarea (su id en Iurefficient).
     OpenProjectTask { file: PathBuf, task: String },
+    /// S1.37: abrir en IureProject un expediente de Iurefficient (sin plan local).
+    OpenProjectCase { id: String, title: String },
     /// «Correo → tarea del plan»: agregar una tarea al plan y guardarlo (sin abrir IureProject).
     AddProjectTask { file: PathBuf, task: iuredesk_integrations::NewProjectTask },
     /// S1.4: grabar una reunión con IureTranscribe (sin abrir su ventana).
@@ -285,6 +287,7 @@ impl SuiteHub {
             SuiteAction::ProjectOverviews(_)
             | SuiteAction::OpenProject(_)
             | SuiteAction::OpenProjectTask { .. }
+            | SuiteAction::OpenProjectCase { .. }
             | SuiteAction::AddProjectTask { .. } => Some(SisterApp::Project),
             SuiteAction::StartRecording { .. } => Some(SisterApp::Transcribe),
             _ => None,
@@ -416,6 +419,14 @@ impl SuiteHub {
                         SuiteEvent::Done(Text::new(
                             "Opening the task in IureProject",
                             "Abriendo la tarea en IureProject",
+                        ))
+                    })
+                }
+                SuiteAction::OpenProjectCase { id, title } => {
+                    outcome(suite.open_case_in_iureproject(&id, &title), |_| {
+                        SuiteEvent::Done(Text::new(
+                            "Opening the case in IureProject",
+                            "Abriendo el expediente en IureProject",
                         ))
                     })
                 }

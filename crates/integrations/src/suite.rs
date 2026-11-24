@@ -389,6 +389,28 @@ impl Suite {
         Ok(Outcome::Ready(()))
     }
 
+    /// S1.37: abre en IureProject el expediente de Iurefficient `case_id` (sin plan local):
+    /// `iureproject --iurefficient-case <id> --case-title <título>`. IureProject retoma su sesión
+    /// (o la pide) y lo abre.
+    pub fn open_case_in_iureproject(&self, case_id: &str, title: &str) -> crate::Result<Outcome<()>> {
+        let Some(program) = self.paths.get(&SisterApp::Project) else {
+            return Ok(Outcome::NotInstalled(SisterApp::Project.install_hint()));
+        };
+        let clean = |s: &str, n: usize| -> String { s.chars().filter(|c| !c.is_control()).take(n).collect() };
+        let id = clean(case_id, 100);
+        if id.trim().is_empty() {
+            return self.launch(SisterApp::Project);
+        }
+        let mut args = vec!["--iurefficient-case".to_string(), id];
+        let title = clean(title, 200);
+        if !title.trim().is_empty() {
+            args.push("--case-title".into());
+            args.push(title);
+        }
+        self.opener.launch(program, &args)?;
+        Ok(Outcome::Ready(()))
+    }
+
     /// Lanza una app sin argumentos (botón «Abrir» del panel).
     pub fn launch(&self, app: SisterApp) -> crate::Result<Outcome<()>> {
         let Some(program) = self.paths.get(&app) else {

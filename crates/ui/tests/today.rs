@@ -224,7 +224,8 @@ fn projects_card_shows_plans_and_opens_them() {
     assert!(h.query_by_label("43 %").is_some() || h.query_by_label("42 %").is_some(), "el avance");
     assert!(h.query_by_label("Peritaje — vencía 10 oct").is_some(), "lo atrasado");
     assert!(h.query_by_label("Audiencia — 30 nov").is_some(), "el próximo hito");
-    assert!(h.query_by_label("1 atrasadas").is_some(), "la cifra");
+    // La del plan y la vencida del caso 1452/2026 del ejemplo (S1.37).
+    assert!(h.query_by_label("2 atrasadas").is_some(), "la cifra");
     assert!(h.query_by_label("El archivo ya no está.").is_some(), "el que no se pudo leer");
     h.get_by_label("Caso Ramírez").click();
     settle(&mut h);
@@ -414,4 +415,51 @@ fn news_with_play_and_sources() {
     settle(&mut h);
     assert!(!h.state().session.prefs.news.enabled);
     assert_eq!(h.query_all_by_label(play).count(), 0, "apagadas no se ven");
+}
+
+/// S1.37: con Iurefficient, la tarjeta «Proyectos» muestra tus casos (los de tus tareas
+/// pendientes) con sus cifras; picar uno lleva a Tareas → «Por caso»; «IureProject», sin plan
+/// seguido, abre el expediente (`--iurefficient-case`). Sin IureProject, los casos se ven igual.
+#[test]
+fn projects_card_shows_your_cases() {
+    use iuredesk_engine::iuredesk_integrations::{SisterApp, Suite};
+    use iuredesk_engine::tasks_view::TaskView;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let launches = Arc::new(Launches::default());
+    let mut a = app(dir.path());
+    a.set_suite(
+        Suite::empty().with_app(SisterApp::Project, "/opt/iureproject/iureproject").with_opener(launches.clone()),
+    );
+    let mut h = harness(a);
+    settle(&mut h);
+    assert!(h.query_by_label("2 pendientes · 1 vencida").is_some(), "el caso con vencidas, primero");
+    assert!(h.query_by_label("2 pendientes").is_some());
+    // «IureProject» del primer caso (sin plan seguido): el expediente.
+    h.get_by_label("1452/2026").scroll_to_me();
+    settle(&mut h);
+    h.query_all_by_label("IureProject").next().unwrap().click();
+    settle(&mut h);
+    let start = Instant::now();
+    while launches.0.lock().unwrap().is_empty() && start.elapsed() < Duration::from_secs(10) {
+        h.run_steps(1);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let l = launches.0.lock().unwrap().join("\n");
+    assert!(l.contains("--iurefficient-case") && l.contains("--case-title 1452/2026"), "{l}");
+    // Picar el caso: Tareas → «Por caso».
+    h.get_by_label("1452/2026").click();
+    settle(&mut h);
+    assert_eq!(h.state().session.module, Module::Tasks);
+    assert_eq!(h.state().session.task_view(), TaskView::ByCase);
+    assert!(h.query_all_by_label("Por caso").next().is_some(), "la vista «Por caso»");
+
+    // Sin IureProject: los casos se ven, sin botón.
+    let dir2 = tempfile::tempdir().unwrap();
+    let mut a = app(dir2.path());
+    a.set_suite(Suite::empty());
+    let mut h = harness(a);
+    settle(&mut h);
+    assert!(h.query_by_label("2 pendientes · 1 vencida").is_some());
+    assert!(h.query_by_label("IureProject").is_none());
 }

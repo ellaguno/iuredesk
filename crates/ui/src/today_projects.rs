@@ -1,6 +1,10 @@
 //! S1.6: tarjeta «Proyectos» de «Mi día»: los planes de IureProject que el usuario sigue, con su
 //! avance, lo atrasado y el próximo hito, leídos por MCP (`project_overview`) en segundo plano y
-//! sin abrir IureProject. Pulsar un plan lo abre en IureProject. Solo con IureProject instalado.
+//! sin abrir IureProject. Pulsar un plan lo abre en IureProject.
+//!
+//! S1.37 (dueño 2026-11-23): con Iurefficient, arriba, **tus casos** (los de tus tareas
+//! pendientes, S1.34): picar uno lleva a Tareas → «Por caso»; «IureProject» abre su plan o, sin
+//! plan, el expediente (`iureproject --iurefficient-case`). Sin IureProject se ven igual los casos.
 //!
 //! Los planes seguidos viven en `Prefs::projects`; se eligen aquí o en Ajustes → Suite. El
 //! resumen se vuelve a pedir cada [`REFRESH`] o cuando cambia la lista.
@@ -249,34 +253,136 @@ enum Act {
     Open(PathBuf),
     Pick,
     Launch,
+    /// S1.37: Tareas → «Por caso», en ese caso.
+    Case(String),
+    /// S1.37: el expediente en IureProject (sin plan seguido).
+    OpenCase(String, String),
+    /// S1.37: Tareas → «Por caso».
+    ByCase,
 }
 
-/// La tarjeta. Sin IureProject instalado no se dibuja nada.
+/// Casos en la tarjeta antes de «+N más».
+const CASE_ROWS: usize = 5;
+
+/// «3 pendientes · 1 vencida».
+fn case_counts(l: &crate::task_board::CaseLine) -> String {
+    let pending = match l.pending {
+        1 => pick("1 pending", "1 pendiente").to_string(),
+        n => format!("{n} {}", pick("pending", "pendientes")),
+    };
+    match l.overdue {
+        0 => pending,
+        1 => format!("{pending} · {}", pick("1 overdue", "1 vencida")),
+        n => format!("{pending} · {n} {}", pick("overdue", "vencidas")),
+    }
+}
+
+/// La tarjeta. S1.37: con Iurefficient, **tus casos** (los de tus tareas pendientes): picar uno
+/// lleva a Tareas → «Por caso»; su botón lo abre en IureProject (su plan, si lo sigues; si no, el
+/// expediente). S1.6: con IureProject, además, los planes que sigues. Sin ninguno de los dos no
+/// se dibuja.
 pub fn card(app: &mut DeskApp, ui: &mut Ui) {
-    if !installed(app) {
+    let has_project = installed(app);
+    let cases = crate::task_board::my_cases(app);
+    if !has_project && cases.is_empty() {
         return;
     }
-    poll_pick(app);
-    ensure(app);
-    let late: usize = app.today.projects.data.iter().filter_map(|s| s.overview.as_ref().ok()).map(|o| o.late).sum();
-    let detail = if late > 0 { format!("{late} {}", pick("late", "atrasadas")) } else { String::new() };
+    if has_project {
+        poll_pick(app);
+        ensure(app);
+    }
+    let late_plans: usize =
+        app.today.projects.data.iter().filter_map(|s| s.overview.as_ref().ok()).map(|o| o.late).sum();
+    let late = late_plans + cases.iter().map(|l| l.overdue).sum::<usize>();
+    let detail = match late {
+        0 => String::new(),
+        1 => pick("1 late", "1 atrasada").to_string(),
+        n => format!("{n} {}", pick("late", "atrasadas")),
+    };
     let mut act = None;
-    let follows = !app.session.prefs.projects.is_empty();
-    let action = follows.then(|| pick("Open IureProject", "Abrir IureProject"));
+    let follows = has_project && !app.session.prefs.projects.is_empty();
+    let action = if follows {
+        Some(pick("Open IureProject", "Abrir IureProject"))
+    } else if !cases.is_empty() {
+        Some(pick("By case", "Por caso"))
+    } else {
+        None
+    };
     let es = iuredesk_engine::lang::spanish();
     let waiting = app.today.projects.data.is_empty() && app.today.projects.asked.is_some();
     let data = app.today.projects.data.clone();
+    let case_plans: Vec<Option<PathBuf>> =
+        cases.iter().map(|l| plans_for_case(app, &l.case.id).into_iter().next().map(|(f, _)| f)).collect();
     let clicked = crate::today::card(ui, Icon::Gantt, pick("Projects", "Proyectos"), &detail, action, |ui| {
         let c = theme::colors(ui);
-        if !follows {
-            crate::today::muted(
-                ui,
-                pick(
-                    "Follow an IureProject plan to see its progress and what's late here.",
-                    "Sigue un plan de IureProject para ver aquí su avance y lo atrasado.",
-                ),
+        if !cases.is_empty() {
+            ui.label(
+                RichText::new(pick("YOUR CASES", "TUS CASOS"))
+                    .font(theme::semibold_font(ui.ctx(), theme::density(ui.ctx()).small_size()))
+                    .color(c.text_muted),
             );
-            ui.add_space(6.0);
+            ui.add_space(2.0);
+            for (l, plan) in cases.iter().zip(&case_plans).take(CASE_ROWS) {
+                ui.horizontal(|ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if has_project {
+                            let tip = if plan.is_some() {
+                                pick("Open its plan in IureProject", "Abrir su plan en IureProject")
+                            } else {
+                                pick("Open the case in IureProject", "Abrir el expediente en IureProject")
+                            };
+                            if ui.small_button("IureProject").on_hover_text(tip).clicked() {
+                                act = Some(match plan {
+                                    Some(f) => Act::Open(f.clone()),
+                                    None => Act::OpenCase(l.case.id.clone(), l.case.title.clone()),
+                                });
+                            }
+                        }
+                        let ink = if l.overdue > 0 { c.danger } else { c.text_muted };
+                        ui.label(RichText::new(case_counts(l)).color(ink).size(theme::density(ui.ctx()).small_size()));
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            let name = ui
+                                .add(
+                                    egui::Label::new(RichText::new(&l.case.title).strong().color(c.text))
+                                        .truncate()
+                                        .sense(egui::Sense::click()),
+                                )
+                                .on_hover_text(pick("See its tasks by case", "Ver sus tareas por caso"));
+                            iurefficient_ui::a11y::button(&name, &l.case.title);
+                            if name.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                            if name.clicked() {
+                                act = Some(Act::Case(l.case.id.clone()));
+                            }
+                        });
+                    });
+                });
+            }
+            if cases.len() > CASE_ROWS {
+                let more = format!("+{} {}", cases.len() - CASE_ROWS, pick("more cases", "casos más"));
+                if ui.add(egui::Button::new(RichText::new(more).color(c.accent)).frame(false)).clicked() {
+                    act = Some(Act::ByCase);
+                }
+            }
+            if has_project {
+                ui.add_space(10.0);
+            }
+        }
+        if !has_project {
+            return;
+        }
+        if !follows {
+            if cases.is_empty() {
+                crate::today::muted(
+                    ui,
+                    pick(
+                        "Follow an IureProject plan to see its progress and what's late here.",
+                        "Sigue un plan de IureProject para ver aquí su avance y lo atrasado.",
+                    ),
+                );
+                ui.add_space(6.0);
+            }
             if ui.button(pick("Follow a plan…", "Seguir un plan…")).clicked() {
                 act = Some(Act::Pick);
             }
@@ -337,12 +443,18 @@ pub fn card(app: &mut DeskApp, ui: &mut Ui) {
         }
     });
     if clicked {
-        act = Some(Act::Launch);
+        act = Some(if follows { Act::Launch } else { Act::ByCase });
     }
     match act {
         Some(Act::Open(p)) => app.suite.hub.run(SuiteAction::OpenProject(p)),
         Some(Act::Pick) => pick_plan(app, ui.ctx()),
         Some(Act::Launch) => app.suite.hub.run(SuiteAction::Launch(SisterApp::Project)),
+        Some(Act::Case(id)) => crate::task_board::reveal_case(app, &id),
+        Some(Act::OpenCase(id, title)) => app.suite.hub.run(SuiteAction::OpenProjectCase { id, title }),
+        Some(Act::ByCase) => {
+            app.session.set_task_view(iuredesk_engine::tasks_view::TaskView::ByCase);
+            app.session.module = iuredesk_engine::Module::Tasks;
+        }
         None => {}
     }
 }

@@ -273,3 +273,19 @@ fn opens_a_plan_at_a_task() {
     // Sin IureProject: se invita a instalarlo.
     assert!(matches!(Suite::empty().open_in_iureproject_at(&plan, "x"), Ok(Outcome::NotInstalled(_))));
 }
+
+/// S1.37: un caso de Iurefficient sin plan se abre en IureProject por su expediente.
+#[test]
+fn opens_a_case_in_iureproject() {
+    let rec = Arc::new(Recorder::default());
+    let s = Suite::empty().with_opener(rec.clone()).with_app(SisterApp::Project, "/opt/iureproject/iureproject");
+    assert!(matches!(s.open_case_in_iureproject("c-241", "241/2026 · Arrendamiento\n"), Ok(Outcome::Ready(()))));
+    let launched = rec.launched.lock().unwrap().clone();
+    let (prog, args) = launched.last().unwrap();
+    assert_eq!(prog, Path::new("/opt/iureproject/iureproject"));
+    assert_eq!(args, &["--iurefficient-case", "c-241", "--case-title", "241/2026 · Arrendamiento"]);
+    // Sin id: solo abre IureProject. Sin IureProject: se invita a instalarlo.
+    assert!(matches!(s.open_case_in_iureproject(" ", ""), Ok(Outcome::Ready(()))));
+    assert!(rec.launched.lock().unwrap().last().unwrap().1.is_empty());
+    assert!(matches!(Suite::empty().open_case_in_iureproject("c-1", ""), Ok(Outcome::NotInstalled(_))));
+}

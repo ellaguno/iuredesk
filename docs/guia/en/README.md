@@ -124,8 +124,11 @@ Not available in the beta yet. If your company uses Microsoft 365, use "Sign in 
   My day or search «Record meeting» in the palette (Ctrl+K). A bar at the top always shows it's
   recording, with pause and «Stop»; when you stop, the recording is transcribed on your computer
   and saved as a minutes note.
-- **Projects in My day** (if you have IureProject): follow your plans to see their progress, late
-  tasks and next milestone without opening IureProject; click a plan to open it there.
+- **Projects in My day**: with Iurefficient, at the top are **your cases** (those of your pending
+  tasks, overdue ones in red); click one to go to Tasks → «By case», at that case, and its
+  «IureProject» button opens it there (its plan if you follow it; otherwise the case). If you have
+  IureProject, follow your plans to see their progress, late tasks and next milestone without
+  opening it; click a plan to open it there.
 
 - **Contacts:** double-click or `Enter` to edit; "+" for a new one. They sync with your account
   (Google, Microsoft, iCloud or CardDAV).
