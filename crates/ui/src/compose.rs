@@ -57,6 +57,9 @@ pub struct ComposeWindow {
     pub(crate) ai: crate::assistant::ComposeAi,
     inputs: [String; 3],
     show_cc: bool,
+    /// Tab en el asunto: el foco pasa al mensaje en el cuadro siguiente (cuando egui ya movió el
+    /// suyo).
+    focus_body_next: bool,
     link_url: Option<String>,
     sched: Option<(String, String)>,
     dirty_since: Option<Instant>,
@@ -97,6 +100,7 @@ impl ComposeWindow {
             ai: Default::default(),
             inputs: Default::default(),
             show_cc,
+            focus_body_next: false,
             link_url: None,
             sched: None,
             dirty_since: None,
@@ -660,6 +664,18 @@ fn form(
     let ctx = ui.ctx().clone();
     let c = theme::colors(ui);
     ui.spacing_mut().item_spacing.y = 4.0;
+    // Ctrl+Intro envía si el foco está en este redactor (destinatarios, asunto o cualquier bloque
+    // del mensaje), antes de que el editor vea la tecla. Antes solo se miraba un id del cuerpo que
+    // el editor por bloques nunca tiene, y no enviaba (dueño 2026-11-24).
+    let area = ui.max_rect();
+    let mine =
+        ui.memory(|m| m.focused()).and_then(|id| ctx.read_response(id)).is_some_and(|r| area.contains(r.rect.center()));
+    if mine && ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) {
+        acts.push(Act::Send);
+    }
+    if std::mem::take(&mut w.focus_body_next) {
+        iure_doc_ui::focus_offset(&ctx, egui::Id::unique(("compose-body", w.id)), &w.editor.text, 0);
+    }
     // De:
     if identities.len() > 1 {
         ui.horizontal(|ui| {
@@ -705,6 +721,12 @@ fn form(
         let r = r.labelled_by(lr.id);
         if r.changed() {
             w.touch();
+        }
+        // Tab en el asunto: al mensaje (no a los botones de la barra de formato, donde el foco
+        // se perdía de vista; dueño 2026-11-24).
+        if (r.has_focus() || r.lost_focus()) && ui.input(|i| i.key_pressed(Key::Tab) && !i.modifiers.shift) {
+            w.focus_body_next = true;
+            ctx.request_repaint();
         }
         if !w.show_cc && ui.small_button(pick("Cc/Bcc", "CC/CCO")).clicked() {
             w.show_cc = true;
@@ -1011,14 +1033,6 @@ fn bottom_bar(ui: &mut Ui, w: &mut ComposeWindow, presets: &[(Text, DateTime<Utc
             }
         });
     });
-    // Ctrl+Intro envía (solo la ventana en la que se está escribiendo).
-    let mine = ui.memory(|m| {
-        m.has_focus(egui::Id::unique(("compose-body", w.id)))
-            || m.has_focus(egui::Id::unique(("compose-subject", w.id)))
-    });
-    if mine && ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) {
-        acts.push(Act::Send);
-    }
 }
 /// Ancho máximo del redactor: en pantallas anchas no crece a todo lo ancho (los campos piden
 /// ancho infinito). Sin pantalla conocida (pruebas), un valor fijo.

@@ -582,3 +582,37 @@ fn the_composer_moves_to_its_own_window_and_back() {
     assert_eq!(h.state().composer_subject().as_deref(), Some("Escrito a mis anchas"));
     assert!(h.query_by_label("Abrir en ventana propia maximizada").is_some());
 }
+
+/// Regresión del dueño (2026-11-24): Tab en el asunto se perdía en los botones de la barra de
+/// formato (no llegaba al mensaje) y Ctrl+Intro no enviaba desde el mensaje.
+#[test]
+fn tab_reaches_the_message_and_ctrl_enter_sends() {
+    use egui::accesskit::Role;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(sample_app(dir.path(), false), vec2(1440.0, 900.0));
+    settle(&mut h);
+    h.get_by_label("Nuevo mensaje").click();
+    settle(&mut h);
+    h.get_by_role_and_label(Role::TextInput, "Para").focus();
+    h.run();
+    h.event(egui::Event::Text("ana@example.com,".into()));
+    settle(&mut h);
+    h.get_by_role_and_label(Role::TextInput, "Asunto").focus();
+    h.run();
+    h.event(egui::Event::Text("Prueba".into()));
+    h.run_steps(2);
+    h.key_press(egui::Key::Tab);
+    settle(&mut h);
+    h.event(egui::Event::Text("Hola desde el mensaje".into()));
+    settle(&mut h);
+    assert!(
+        h.state().composer_body().is_some_and(|b| b.contains("Hola desde el mensaje")),
+        "Tab desde el asunto lleva al mensaje: {:?}",
+        h.state().composer_body()
+    );
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
+    settle(&mut h);
+    assert_eq!(h.state().composer_count(), 0, "Ctrl+Intro desde el mensaje envía");
+    assert_eq!(h.state().session.outbox_entries().len(), 1);
+}
