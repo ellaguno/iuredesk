@@ -243,7 +243,7 @@ async fn missing_transport_is_permanent_and_recovery_after_crash() {
     let e = env(0, false);
     let id = e.outbox.queue(AccountId(99), &draft(), &FsResolver).unwrap();
     let out = e.outbox.process_due(&e.source).await.unwrap();
-    assert!(matches!(&out[..], [SendOutcome::Failed { error, .. }] if error.kind == SendErrorKind::Config));
+    assert!(matches!(&out[..], [SendOutcome::Failed { error, .. }] if error.kind == SendErrorKind::NoAccount));
     // Simula un cierre a mitad de envío.
     let mut entry = e.outbox.entry(id).unwrap().unwrap();
     entry.state = OutboxState::Sending;
@@ -518,8 +518,12 @@ async fn smtp_unreachable_and_missing_password() {
     drop(l);
     let err = smtp_transport(port).send(&built()).await.unwrap_err();
     assert!(err.is_transient(), "{err:?}");
-    // Sin contraseña en el llavero: error de configuración, sin conectar.
-    let t = SmtpTransport::new(smtp_account(port), Arc::new(MemoryStore::default()), None);
+    // Sin contraseña en el llavero: se dice, sin conectar, con la cuenta y el servidor
+    // (regresión del dueño 2026-11-24: el mensaje no decía cuál de sus cuentas fallaba).
+    let account = smtp_account(port);
+    let t = SmtpTransport::new(account.clone(), Arc::new(MemoryStore::default()), None);
     let err = t.send(&built()).await.unwrap_err();
-    assert_eq!(err.kind, SendErrorKind::Config);
+    assert_eq!(err.kind, SendErrorKind::MissingPassword);
+    let msg = err.message(iuredesk_compose::Lang::Es);
+    assert!(msg.contains(&account.email) && msg.contains(&account.outgoing.host), "{msg}");
 }

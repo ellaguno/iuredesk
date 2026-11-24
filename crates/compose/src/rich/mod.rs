@@ -100,6 +100,59 @@ pub struct Style {
     pub strike: bool,
     /// Código en línea (monoespaciado).
     pub code: bool,
+    /// Color de la letra (`#RRGGBB`), como el del editor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<[u8; 3]>,
+    /// Color de fondo, el resaltado (`<mark>` del editor).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<[u8; 3]>,
+}
+
+/// `#RRGGBB` o `#RGB` (también `rgb(r, g, b)` y unos nombres comunes) en sus tres componentes.
+pub(crate) fn parse_color(v: &str) -> Option<[u8; 3]> {
+    let v = v.trim().trim_end_matches("!important").trim().to_ascii_lowercase();
+    if let Some(h) = v.strip_prefix('#') {
+        let h: String = h.chars().take_while(char::is_ascii_hexdigit).collect();
+        let n = |s: &str| u8::from_str_radix(s, 16).ok();
+        return match h.len() {
+            6 => Some([n(h.get(0..2)?)?, n(h.get(2..4)?)?, n(h.get(4..6)?)?]),
+            3 => {
+                let d = |i: usize| h.get(i..i + 1).and_then(|c| n(&format!("{c}{c}")));
+                Some([d(0)?, d(1)?, d(2)?])
+            }
+            _ => None,
+        };
+    }
+    if let Some(r) = v.strip_prefix("rgb(").or_else(|| v.strip_prefix("rgba(")) {
+        let nums: Vec<u8> = r
+            .trim_end_matches(')')
+            .split(',')
+            .take(3)
+            .filter_map(|x| x.trim().parse::<f32>().ok())
+            .map(|x| x.clamp(0.0, 255.0) as u8)
+            .collect();
+        return match nums.as_slice() {
+            [a, b, c] => Some([*a, *b, *c]),
+            _ => None,
+        };
+    }
+    Some(match v.as_str() {
+        "yellow" => [255, 255, 0],
+        "red" => [255, 0, 0],
+        "green" => [0, 128, 0],
+        "lime" => [0, 255, 0],
+        "blue" => [0, 0, 255],
+        "orange" => [255, 165, 0],
+        "black" => [0, 0, 0],
+        "white" => [255, 255, 255],
+        "gray" | "grey" => [128, 128, 128],
+        _ => return None,
+    })
+}
+
+/// `#RRGGBB` (mayúsculas), como lo escribe el editor.
+pub(crate) fn hex(c: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2])
 }
 
 impl Style {
@@ -338,6 +391,32 @@ pub(crate) struct StyleDepth {
     pub underline: u16,
     pub strike: u16,
     pub code: u16,
+    /// Colores abiertos (de letra y de fondo): una pila corta; el de adentro manda.
+    color: ColorStack,
+    background: ColorStack,
+}
+
+/// Pila de colores anidados (hasta 8; más hondo solo se cuenta, para cerrar bien).
+#[derive(Default, Clone, Copy)]
+struct ColorStack {
+    items: [[u8; 3]; 8],
+    depth: u16,
+}
+
+impl ColorStack {
+    fn push(&mut self, c: [u8; 3]) {
+        if let Some(slot) = self.items.get_mut(usize::from(self.depth)) {
+            *slot = c;
+        }
+        self.depth = self.depth.saturating_add(1);
+    }
+    fn pop(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+    }
+    fn top(&self) -> Option<[u8; 3]> {
+        let n = usize::from(self.depth).min(self.items.len());
+        n.checked_sub(1).and_then(|i| self.items.get(i)).copied()
+    }
 }
 
 impl StyleDepth {
@@ -348,6 +427,8 @@ impl StyleDepth {
             underline: self.underline > 0,
             strike: self.strike > 0,
             code: self.code > 0,
+            color: self.color.top(),
+            background: self.background.top(),
         }
     }
 
@@ -362,6 +443,13 @@ impl StyleDepth {
         f(&mut self.underline, delta.underline);
         f(&mut self.strike, delta.strike);
         f(&mut self.code, delta.code);
+        for (stack, c) in [(&mut self.color, delta.color), (&mut self.background, delta.background)] {
+            match (c, push) {
+                (Some(c), true) => stack.push(c),
+                (Some(_), false) => stack.pop(),
+                (None, _) => {}
+            }
+        }
     }
 }
 

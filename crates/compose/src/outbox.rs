@@ -444,7 +444,7 @@ impl Outbox {
     async fn send_one(&self, entry: &mut OutboxEntry, transports: &dyn TransportSource) -> Result<SendOutcome> {
         let now = self.clock.now();
         let Some(transport) = transports.transport(entry.account) else {
-            let err = SendError::new(SendErrorKind::Config, "la cuenta no tiene transporte de envío");
+            let err = SendError::new(SendErrorKind::NoAccount, "la cuenta no tiene transporte de envío");
             return self.fail(entry, err, now);
         };
         let queued = match self.load_draft(&entry.draft_blob) {

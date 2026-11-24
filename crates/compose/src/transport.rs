@@ -79,8 +79,15 @@ pub enum SendErrorKind {
     TooLarge,
     /// Una dirección del sobre no es válida.
     InvalidAddress,
-    /// La cuenta no tiene un SMTP utilizable o falta la contraseña.
+    /// La cuenta no tiene un SMTP utilizable (o falló el llavero).
     Config,
+    /// No hay contraseña guardada para el servidor de salida.
+    MissingPassword,
+    /// La cuenta entra con Google o Microsoft y esta copia no puede pedir el permiso (falta su
+    /// configuración de inicio de sesión).
+    OAuthUnavailable,
+    /// La cuenta del mensaje ya no está en IureDesk (se quitó o se volvió a agregar).
+    NoAccount,
     /// Hay direcciones internacionalizadas (`josé@…`) y el servidor no anuncia `SMTPUTF8`.
     InternationalUnsupported,
 }
@@ -98,13 +105,16 @@ pub struct SendError {
     /// Servidor implicado (para el mensaje).
     #[serde(default)]
     pub host: String,
+    /// La cuenta desde la que se envía (su dirección), para que el mensaje diga cuál falla.
+    #[serde(default)]
+    pub account: String,
 }
 
 impl SendError {
     /// Crea un error.
     pub fn new(kind: SendErrorKind, detail: impl Into<String>) -> Self {
         let detail: String = detail.into().chars().filter(|c| !c.is_control()).take(MAX_DETAIL).collect();
-        Self { kind, detail, code: None, host: String::new() }
+        Self { kind, detail, code: None, host: String::new(), account: String::new() }
     }
 
     fn with_host(mut self, host: &str) -> Self {
@@ -112,9 +122,20 @@ impl SendError {
         self
     }
 
+    /// La cuenta desde la que se envía (su dirección).
+    pub fn with_account(mut self, email: &str) -> Self {
+        self.account = email.chars().filter(|c| !c.is_control()).take(320).collect();
+        self
+    }
+
     fn with_code(mut self, code: Option<u16>) -> Self {
         self.code = code;
         self
+    }
+
+    /// «La cuenta tal» (o «la cuenta» si no se sabe), para los mensajes.
+    fn who(&self, lang: Lang) -> String {
+        if self.account.is_empty() { lang.pick("The account", "La cuenta").to_string() } else { self.account.clone() }
     }
 
     /// ¿Vale la pena reintentar más tarde sin que el usuario haga nada?
@@ -179,11 +200,35 @@ impl SendError {
             }
             (SendErrorKind::InvalidAddress, Lang::Es) => format!("Una dirección no es válida: {d}."),
             (SendErrorKind::InvalidAddress, Lang::En) => format!("An address is not valid: {d}."),
-            (SendErrorKind::Config, Lang::Es) => {
-                "La cuenta no tiene bien configurado el servidor de salida (SMTP) o falta la contraseña.".to_string()
+            (SendErrorKind::Config, Lang::Es) => format!(
+                "{} no tiene bien configurado su servidor de salida ({host}): {d}. Revísalo en Ajustes › Cuentas.",
+                self.who(lang)
+            ),
+            (SendErrorKind::Config, Lang::En) => format!(
+                "{}'s outgoing server ({host}) isn't set up correctly: {d}. Check it in Settings › Accounts.",
+                self.who(lang)
+            ),
+            (SendErrorKind::MissingPassword, Lang::Es) => format!(
+                "No hay contraseña guardada para enviar desde {} ({host}). Escríbela en Ajustes › Cuentas y vuelve a enviar.",
+                self.who(lang)
+            ),
+            (SendErrorKind::MissingPassword, Lang::En) => format!(
+                "There is no saved password to send from {} ({host}). Enter it in Settings › Accounts and send again.",
+                self.who(lang)
+            ),
+            (SendErrorKind::OAuthUnavailable, Lang::Es) => format!(
+                "{} entra con su cuenta de Google o Microsoft, y esta copia de IureDesk no puede pedir el permiso (le falta su configuración de inicio de sesión). Envíalo desde IureDesk instalado (iureapps) o vuelve a iniciar sesión en Ajustes › Cuentas.",
+                self.who(lang)
+            ),
+            (SendErrorKind::OAuthUnavailable, Lang::En) => format!(
+                "{} signs in with its Google or Microsoft account, and this copy of IureDesk can't ask for permission (its sign-in setup is missing). Send it from the installed IureDesk (iureapps) or sign in again in Settings › Accounts.",
+                self.who(lang)
+            ),
+            (SendErrorKind::NoAccount, Lang::Es) => {
+                "La cuenta desde la que se escribió este mensaje ya no está en IureDesk. Ábrelo, elige otra en «De» y envíalo de nuevo.".to_string()
             }
-            (SendErrorKind::Config, Lang::En) => {
-                "The account's outgoing (SMTP) server isn't set up correctly, or the password is missing.".to_string()
+            (SendErrorKind::NoAccount, Lang::En) => {
+                "The account this message was written from is no longer in IureDesk. Open it, pick another one in “From” and send it again.".to_string()
             }
             (SendErrorKind::InternationalUnsupported, Lang::Es) => format!(
                 "{host} no acepta direcciones con acentos o letras especiales antes de la @. Usa otra dirección del destinatario."
@@ -252,7 +297,9 @@ impl SmtpTransport {
         let host = self.account.outgoing.host.as_str();
         if oauth {
             let Some(tokens) = &self.tokens else {
-                return Err(SendError::new(SendErrorKind::Config, "sin proveedor de tokens OAuth").with_host(host));
+                return Err(SendError::new(SendErrorKind::OAuthUnavailable, "sin proveedor de tokens OAuth")
+                    .with_host(host)
+                    .with_account(&self.account.email));
             };
             return tokens.access_token(&self.account, TokenAudience::Mail).await.map_err(|e| {
                 let kind = if e.needs_reconsent() {
@@ -269,9 +316,17 @@ impl SmtpTransport {
         let secret = match get(SecretPurpose::Outgoing) {
             Ok(Some(s)) => Some(s),
             Ok(None) => get(SecretPurpose::Incoming).ok().flatten(),
-            Err(e) => return Err(SendError::new(SendErrorKind::Config, format!("llavero: {e}")).with_host(host)),
+            Err(e) => {
+                return Err(SendError::new(SendErrorKind::Config, format!("llavero: {e}"))
+                    .with_host(host)
+                    .with_account(&self.account.email));
+            }
         };
-        secret.ok_or_else(|| SendError::new(SendErrorKind::Config, "no hay contraseña guardada").with_host(host))
+        secret.ok_or_else(|| {
+            SendError::new(SendErrorKind::MissingPassword, "no hay contraseña guardada")
+                .with_host(host)
+                .with_account(&self.account.email)
+        })
     }
 
     async fn attempt(&self, msg: &OutgoingMessage, oauth: bool) -> Result<SendReceipt, SendError> {
@@ -325,7 +380,9 @@ impl Transport for SmtpTransport {
     fn send<'a>(&'a self, msg: &'a OutgoingMessage) -> BoxFuture<'a, Result<SendReceipt, SendError>> {
         Box::pin(async move {
             if self.account.outgoing.protocol != Protocol::Smtp {
-                return Err(SendError::new(SendErrorKind::Config, "el servidor de salida no es SMTP"));
+                return Err(SendError::new(SendErrorKind::Config, "el servidor de salida no es SMTP")
+                    .with_host(&self.account.outgoing.host)
+                    .with_account(&self.account.email));
             }
             let oauth = matches!(self.account.outgoing.auth, AuthMethod::OAuth2 { .. });
             match self.attempt(msg, oauth).await {

@@ -11,6 +11,8 @@ const MAX_MD: usize = 8 * 1024 * 1024;
 
 /// Importa Markdown. Nunca falla.
 pub(super) fn import(md: &str) -> RichBody {
+    // Los `<span>`/`<mark>`/`<font>` abiertos, para cerrar cada uno con su color.
+    let mut colors: Vec<Style> = Vec::new();
     let md = super::import_html::clip(md, MAX_MD);
     let mut b = Builder::new();
     let mut code: Option<String> = None;
@@ -94,6 +96,17 @@ pub(super) fn import(md: &str) -> RichBody {
                 "<u>" | "<ins>" => b.style.apply(Style { underline: true, ..Style::default() }, true),
                 "</u>" | "</ins>" => b.style.apply(Style { underline: true, ..Style::default() }, false),
                 "<br>" | "<br/>" | "<br />" => b.line_break(),
+                // Color y resaltado del editor: `<span style="color: …">`, `<mark style="…">`.
+                t if t.starts_with("<span") || t.starts_with("<mark") || t.starts_with("<font") => {
+                    let d = inline_color(t);
+                    b.style.apply(d, true);
+                    colors.push(d);
+                }
+                "</span>" | "</mark>" | "</font>" => {
+                    if let Some(d) = colors.pop() {
+                        b.style.apply(d, false);
+                    }
+                }
                 _ => {}
             },
             _ => {}
@@ -103,6 +116,36 @@ pub(super) fn import(md: &str) -> RichBody {
         b.code_block(&text);
     }
     b.finish()
+}
+
+/// El color de letra y de fondo de una etiqueta `<span style=…>`, `<mark …>` o `<font color=…>`
+/// (un `<mark>` sin color es amarillo).
+fn inline_color(tag: &str) -> Style {
+    let attr = |name: &str| {
+        let at = tag.find(&format!("{name}=\""))? + name.len() + 2;
+        let rest = tag.get(at..)?;
+        rest.get(..rest.find('"')?)
+    };
+    let mut s = Style::default();
+    for decl in attr("style").unwrap_or("").split(';').take(32) {
+        let Some((p, v)) = decl.split_once(':') else { continue };
+        match p.trim() {
+            "color" => s.color = super::parse_color(v),
+            "background-color" | "background" => {
+                s.background = super::parse_color(v.split_whitespace().next().unwrap_or(""))
+            }
+            _ => {}
+        }
+    }
+    if tag.starts_with("<font")
+        && let Some(c) = attr("color").and_then(super::parse_color)
+    {
+        s.color = Some(c);
+    }
+    if tag.starts_with("<mark") && s.background.is_none() {
+        s.background = Some([255, 255, 0]);
+    }
+    s
 }
 
 fn heading_level(l: HeadingLevel) -> u8 {
@@ -246,6 +289,30 @@ fn inlines(content: &[Inline]) -> String {
                     out.push_str(&url(href));
                     out.push(')');
                     i = j.max(i.saturating_add(1));
+                } else if span.style.color.is_some() || span.style.background.is_some() {
+                    // Los tramos seguidos con el mismo color van en una sola etiqueta (un
+                    // resaltado que abarca texto y `código` no se parte).
+                    let key = (span.style.color, span.style.background);
+                    let mut inner = String::new();
+                    let mut j = i;
+                    while let Some(Inline::Text(s)) = content.get(j) {
+                        if s.link.is_some() || (s.style.color, s.style.background) != key {
+                            break;
+                        }
+                        let mut plain = s.clone();
+                        plain.style.color = None;
+                        plain.style.background = None;
+                        inner.push_str(&styled(&plain));
+                        j = j.saturating_add(1);
+                    }
+                    if let Some(c) = key.0 {
+                        inner = format!("<span style=\"color: {}\">{inner}</span>", super::hex(c));
+                    }
+                    if let Some(c) = key.1 {
+                        inner = format!("<mark style=\"background-color: {}\">{inner}</mark>", super::hex(c));
+                    }
+                    out.push_str(&inner);
+                    i = j.max(i.saturating_add(1));
                 } else {
                     out.push_str(&styled(span));
                     i = i.saturating_add(1);
@@ -285,7 +352,7 @@ fn styled(s: &Span) -> String {
     let trail_start = s.text.trim_end().len();
     let lead_ws = s.text.get(..lead).unwrap_or("");
     let trail_ws = s.text.get(trail_start..).unwrap_or("");
-    let Style { bold, italic, underline, strike, code } = s.style;
+    let Style { bold, italic, underline, strike, code, color, background } = s.style;
     let mut inner = if code {
         let ticks = if core.contains('`') { "``" } else { "`" };
         let pad = if core.starts_with('`') || core.ends_with('`') { " " } else { "" };
@@ -304,6 +371,14 @@ fn styled(s: &Span) -> String {
     }
     if underline {
         inner = format!("<u>{inner}</u>");
+    }
+    // Color y resaltado como los escribe el editor (`<span style="color: …">`,
+    // `<mark style="background-color: …">`), para que se sigan viendo al reabrir.
+    if let Some(c) = color {
+        inner = format!("<span style=\"color: {}\">{inner}</span>", super::hex(c));
+    }
+    if let Some(c) = background {
+        inner = format!("<mark style=\"background-color: {}\">{inner}</mark>", super::hex(c));
     }
     format!("{lead_ws}{inner}{trail_ws}")
 }

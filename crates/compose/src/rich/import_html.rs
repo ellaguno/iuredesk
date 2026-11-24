@@ -233,6 +233,21 @@ impl State {
             delta.italic |= d.italic;
             delta.underline |= d.underline;
             delta.strike |= d.strike;
+            delta.color = d.color;
+            delta.background = d.background;
+        }
+        // `<font color>` y un `<mark>` sin color (amarillo, como el navegador).
+        if name == "font"
+            && let Some(c) = attr(tag, "color").and_then(super::parse_color)
+        {
+            delta.color = Some(c);
+        }
+        if name == "mark" && delta.background.is_none() {
+            delta.background = Some([255, 255, 0]);
+        }
+        // El fondo gris del código (el que ponemos al enviar) no es un resaltado.
+        if delta.code {
+            delta.background = None;
         }
         let link = name == "a";
         if link {
@@ -388,6 +403,12 @@ fn css_style(css: &str) -> Style {
             "text-decoration" | "text-decoration-line" => {
                 s.underline = value.contains("underline");
                 s.strike = value.contains("line-through");
+            }
+            "color" => s.color = super::parse_color(&value),
+            "background-color" | "background" => {
+                // Blanco o transparente no es un resaltado (lo ponen muchos correos por defecto).
+                s.background =
+                    super::parse_color(value.split_whitespace().next().unwrap_or("")).filter(|c| *c != [255, 255, 255]);
             }
             _ => {}
         }

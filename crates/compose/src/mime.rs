@@ -70,7 +70,8 @@ pub struct BuildOptions {
     /// Tamaño máximo absoluto.
     pub max_size: u64,
     /// Conservar `Bcc:` en las cabeceras: solo para guardar borradores (que se reabren con sus
-    /// destinatarios ocultos); nunca para enviar.
+    /// destinatarios ocultos); nunca para enviar. También deja guardar un borrador sin
+    /// destinatarios.
     pub keep_bcc: bool,
 }
 
@@ -232,7 +233,12 @@ pub(crate) fn trim_references(refs: &[String]) -> Vec<String> {
 
 /// Construye el mensaje.
 pub fn build_message(draft: &Draft, resolver: &dyn ContentResolver, opts: &BuildOptions) -> Result<BuiltMessage> {
-    draft.validate()?;
+    // Un borrador (`keep_bcc`) se guarda aunque aún no tenga destinatarios: si no, se guardaba
+    // solo en texto plano y perdía su formato (regresión del dueño 2026-11-24).
+    match draft.validate() {
+        Err(ComposeError::NoRecipients) if opts.keep_bcc => {}
+        other => other?,
+    }
     let from = Mailbox::new(draft.identity.name.clone(), draft.identity.email.clone());
     let from_header =
         encode::format_mailbox(&from).map_err(|_| ComposeError::Identity(draft.identity.email.clone()))?;

@@ -204,8 +204,20 @@ fn inlines(out: &mut String, content: &[Inline]) {
 }
 
 fn styled(out: &mut String, s: &Span) {
-    let Style { bold, italic, underline, strike, code } = s.style;
-    let mut close = Vec::with_capacity(5);
+    let Style { bold, italic, underline, strike, code, color, background } = s.style;
+    let mut close = Vec::with_capacity(6);
+    // Color y resaltado (del editor), por fuera.
+    if color.is_some() || background.is_some() {
+        out.push_str("<span style=\"");
+        if let Some(c) = color {
+            out.push_str(&format!("color:{};", super::hex(c)));
+        }
+        if let Some(c) = background {
+            out.push_str(&format!("background-color:{};", super::hex(c)));
+        }
+        out.push_str("\">");
+        close.push("</span>");
+    }
     if code {
         out.push_str("<code style=\"");
         out.push_str(CODE);
