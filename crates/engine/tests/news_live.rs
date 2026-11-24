@@ -27,3 +27,15 @@ async fn default_sources_list_news_and_their_audio_downloads() {
         assert_eq!(news::fetch_audio(&audio.link, &audio.audio, dir.path()).await.unwrap(), path);
     }
 }
+
+/// Un resumen de SesoLibre cuyo MP3 está en Buzzsprout (redirige a `audio.buzzsprout.com`).
+#[tokio::test]
+#[ignore]
+async fn sesolibre_summary_hosted_on_buzzsprout_downloads() {
+    let dir = tempfile::tempdir().unwrap();
+    let link = "https://sesolibre.com/2026/11/22/resumen-de-noticias-domingo-22-de-noviembre-de-2026/";
+    let path = news::fetch_audio(link, &news::AudioRef::Page, dir.path()).await.unwrap();
+    let len = std::fs::metadata(&path).unwrap().len();
+    eprintln!("buzzsprout {} ({} KB)", path.display(), len / 1024);
+    assert!(len > 100_000);
+}

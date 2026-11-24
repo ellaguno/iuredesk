@@ -9,7 +9,8 @@
 //!   una (14 y 46) es la del resumen con audio.
 //! - **El audio** no está en la API ni en el feed: lo pone en la página el reproductor del plugin
 //!   de TTS (`<div class="tts-enhanced-sesolibre-player" data-main-audio="….mp3">`). Se lee al
-//!   pulsar ▶, se acepta solo un MP3 del mismo sitio y se guarda en caché.
+//!   pulsar ▶, se acepta solo un MP3 del mismo sitio o de un alojamiento de pódcasts conocido
+//!   ([`AUDIO_HOSTS`]: los resúmenes de SesoLibre suelen estar en Buzzsprout) y se guarda en caché.
 //! - **Otras fuentes**: un sitio WordPress (solo títulos) o un feed RSS/Atom cualquiera, cuyo
 //!   `<enclosure>` de audio también se reproduce (pódcasts).
 //!
@@ -472,8 +473,17 @@ pub fn parse_feed(xml: &[u8]) -> Vec<NewsItem> {
     out
 }
 
+/// Alojamientos de pódcasts cuyo audio se acepta aunque no sea del sitio del artículo (con sus
+/// subdominios: `www.buzzsprout.com` redirige a `audio.buzzsprout.com`).
+pub const AUDIO_HOSTS: &[&str] = &["buzzsprout.com"];
+
+fn trusted_audio_host(host: &str) -> bool {
+    AUDIO_HOSTS.iter().any(|h| host == *h || host.strip_suffix(h).is_some_and(|sub| sub.ends_with('.')))
+}
+
 /// URL del MP3 en la página de un artículo: `data-main-audio` del reproductor del plugin de TTS
-/// (o el `src` de un `<audio>`/`<source>`). Solo del mismo sitio que la página.
+/// (o el `src` de un `<audio>`/`<source>`). Solo del mismo sitio que la página o de
+/// [`AUDIO_HOSTS`] (por https).
 pub fn page_audio(html: &str, page: &Url) -> Option<String> {
     let host = page.host_str()?;
     let attr_values = |key: &str| -> Vec<String> {
@@ -501,7 +511,10 @@ pub fn page_audio(html: &str, page: &Url) -> Option<String> {
         .filter(|v| !v.trim().is_empty())
         .filter_map(|v| page.join(v.trim()).ok())
         .filter(|u| u.path() != page.path())
-        .find(|u| u.host_str() == Some(host) && (u.scheme() == "https" || parse_url(u.as_str()).is_some()))
+        .find(|u| {
+            let same = u.host_str() == Some(host) && (u.scheme() == "https" || parse_url(u.as_str()).is_some());
+            same || (u.scheme() == "https" && u.host_str().is_some_and(trusted_audio_host))
+        })
         .map(|u| u.to_string())
 }
 
@@ -523,7 +536,7 @@ async fn wordpress(client: &reqwest::Client, origin: &str, audio_category: Optio
 
 /// Los artículos fuera de la categoría con audio también pueden traer el reproductor (SesoLibre
 /// lo pone en otros artículos, lo notó el dueño 2026-11-24). No está en la API: se mira la página
-/// de los que se pueden mostrar y, si lo tiene, su MP3 (del mismo sitio) queda como audio.
+/// de los que se pueden mostrar y, si lo tiene, su MP3 (ver [`page_audio`]) queda como audio.
 async fn probe_pages(client: &reqwest::Client, items: &mut [NewsItem]) {
     for item in items.iter_mut().take(usize::from(MAX_PER_SOURCE)) {
         if item.has_audio() {
@@ -770,6 +783,16 @@ mod tests {
         );
         // De otro sitio no; un <source> relativo del mismo sitio sí.
         assert_eq!(page_audio(r#"<div data-main-audio="https://evil.example/a.mp3">"#, &page), None);
+        // Buzzsprout sí (ahí están muchos resúmenes de SesoLibre), solo por https y sin imitadores.
+        let bz = "https://www.buzzsprout.com/2516146/episodes/20162327-resumen-de-noticias.mp3";
+        assert_eq!(page_audio(&format!(r#"<div data-main-audio="{bz}">"#), &page).as_deref(), Some(bz));
+        for bad in [
+            "http://www.buzzsprout.com/1.mp3",
+            "https://evilbuzzsprout.com/1.mp3",
+            "https://buzzsprout.com.evil.example/1.mp3",
+        ] {
+            assert_eq!(page_audio(&format!(r#"<div data-main-audio="{bad}">"#), &page), None, "{bad}");
+        }
         assert_eq!(
             page_audio(r#"<source type="audio/mpeg" src="/media/voz.mp3?v=2&amp;x=1">"#, &page).as_deref(),
             Some("https://sesolibre.com/media/voz.mp3?v=2&x=1")
@@ -868,12 +891,16 @@ mod tests {
         #[test]
         fn hostile_pages_and_feeds(s in ".{0,2000}", bytes in prop::collection::vec(any::<u8>(), 0..2000)) {
             let page = Url::parse("https://sesolibre.com/a/").unwrap();
+            let ok = |u: &str| {
+                let host = Url::parse(u).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+                u.starts_with("https://sesolibre.com/") || (u.starts_with("https://") && trusted_audio_host(&host))
+            };
             if let Some(u) = page_audio(&s, &page) {
-                prop_assert!(u.starts_with("https://sesolibre.com/"));
+                prop_assert!(ok(&u), "{u}");
             }
             let html = format!("<div data-main-audio=\"{s}\"></div>");
             if let Some(u) = page_audio(&html, &page) {
-                prop_assert!(u.starts_with("https://sesolibre.com/"));
+                prop_assert!(ok(&u), "{u}");
             }
             for i in parse_feed(&bytes).into_iter().chain(parse_feed(s.as_bytes())) {
                 prop_assert!(i.link.starts_with("https://"));
