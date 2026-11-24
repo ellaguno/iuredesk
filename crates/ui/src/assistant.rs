@@ -211,6 +211,10 @@ pub fn command(app: &mut DeskApp, ctx: &Context, id: &str) {
             Some(id) => crate::task_editor::open(app, id),
             None => app.notice(iuredesk_engine::Notice::info("Select a task first.", "Primero elige una tarea.")),
         },
+        "tasks.open_iure" | "tasks.open_project" => match app.pim.task_sel {
+            Some(task) => crate::task_board::open_origin(app, task, id == "tasks.open_project"),
+            None => app.notice(iuredesk_engine::Notice::info("Select a task first.", "Primero elige una tarea.")),
+        },
         "contacts.new" => crate::contact_editor::open_new(app),
         "contacts.edit" => match app.session.contact_selection() {
             [id] => {

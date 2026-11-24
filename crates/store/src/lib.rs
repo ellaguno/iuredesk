@@ -33,6 +33,7 @@ mod queue;
 pub mod sample;
 pub mod search;
 mod tables;
+mod task_cases;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -51,6 +52,7 @@ pub use pim::MAX_INDEXED_DAYS;
 pub use pim_remote::{CollectionRef, CollectionSync, PimRef, RawObject, SyncedItem};
 pub use queue::{MAX_OP_PAYLOAD, QueuedOp};
 pub use search::{ParsedQuery, QueryTerm, TermField, parse_query};
+pub use task_cases::{MAX_TASK_CASES, TaskCase};
 
 use crate::search::{IndexDoc, SearchIndex};
 

@@ -35,6 +35,9 @@ Generado a partir de los comandos de IureDesk; no se edita a mano. El esquema se
 
 | Comando | Outlook | Gmail | Apple Mail |
 |---|---|---|---|
+| Tareas: lista | `Ctrl+Shift+1` | `Ctrl+Shift+1` | `Ctrl+Shift+1` |
+| Tareas: tablero | `Ctrl+Shift+2` | `Ctrl+Shift+2` | `Ctrl+Shift+2` |
+| Tareas: por caso | `Ctrl+#` | `Ctrl+#` | `Ctrl+#` |
 | Editar la nota aquí / verla | `Ctrl+Shift+E` | `Ctrl+Shift+E` | `Ctrl+Shift+E` |
 
 ## Correo

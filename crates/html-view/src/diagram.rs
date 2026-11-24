@@ -632,7 +632,7 @@ fn num_attr(tag: &str, name: &str) -> Option<f32> {
 }
 
 /// Caja de la primera figura de `group` (rect, circle, ellipse, polygon o path).
-fn shape_box(group: &str) -> Option<(f32, f32, f32, f32)> {
+pub(crate) fn shape_box(group: &str) -> Option<(f32, f32, f32, f32)> {
     let starts = ["<rect", "<circle", "<ellipse", "<polygon", "<path"];
     let (pos, kind) = starts.iter().filter_map(|k| group.find(k).map(|p| (p, *k))).min_by_key(|(p, _)| *p)?;
     let tag = group.get(pos..pos + group.get(pos..)?.find('>')?)?;
@@ -949,6 +949,8 @@ pub struct BlockPixels {
     pub points: (f32, f32),
     /// Mapas mentales: dónde quedó cada nodo (en puntos) y su línea del bloque.
     pub boxes: Vec<mindmap::NodeBox>,
+    /// S1.33: las zonas que se editan desde el dibujo (puntos de un cuadrante…), en puntos.
+    pub spots: Vec<crate::mermaid_edit::actions::Spot>,
 }
 
 /// El SVG de un bloque de diagrama (```` ```mermaid ```` o mapa mental), para exportarlo.
@@ -993,7 +995,8 @@ pub fn draw_block(
             format!("No se pudo dibujar el diagrama ({e})."),
         )
     })?;
-    Ok(BlockPixels { width: px.width, height: px.height, rgba: px.rgba, points, boxes })
+    let spots = crate::mermaid_edit::actions::spots(block, &svg);
+    Ok(BlockPixels { width: px.width, height: px.height, rgba: px.rgba, points, boxes, spots })
 }
 
 #[cfg(test)]

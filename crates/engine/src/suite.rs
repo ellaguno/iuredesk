@@ -52,6 +52,8 @@ pub enum SuiteAction {
     ProjectOverviews(Vec<PathBuf>),
     /// S1.6: abrir un plan en IureProject.
     OpenProject(PathBuf),
+    /// S1.35: abrir el plan en una tarea (su id en Iurefficient).
+    OpenProjectTask { file: PathBuf, task: String },
     /// «Correo → tarea del plan»: agregar una tarea al plan y guardarlo (sin abrir IureProject).
     AddProjectTask { file: PathBuf, task: iuredesk_integrations::NewProjectTask },
     /// S1.4: grabar una reunión con IureTranscribe (sin abrir su ventana).
@@ -280,9 +282,10 @@ impl SuiteHub {
             SuiteAction::Speak(_) | SuiteAction::Dictate { .. } => Some(SisterApp::Voz),
             SuiteAction::Transcribe { file, .. } if !is_text_transcript(file) => Some(SisterApp::Transcribe),
             SuiteAction::Launch(a) => Some(*a),
-            SuiteAction::ProjectOverviews(_) | SuiteAction::OpenProject(_) | SuiteAction::AddProjectTask { .. } => {
-                Some(SisterApp::Project)
-            }
+            SuiteAction::ProjectOverviews(_)
+            | SuiteAction::OpenProject(_)
+            | SuiteAction::OpenProjectTask { .. }
+            | SuiteAction::AddProjectTask { .. } => Some(SisterApp::Project),
             SuiteAction::StartRecording { .. } => Some(SisterApp::Transcribe),
             _ => None,
         };
@@ -408,6 +411,14 @@ impl SuiteHub {
                 SuiteAction::OpenProject(file) => outcome(suite.open_in_iureproject(&file), |_| {
                     SuiteEvent::Done(Text::new("Opening the plan in IureProject", "Abriendo el plan en IureProject"))
                 }),
+                SuiteAction::OpenProjectTask { file, task } => {
+                    outcome(suite.open_in_iureproject_at(&file, &task), |_| {
+                        SuiteEvent::Done(Text::new(
+                            "Opening the task in IureProject",
+                            "Abriendo la tarea en IureProject",
+                        ))
+                    })
+                }
                 SuiteAction::AddProjectTask { file, task } => {
                     let plan = file.file_stem().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
                     outcome(suite.add_project_task(&file, &task), |t| {

@@ -32,6 +32,7 @@ pub mod remote_images;
 pub mod security;
 pub mod session;
 pub mod suite;
+pub mod tasks_view;
 pub mod time;
 pub mod today;
 pub mod today_bg;

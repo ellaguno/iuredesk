@@ -189,6 +189,47 @@ fn calendar_shared_by_two_accounts_shows_once() {
     s.shutdown();
 }
 
+/// S1.34: el tablero cambia el estado de una tarea (con deshacer), y las tareas de Iurefficient
+/// guardan su caso para verlas «por caso».
+#[test]
+fn task_status_changes_and_task_cases() {
+    use iuredesk_model::TaskStatus;
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = open(sample_store(dir.path()), None);
+    settle(&mut s);
+    let lists = s.task_lists();
+    let all: Vec<_> = lists.iter().flat_map(|l| s.tasks(l.id)).collect();
+    // Los casos de las tareas de Iurefficient del ejemplo.
+    let iure: Vec<_> = all.iter().filter(|t| t.remote_id.as_deref().is_some_and(|r| r.starts_with("iure:"))).collect();
+    assert!(!iure.is_empty(), "el ejemplo trae tareas de Iurefficient");
+    let with_case: Vec<_> = iure.iter().filter_map(|t| s.task_case(t).map(|c| c.title)).collect();
+    assert!(with_case.iter().any(|c| c == "1452/2026") && with_case.iter().any(|c| c == "241/2026"), "{with_case:?}");
+    assert!(iure.iter().any(|t| s.task_case(t).is_none()), "una tarea sin caso");
+    // Una tarea local: por hacer → en curso → terminada; deshacer la deja en curso.
+    let local = all.iter().find(|t| !t.is_done() && t.remote_id.is_none()).unwrap().clone();
+    s.set_task_status(local.id, TaskStatus::InProcess).unwrap();
+    let t = s.task(local.id).unwrap();
+    assert_eq!(t.status, TaskStatus::InProcess);
+    assert!(!t.is_done());
+    s.set_task_status(local.id, TaskStatus::Completed).unwrap();
+    let t = s.task(local.id).unwrap();
+    assert!(t.is_done() && t.percent_complete == 100);
+    s.run("undo").unwrap();
+    assert_eq!(s.task(local.id).unwrap().status, TaskStatus::InProcess);
+    // S1.35: la página de una tarea de Iurefficient; una local no tiene.
+    let it = iure.iter().find(|t| t.remote_id.as_deref() == Some("iure:it-1")).unwrap();
+    assert_eq!(
+        s.iure_task_url(it).as_deref(),
+        Some("https://demo.iurefficient.com/dashboard/tasks?taskId=it-1&view=list")
+    );
+    assert_eq!(s.iure_task_id(it).as_deref(), Some("it-1"));
+    assert!(s.iure_task_url(&local).is_none());
+    // De vuelta por hacer: sin fecha de terminada ni avance.
+    s.set_task_status(local.id, TaskStatus::NeedsAction).unwrap();
+    let t = s.task(local.id).unwrap();
+    assert!(t.completed.is_none() && t.percent_complete == 0);
+}
+
 /// Un correo de «Hoy» abre su carpeta y queda seleccionado aunque la Entrada muestre otra pestaña
 /// de categoría (antes la lista no lo tenía y la petición se perdía: se abría el correo sin él).
 #[test]

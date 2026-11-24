@@ -10,6 +10,7 @@ use iurefficient_ui::{
 
 use crate::app::DeskApp;
 use crate::widgets::{hairline, info_row, pane_title};
+use iuredesk_engine::tasks_view::TaskView;
 
 /// Estado de contactos, notas y tareas.
 #[derive(Default)]
@@ -27,6 +28,8 @@ pub struct PimState {
     pub(crate) note_editing: bool,
     pub(crate) task_list: Option<TaskListId>,
     show_done: bool,
+    /// S1.34: las canceladas del tablero, desplegadas.
+    pub(crate) show_cancelled: bool,
     /// F7.1: tarea nueva que se está escribiendo.
     new_task: String,
     /// UX-6: tarea elegida en la lista, título en edición (F2) y editor abierto.
@@ -971,7 +974,7 @@ pub(crate) fn new_note_in_editor(app: &mut DeskApp, ctx: &egui::Context) {
 
 /// Qué se hizo sobre una fila de tarea.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RowAct {
+pub(crate) enum RowAct {
     Toggle,
     Delete,
     Select,
@@ -979,6 +982,9 @@ enum RowAct {
     Edit,
     /// UX-6: cambiar el nombre en la lista (F2).
     Rename,
+    /// S1.35: abrir en Iurefficient / en el plan de IureProject.
+    OpenIure,
+    OpenProject,
 }
 
 pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
@@ -1010,6 +1016,21 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
     });
     split::center(ui, PaneKind::Detail, |ui| {
         let c = theme::colors(ui);
+        // S1.34: Lista · Tablero · Por caso (comandos `tasks.view.*`, Ctrl+Mayús+1/2/3).
+        let view = app.session.task_view();
+        if view == TaskView::ByCase {
+            view_header(
+                app,
+                ui,
+                &ctx,
+                pick("By case", "Por caso"),
+                pick("pending tasks of all lists", "tareas pendientes de todas las listas"),
+            );
+            ui.add_space(8.0);
+            let acts = crate::task_board::by_case(app, ui);
+            apply_board_acts(app, &ctx, &lists, acts);
+            return;
+        }
         let Some(list_id) = selected else {
             EmptyState::new(Icon::Tasks, pick("No task lists", "No hay listas de tareas"))
                 .body(pick("Tasks from your accounts will appear here.", "Las tareas de tus cuentas aparecerán aquí."))
@@ -1019,7 +1040,7 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
         let name = lists.iter().find(|l| l.id == list_id).map(|l| l.name.clone()).unwrap_or_default();
         let all = app.session.tasks(list_id);
         let (done, open): (Vec<Task>, Vec<Task>) = all.into_iter().partition(|t| t.is_done());
-        pane_title(ui, &name, &format!("{} {}", open.len(), pick("pending", "pendientes")));
+        view_header(app, ui, &ctx, &name, &format!("{} {}", open.len(), pick("pending", "pendientes")));
         if let Some(b) = app.session.task_list_badge(list_id) {
             badge(ui, &b, BadgeKind::Neutral);
         }
@@ -1060,6 +1081,14 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
                 acts.push((id, RowAct::Rename));
             }
         }
+        if view == TaskView::Board {
+            let in_progress = app.session.task_caps(list_id).in_progress;
+            let all: Vec<Task> = open.into_iter().chain(done).collect();
+            let mut board = crate::task_board::board(app, ui, all, writable, in_progress);
+            board.extend(acts.into_iter().map(|(id, a)| crate::task_board::BoardAct::Row(id, a)));
+            apply_board_acts(app, &ctx, &lists, board);
+            return;
+        }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_max_width(760.0);
             if open.is_empty() {
@@ -1089,17 +1118,53 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
                 }
             }
         });
-        for (id, a) in acts {
-            match a {
-                RowAct::Toggle => match app.session.toggle_task(id, &lists) {
-                    Ok(out) => app.outcome(&ctx, out),
+        let acts = acts.into_iter().map(|(id, a)| crate::task_board::BoardAct::Row(id, a)).collect();
+        apply_board_acts(app, &ctx, &lists, acts);
+    });
+}
+
+/// S1.34: la cabecera de las tareas con el selector de vista a la derecha.
+fn view_header(app: &mut DeskApp, ui: &mut Ui, ctx: &egui::Context, title: &str, subtitle: &str) {
+    ui.horizontal(|ui| {
+        pane_title(ui, title, subtitle);
+        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+            let view = app.session.task_view();
+            let mut v = view;
+            iurefficient_ui::segmented(ui, &mut v, &TaskView::ALL.map(|x| (x, x.label())));
+            if v != view {
+                app.run(ctx, &format!("tasks.view.{}", v.key()));
+            }
+        });
+    });
+}
+
+/// Lo pedido en la lista, el tablero o la vista por caso.
+fn apply_board_acts(
+    app: &mut DeskApp,
+    ctx: &egui::Context,
+    lists: &[iuredesk_model::TaskList],
+    acts: Vec<crate::task_board::BoardAct>,
+) {
+    use crate::task_board::BoardAct;
+    for a in acts {
+        match a {
+            BoardAct::Status(id, s) => match app.session.set_task_status(id, s) {
+                Ok(out) => app.outcome(ctx, out),
+                Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
+            },
+            BoardAct::OpenProject(file) => app.suite.hub.run(iuredesk_engine::suite::SuiteAction::OpenProject(file)),
+            BoardAct::Row(id, a) => match a {
+                RowAct::Toggle => match app.session.toggle_task(id, lists) {
+                    Ok(out) => app.outcome(ctx, out),
                     Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
                 },
                 RowAct::Delete => match app.session.delete_task(id) {
-                    Ok(out) => app.outcome(&ctx, out),
+                    Ok(out) => app.outcome(ctx, out),
                     Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
                 },
                 RowAct::Select => app.pim.task_sel = Some(id),
+                RowAct::OpenIure => crate::task_board::open_origin(app, id, false),
+                RowAct::OpenProject => crate::task_board::open_origin(app, id, true),
                 RowAct::Edit => {
                     app.pim.task_sel = Some(id);
                     crate::task_editor::open(app, id);
@@ -1109,9 +1174,9 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
                     let title = app.session.task(id).map(|t| t.summary).unwrap_or_default();
                     app.pim.task_rename = Some(TaskRename { id, text: title, focused: false });
                 }
-            }
+            },
         }
-    });
+    }
 }
 
 /// UX-6: título que se está cambiando en la lista (F2).
@@ -1122,7 +1187,7 @@ pub(crate) struct TaskRename {
 }
 
 /// Una tarea con su casilla.
-fn task_row(app: &mut DeskApp, ui: &mut Ui, t: &Task, writable: bool) -> Option<RowAct> {
+pub(crate) fn task_row(app: &mut DeskApp, ui: &mut Ui, t: &Task, writable: bool) -> Option<RowAct> {
     let c = theme::colors(ui);
     let zone = app.session.zone();
     let today = app.session.today();
@@ -1142,6 +1207,9 @@ fn task_row(app: &mut DeskApp, ui: &mut Ui, t: &Task, writable: bool) -> Option<
         if icons::menu_item(ui, Some(Icon::Rename), pick("Edit…", "Editar…")).clicked() {
             act = Some(RowAct::Edit);
             ui.close();
+        }
+        if let Some(a) = crate::task_board::origin_menu(app, ui, t) {
+            act = Some(a);
         }
         if writable {
             if icons::menu_item(ui, None, pick("Rename (F2)", "Cambiar nombre (F2)")).clicked() {

@@ -47,6 +47,7 @@ mod security_ui;
 mod server_form;
 mod settings;
 mod suite_ui;
+mod task_board;
 mod task_editor;
 mod today;
 mod today_bg;

@@ -1475,10 +1475,19 @@ impl Session {
             let by_remote: HashMap<String, Task> =
                 old.into_iter().filter_map(|t| t.remote_id.clone().map(|r| (r, t))).collect();
             let mut seen = HashSet::new();
+            // S1.34: el caso de cada tarea (para verlas «por caso»), aparte de la tarea.
+            let cases = self.task_cases();
             for t in a.tasks.iter().take(500) {
                 let Some(mut new) = task_from_remote(t, list.id) else { continue };
                 let rid = new.remote_id.clone().unwrap_or_default();
                 seen.insert(rid.clone());
+                let case = t.case_id.as_deref().filter(|c| !c.trim().is_empty()).map(|id| iuredesk_store::TaskCase {
+                    id: id.to_string(),
+                    title: t.case_title.clone().filter(|c| !c.trim().is_empty()).unwrap_or_else(|| id.to_string()),
+                });
+                if cases.get(&rid) != case.as_ref() && self.store.set_task_case(&rid, case.as_ref()).is_ok() {
+                    changed = true;
+                }
                 if let Some(cur) = by_remote.get(&rid) {
                     new.id = cur.id;
                     new.created = cur.created;
@@ -1493,6 +1502,7 @@ impl Session {
             for (rid, t) in &by_remote {
                 // Terminada aquí y aún sin confirmar en la instancia: se deja hasta la próxima.
                 if !seen.contains(rid) && !t.is_done() && self.store.delete_task(t.id).is_ok() {
+                    let _ = self.store.set_task_case(rid, None);
                     changed = true;
                 }
             }

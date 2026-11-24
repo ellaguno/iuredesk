@@ -372,6 +372,23 @@ impl Suite {
         Ok(Outcome::Ready(()))
     }
 
+    /// S1.35: abre el plan en la tarea que en Iurefficient tiene el id `iure_task`
+    /// (`iureproject plan.iurp --task <id>`; una versión que no lo entiende abre el plan).
+    pub fn open_in_iureproject_at(&self, file: &Path, iure_task: &str) -> crate::Result<Outcome<()>> {
+        let Some(program) = self.paths.get(&SisterApp::Project) else {
+            return Ok(Outcome::NotInstalled(SisterApp::Project.install_hint()));
+        };
+        let file = absolute(file)?;
+        let id: String = iure_task.chars().filter(|c| !c.is_control()).take(100).collect();
+        let mut args = vec![file.to_string_lossy().into_owned()];
+        if !id.trim().is_empty() {
+            args.push("--task".into());
+            args.push(id);
+        }
+        self.opener.launch(program, &args)?;
+        Ok(Outcome::Ready(()))
+    }
+
     /// Lanza una app sin argumentos (botón «Abrir» del panel).
     pub fn launch(&self, app: SisterApp) -> crate::Result<Outcome<()>> {
         let Some(program) = self.paths.get(&app) else {
@@ -405,8 +422,14 @@ fn which(bin: &str) -> Option<PathBuf> {
     std::env::split_paths(&path).map(|d| d.join(bin)).find(|p| p.is_file())
 }
 
-/// Busca una app: primero el catálogo de connect, luego las ubicaciones habituales.
+/// Busca una app: primero una ruta de desarrollo (`IUREDESK_<APP>_BIN`, p. ej.
+/// `IUREDESK_IUREPROJECT_BIN=…/target/release/iureproject`, para probar una compilación sin
+/// instalarla), luego el catálogo de connect y luego las ubicaciones habituales.
 fn locate(app: SisterApp) -> Option<PathBuf> {
+    let var = format!("IUREDESK_{}_BIN", app.bins().linux.to_ascii_uppercase().replace('-', "_"));
+    if let Some(p) = std::env::var_os(&var).map(PathBuf::from).filter(|p| p.is_file()) {
+        return Some(p);
+    }
     if let Some(id) = app.connect_id()
         && let Some(p) = capps::locate(capps::APPS.iter().find(|d| d.id == id)?)
     {

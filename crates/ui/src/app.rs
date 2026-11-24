@@ -1089,6 +1089,7 @@ impl DeskApp {
         let typing = ctx.egui_wants_keyboard_input();
         let in_calendar = self.session.module == Module::Calendar;
         let in_mail = self.session.module == Module::Mail;
+        let in_tasks = self.session.module == Module::Tasks;
         let mut fire: Option<&'static str> = None;
         ctx.input_mut(|i| {
             let mut consumed = None;
@@ -1101,6 +1102,7 @@ impl DeskApp {
                         // Las teclas de función (F1, F6, F11) valen también escribiendo.
                         || (typing && !chord.has_modifier() && !is_function_key(chord.key))
                         || (cmd.starts_with("cal.") && !in_calendar)
+                        || (cmd.starts_with("tasks.view.") && !in_tasks)
                         || ((cmd == "mail.open_window" || cmd == "view.reading_focus") && !in_mail)
                     {
                         continue;

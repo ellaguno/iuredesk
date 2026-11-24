@@ -257,3 +257,19 @@ fn iureditor_por_deep_link() {
     assert_eq!(prog, Path::new("/opt/iureditor/iureditor"));
     assert_eq!(args, &vec!["iureditor://iurefficient/doc?doc=7".to_string()]);
 }
+
+/// S1.35: abrir un plan en una tarea de Iurefficient lanza `iureproject plan.iurp --task <id>`.
+#[test]
+fn opens_a_plan_at_a_task() {
+    let rec = Arc::new(Recorder::default());
+    let s = Suite::empty().with_opener(rec.clone()).with_app(SisterApp::Project, "/opt/iureproject/iureproject");
+    let dir = tempfile::tempdir().unwrap();
+    let plan = dir.path().join("Caso.iurp");
+    std::fs::write(&plan, b"{}").unwrap();
+    assert!(matches!(s.open_in_iureproject_at(&plan, "srv-7"), Ok(Outcome::Ready(()))));
+    let launched = rec.launched.lock().unwrap().clone();
+    let (_, args) = launched.last().unwrap();
+    assert_eq!(args.get(1..).unwrap(), ["--task", "srv-7"]);
+    // Sin IureProject: se invita a instalarlo.
+    assert!(matches!(Suite::empty().open_in_iureproject_at(&plan, "x"), Ok(Outcome::NotInstalled(_))));
+}

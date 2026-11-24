@@ -209,6 +209,9 @@ pub struct Prefs {
     /// Vista del calendario.
     #[serde(default)]
     pub cal_view: crate::calendar::nav::CalView,
+    /// S1.34: vista de las tareas (lista, tablero o por caso).
+    #[serde(default)]
+    pub task_view: crate::tasks_view::TaskView,
     /// Calendarios ocultos (ids locales).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hidden_calendars: Vec<u64>,
@@ -467,6 +470,7 @@ impl Default for Prefs {
             notify_new_mail: true,
             iure_poll_secs: default_iure_poll(),
             cal_view: crate::calendar::nav::CalView::default(),
+            task_view: crate::tasks_view::TaskView::default(),
             hidden_calendars: Vec::new(),
             shown_duplicate_calendars: Vec::new(),
             secondary_tz: None,
