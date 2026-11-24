@@ -39,7 +39,6 @@ pub(crate) struct Full {
     until_text: String,
     attendee: String,
     optional: bool,
-    preview: bool,
     focused: bool,
     read_only: bool,
 }
@@ -65,8 +64,6 @@ impl Full {
             RepeatEnd::Until(d) => d.format("%Y-%m-%d").to_string(),
             _ => String::new(),
         };
-        // Una cita que ya tiene descripción se abre leyéndola (con formato).
-        let preview = draft.id.is_some() && !draft.description.trim().is_empty();
         Full {
             start_text: draft.start_date.format("%Y-%m-%d").to_string(),
             end_text: draft.end_date.format("%Y-%m-%d").to_string(),
@@ -75,7 +72,6 @@ impl Full {
             occ,
             attendee: String::new(),
             optional: false,
-            preview,
             focused: false,
             read_only,
         }
@@ -448,15 +444,28 @@ fn row_icon(ui: &mut Ui, ic: Icon) {
 
 fn time_combo(ui: &mut Ui, id: (&str, u8), min: &mut i64, end: bool) {
     let mut v = *min;
+    // Al abrir la lista, se lleva a la vista la hora elegida (o la más cercana): antes empezaba
+    // siempre en 00:15 y había que recorrerla toda (dueño 2026-11-24). Solo al abrir, para que
+    // luego se pueda mover libremente.
+    let opened = egui::Id::unique(("ev-time-abierta", id.0, id.1));
     let combo = egui::ComboBox::from_id_salt(id).width(74.0).selected_text(hm(v)).height(280.0).show_ui(ui, |ui| {
         let from = if end { 15 } else { 0 };
         let to = if end { DAY_MIN } else { DAY_MIN - 15 };
+        let near = (((v - from) as f64 / 15.0).round() as i64 * 15 + from).clamp(from, to);
+        let first = !ui.data(|d| d.get_temp::<bool>(opened).unwrap_or(false));
         let mut m = from;
         while m <= to {
-            ui.selectable_value(&mut v, m, hm(m));
+            let r = ui.selectable_value(&mut v, m, hm(m));
+            if first && m == near {
+                r.scroll_to_me(Some(Align::Center));
+            }
             m += 15;
         }
+        ui.data_mut(|d| d.insert_temp(opened, true));
     });
+    if combo.inner.is_none() {
+        ui.data_mut(|d| d.remove::<bool>(opened));
+    }
     crate::widgets::named(&combo.response, egui::Role::ComboBox, pick("Time", "Hora"));
     *min = v;
 }
@@ -568,7 +577,9 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
                 f.end_text = f.draft.end_date.format("%Y-%m-%d").to_string();
             }
         }
-        ui.label(RichText::new("→").color(c.text_muted));
+        // Flecha dibujada (el carácter «→» no está en la letra de la interfaz: salía un cuadro).
+        let (r, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+        iurefficient_ui::icons::paint(ui.painter(), r, Icon::ChevronRight, c.text_muted, c.text_muted);
         let mut ed = f.draft.end_date;
         if date_field(ui, &mut f.end_text, &mut ed) {
             f.draft.end_date = ed;
@@ -651,27 +662,51 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
     ui.horizontal(|ui| {
         row_icon(ui, Icon::Notes);
         section_label(ui, pick("Description", "Descripción"));
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.selectable_value(&mut f.preview, true, pick("Preview", "Vista previa"));
-            ui.selectable_value(&mut f.preview, false, pick("Edit", "Editar"));
+    });
+    // El editor de la suite (el de notas y correos): formato al escribir, listas, tablas,
+    // diagramas; un clic en un enlace lo abre (dueño 2026-11-24).
+    let mindmap_layout = crate::note_preview::layout_of(app.session.prefs.mindmap_layout);
+    let speller =
+        app.pim.speller.get_or_insert_with(|| iure_doc_ui::Speller::system(crate::pim::personal_dictionary())).clone();
+    let hooks = iure_doc_ui::Hooks {
+        diagrams: Some(std::sync::Arc::new(crate::note_diagrams::NoteDiagrams::new(ui, mindmap_layout))),
+        paste: Some(std::sync::Arc::new(iure_doc_ui::SystemClipboard)),
+        spell: Some(speller),
+        math: Some(std::sync::Arc::new(crate::note_diagrams::NoteFormulas::new(ui, true))),
+        ..Default::default()
+    };
+    let read_only = f.read_only;
+    // De solo lectura, se edita una copia que se descarta (como «Ver» una nota).
+    let mut copy;
+    let text: &mut String = if read_only {
+        copy = f.draft.description.clone();
+        &mut copy
+    } else {
+        &mut f.draft.description
+    };
+    let mut link = None;
+    egui::Frame::new().fill(c.surface_alt).corner_radius(6.0).inner_margin(6.0).show(ui, |ui| {
+        ui.allocate_ui(egui::vec2(ui.available_width(), 190.0), |ui| {
+            ui.set_min_height(190.0);
+            let out = iure_doc_ui::show_blocks_hooks(
+                ui,
+                egui::Id::unique("ev-descripcion"),
+                text,
+                pick(
+                    "Notes (**bold**, - lists, # headings, links)",
+                    "Notas (**negrita**, - listas, # títulos, enlaces)",
+                ),
+                hooks,
+            );
+            crate::widgets::named(&out.response, egui::Role::MultilineTextInput, pick("Description", "Descripción"));
+            link = out.link;
         });
     });
-    if f.preview {
-        egui::Frame::new().fill(c.surface_alt).corner_radius(6.0).inner_margin(10.0).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            markdown_preview(ui, &f.draft.description);
-        });
-    } else {
-        let r = ui.add(
-            egui::TextEdit::multiline(&mut f.draft.description)
-                .hint_text(pick(
-                    "Notes (Markdown: **bold**, - lists, # headings)",
-                    "Notas (Markdown: **negrita**, - listas, # títulos)",
-                ))
-                .desired_rows(4)
-                .desired_width(f32::INFINITY),
-        );
-        crate::widgets::named(&r, egui::Role::TextInput, pick("Description", "Descripción"));
+    if let Some(l) = link {
+        let lower = l.to_ascii_lowercase();
+        if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") {
+            crate::open_url(&l);
+        }
     }
     // El bloque que añade Google (Meet, teléfonos): plegado, tal cual y sin editar.
     let conference = f.draft.description_shown.conference.clone();
@@ -992,59 +1027,6 @@ fn scheduling_assistant(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
             }
         }
     });
-}
-
-/// Vista previa sencilla de Markdown: títulos, listas y **negrita** / *cursiva*.
-fn markdown_preview(ui: &mut Ui, text: &str) {
-    let c = theme::colors(ui);
-    if text.trim().is_empty() {
-        ui.label(RichText::new(pick("No description", "Sin descripción")).color(c.text_muted));
-        return;
-    }
-    for line in text.lines().take(400) {
-        let t = line.trim_end();
-        if let Some(h) = t.strip_prefix("# ").or_else(|| t.strip_prefix("## ")) {
-            ui.label(RichText::new(h).font(theme::bold_font(ui.ctx(), 15.0)).color(c.text));
-            continue;
-        }
-        let (bullet, body) = match t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
-            Some(b) => (true, b),
-            None => (false, t),
-        };
-        let mut job = egui::text::LayoutJob::default();
-        if bullet {
-            job.append("•  ", 0.0, egui::TextFormat::simple(theme::body_font(ui.ctx()), c.text));
-        }
-        let mut bold = false;
-        let mut italic = false;
-        let mut buf = String::new();
-        let flush = |job: &mut egui::text::LayoutJob, buf: &mut String, bold: bool, italic: bool| {
-            if buf.is_empty() {
-                return;
-            }
-            let font = if bold { theme::bold_font(ui.ctx(), 14.0) } else { theme::body_font(ui.ctx()) };
-            let mut fmt = egui::TextFormat::simple(font, c.text);
-            fmt.italics = italic;
-            job.append(buf, 0.0, fmt);
-            buf.clear();
-        };
-        let mut chars = body.chars().peekable();
-        while let Some(ch) = chars.next() {
-            if ch == '*' && chars.peek() == Some(&'*') {
-                chars.next();
-                flush(&mut job, &mut buf, bold, italic);
-                bold = !bold;
-            } else if ch == '*' || ch == '_' {
-                flush(&mut job, &mut buf, bold, italic);
-                italic = !italic;
-            } else {
-                buf.push(ch);
-            }
-        }
-        flush(&mut job, &mut buf, bold, italic);
-        job.wrap.max_width = ui.available_width();
-        ui.label(job);
-    }
 }
 
 // ------------------------------------------------------------------ series

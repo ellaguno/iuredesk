@@ -159,3 +159,27 @@ fn invitation_card_accepts() {
     assert_eq!(inv.my_status, Some(PartStat::Accepted));
     assert!(inv.existing.is_some(), "quedó en el calendario");
 }
+
+/// Regresión del dueño (2026-11-24): la lista de horas abría siempre en 00:15 y había que
+/// recorrerla toda; ahora abre en la hora elegida. Y la descripción usa el editor de la suite.
+#[test]
+fn time_list_opens_at_the_chosen_hour_and_description_uses_the_suite_editor() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    a.session.module = Module::Calendar;
+    assert!(a.demo_event_editor());
+    let mut h = harness(a);
+    settle(&mut h);
+    // La descripción: el editor por bloques (no una caja de texto simple).
+    assert!(h.query_by_role_and_label(Role::MultilineTextInput, "Descripción").is_some());
+    // La hora de inicio: al abrir la lista, 00:15 queda fuera (arriba) y la elegida a la vista.
+    let combo = h.get_all_by_label("Hora").next().unwrap().rect();
+    h.get_all_by_label("Hora").next().unwrap().click();
+    h.run_steps(4);
+    let early = h.get_by_label("00:15").rect();
+    assert!(
+        early.bottom() < combo.bottom(),
+        "00:15 debería quedar fuera de la vista: {early:?} (lista bajo {combo:?})"
+    );
+}
