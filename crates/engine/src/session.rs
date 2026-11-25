@@ -1506,6 +1506,26 @@ impl Session {
         Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
     }
 
+    /// UX-23: ¿el mensaje está en una papelera (borrarlo sería definitivo)?
+    pub fn in_trash(&mut self, id: MessageId) -> bool {
+        let folder = self.envelope(id).map(|e| e.folder);
+        folder.and_then(|f| self.folder(f)).is_some_and(|f| f.role == FolderRole::Trash)
+    }
+
+    /// UX-23: borra un mensaje que no es el elegido (Supr con el ratón encima de su fila): va a la
+    /// papelera (o se elimina si ya estaba en ella) con deshacer, y la selección y el mensaje
+    /// abierto se quedan como estaban.
+    pub fn delete_message(&mut self, id: MessageId) -> Result<Outcome> {
+        let (selection, focused) = (self.selection.clone(), self.focused);
+        self.selection = vec![id];
+        let out = self.delete();
+        self.selection = selection.into_iter().filter(|m| *m != id).collect();
+        self.focused = focused.filter(|f| *f != id);
+        // La lista conserva su propia selección (por clave): no se mueve a «el siguiente».
+        self.focus_request = None;
+        out
+    }
+
     fn delete(&mut self) -> Result<Outcome> {
         let ids = self.targets();
         // Lo que ya está en la papelera se elimina de verdad (sin deshacer); lo demás va a ella.

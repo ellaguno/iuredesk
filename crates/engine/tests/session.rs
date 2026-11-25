@@ -147,6 +147,27 @@ fn opening_marks_read_and_delete_goes_to_trash() {
     assert_eq!(s.folder(folder_of(&s, id)).unwrap().role, FolderRole::Inbox);
 }
 
+/// UX-23: borrar un mensaje que no es el elegido (Supr con el ratón encima): va a la papelera con
+/// deshacer, la selección sigue igual y el mensaje abierto no cambia; en la papelera, se elimina.
+#[test]
+fn deleting_another_message_keeps_the_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    let rows: Vec<MessageId> = s.rows().iter().map(|r| r.id).take(3).collect();
+    let (open, other) = (rows[0], rows[2]);
+    select(&mut s, open);
+    assert!(!s.in_trash(other));
+    assert!(matches!(s.delete_message(other).unwrap(), Outcome::Notice(_)));
+    settle(&mut s);
+    assert_eq!(s.folder(folder_of(&s, other)).unwrap().role, FolderRole::Trash);
+    assert_eq!(s.selection(), [open], "la selección no cambia");
+    assert_eq!(s.focused(), Some(open), "el mensaje abierto tampoco");
+    assert_eq!(s.take_focus_request(), None, "la lista no salta a otro");
+    assert!(s.in_trash(other));
+    s.run("undo").unwrap();
+    assert_eq!(s.folder(folder_of(&s, other)).unwrap().role, FolderRole::Inbox);
+}
+
 #[test]
 fn commands_without_selection_explain_instead_of_failing() {
     let dir = tempfile::tempdir().unwrap();

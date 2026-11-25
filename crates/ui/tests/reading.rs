@@ -406,3 +406,52 @@ fn html_body_text_selects_and_copies() {
     h.run_steps(1);
     assert!(!h.output().platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::CopyText(_))));
 }
+
+/// UX-23: Supr con el ratón sobre una fila que no es la elegida pide confirmación y borra solo esa;
+/// la elegida sigue elegida y abierta. Cancelar no borra nada.
+#[test]
+fn delete_key_over_a_row_asks_and_deletes_that_one() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let app = app_on(sample_store(dir.path()));
+    let mut h = harness(app, vec2(1440.0, 900.0));
+    settle(&mut h);
+    let rows: Vec<MessageId> = h.state().session.rows().iter().map(|r| r.id).take(8).collect();
+    let open = rows[0];
+    focus(&mut h, open);
+    // Una fila visible con un asunto que no se repite (para apuntar a ella sin dudas).
+    let subjects: Vec<String> =
+        rows.iter().map(|id| h.state_mut().session.envelope(*id).unwrap().subject.clone()).collect();
+    let k = (1..rows.len())
+        .find(|&k| subjects.iter().filter(|s| **s == subjects[k]).count() == 1 && subjects[k] != subjects[0])
+        .unwrap();
+    let (other, subject) = (rows[k], subjects[k].clone());
+    // Su fila en la lista (la columna del medio; el asunto también puede salir en «Hoy»).
+    let row = h
+        .query_all_by_label_contains(&subject)
+        .map(|n| n.rect())
+        .find(|r| r.left() > 280.0 && r.right() < 720.0)
+        .unwrap_or_else(|| panic!("fila de «{subject}»"));
+    let over = |h: &mut Harness<'_, DeskApp>| {
+        h.hover_at(row.center());
+        h.run_steps(2);
+    };
+    // Cancelar: nada cambia.
+    over(&mut h);
+    assert_eq!(h.state().hovered_message(), Some(other), "la fila bajo el ratón");
+    h.key_press(Key::Delete);
+    settle(&mut h);
+    assert!(h.query_by_label_contains("¿Enviar a la papelera").is_some(), "el aviso dice cuál");
+    h.get_by_label("Cancelar").click();
+    settle(&mut h);
+    assert!(!h.state_mut().session.in_trash(other));
+    // Confirmar: solo ese, y la selección sigue.
+    over(&mut h);
+    h.key_press(Key::Delete);
+    settle(&mut h);
+    h.get_by_label("Eliminar").click();
+    settle(&mut h);
+    assert!(h.state_mut().session.in_trash(other));
+    assert!(!h.state_mut().session.in_trash(open));
+    assert_eq!(h.state().session.focused(), Some(open), "el abierto sigue abierto");
+}

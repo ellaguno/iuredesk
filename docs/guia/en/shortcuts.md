@@ -1,6 +1,6 @@
 # Keyboard shortcuts
 
-Generated from IureDesk's commands; don't edit by hand. Choose the scheme in Settings → General → Keyboard shortcuts. On macOS, Ctrl is ⌘. Every command is also in the command palette (Ctrl+K), which shows its shortcut.
+Generated from IureDesk's commands; don't edit by hand. Choose the scheme in Settings → General → Keyboard shortcuts. On macOS, Ctrl is ⌘. Every command is also in the command palette (Ctrl+K), which shows its shortcut. With the mouse over a message that isn't selected, Del (or the scheme's Delete key) deletes that one, after asking.
 
 
 ## Mail

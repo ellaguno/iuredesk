@@ -844,10 +844,12 @@ pub fn shortcuts_markdown(spanish: bool) -> String {
     s.push_str(pick(
         "Generated from IureDesk's commands; don't edit by hand. Choose the scheme in Settings → \
          General → Keyboard shortcuts. On macOS, Ctrl is ⌘. Every command is also in the command \
-         palette (Ctrl+K), which shows its shortcut.\n\n",
+         palette (Ctrl+K), which shows its shortcut. With the mouse over a message that isn't \
+         selected, Del (or the scheme's Delete key) deletes that one, after asking.\n\n",
         "Generado a partir de los comandos de IureDesk; no se edita a mano. El esquema se elige en \
          Ajustes → General → Atajos de teclado. En macOS, Ctrl es ⌘. Todos los comandos están \
-         también en la paleta (Ctrl+K), que muestra su atajo.\n\n",
+         también en la paleta (Ctrl+K), que muestra su atajo. Con el ratón sobre un mensaje que no \
+         está elegido, Supr (o la tecla de Eliminar del esquema) borra ese, después de preguntar.\n\n",
     ));
     let mut current: Option<Group> = None;
     for c in COMMANDS {

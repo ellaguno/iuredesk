@@ -1,6 +1,6 @@
 # Atajos de teclado
 
-Generado a partir de los comandos de IureDesk; no se edita a mano. El esquema se elige en Ajustes → General → Atajos de teclado. En macOS, Ctrl es ⌘. Todos los comandos están también en la paleta (Ctrl+K), que muestra su atajo.
+Generado a partir de los comandos de IureDesk; no se edita a mano. El esquema se elige en Ajustes → General → Atajos de teclado. En macOS, Ctrl es ⌘. Todos los comandos están también en la paleta (Ctrl+K), que muestra su atajo. Con el ratón sobre un mensaje que no está elegido, Supr (o la tecla de Eliminar del esquema) borra ese, después de preguntar.
 
 
 ## Correo

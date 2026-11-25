@@ -46,6 +46,8 @@ pub struct MailState {
     show_quoted: HashSet<MessageId>,
     /// UX-22: texto elegido en el cuerpo HTML de un mensaje (cursores del mapa de su render).
     pub(crate) body_sel: Option<BodySel>,
+    /// UX-23: fila bajo el ratón y en qué pasada se vio (Supr la borra aunque no esté elegida).
+    pub(crate) hover_row: Option<(MessageId, u64)>,
     /// F7.1: «Nueva carpeta…» / «Renombrar…» abierto.
     pub(crate) folder_dialog: Option<FolderDialog>,
     /// UX-3: lectura enfocada (sin carpetas ni lista; Esc vuelve).
@@ -104,6 +106,7 @@ impl Default for MailState {
             card: None,
             show_quoted: HashSet::new(),
             body_sel: None,
+            hover_row: None,
             focus: false,
             strip_open: false,
             readers: Vec::new(),
@@ -1072,8 +1075,13 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         let h = if density == DensityPref::Comfortable { 62.0 } else { 48.0 };
         lv = lv.row_height(h).header(false);
     }
+    let mut hovered_row: Option<MessageId> = None;
     let out = lv.show(ui, &mut mail.list, key_of, |row| {
         let Some(&ListRow { id, count }) = rows.get(row.index) else { return };
+        // Toda la franja de la fila (también la casilla, que queda fuera de `row.rect`).
+        if hover.is_some_and(|p| p.y >= row.rect.top() && p.y < row.rect.bottom()) {
+            hovered_row = Some(id);
+        }
         let Some(env) = session.envelope(id).cloned() else { return };
         let unread = !env.flags.seen;
         let labels = session.message_labels(&env);
@@ -1241,6 +1249,11 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
     if let Some(tip) = badge_tip {
         out.response.clone().on_hover_text_at_pointer(tip);
     }
+    // UX-23: la fila bajo el ratón (solo si el puntero está sobre la lista, no sobre un menú).
+    let pass = ui.ctx().cumulative_pass_nr();
+    let on_list = hover
+        .is_some_and(|p| out.response.rect.contains(p) && ui.ctx().layer_id_at(p).is_none_or(|l| l == ui.layer_id()));
+    mail.hover_row = hovered_row.filter(|_| on_list).map(|id| (id, pass));
     // R4.1: la lista es un panel de F6.
     if !panes.contains(&out.response.id) {
         panes.push(out.response.id);
@@ -2288,5 +2301,12 @@ fn context_inline(ui: &mut Ui, card: &ContextCard) {
                 }
             });
         ui.add_space(8.0);
+    }
+}
+
+impl DeskApp {
+    /// UX-23: la fila de la lista bajo el ratón en la última pasada (pruebas).
+    pub fn hovered_message(&self) -> Option<MessageId> {
+        self.mail.hover_row.map(|(id, _)| id)
     }
 }

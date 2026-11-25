@@ -17,6 +17,9 @@ use crate::mail::MailState;
 use crate::pim::PimState;
 use crate::widgets::{kit_density, kit_theme};
 
+/// UX-23: «comando» interno del aviso de borrar el mensaje bajo el ratón (no está en la paleta).
+const HOVER_DELETE: &str = "mail.delete_hovered";
+
 /// Notificación del escritorio: (título, texto, enlace `iuredesk://` que abre el clic). La pone la
 /// app (Linux: D-Bus con zbus; Windows: avisos de WinRT; macOS: UserNotifications).
 pub type Notifier = Arc<dyn Fn(&str, &str, Option<&str>) + Send + Sync>;
@@ -135,6 +138,8 @@ pub struct DeskApp {
     applied_fonts: Option<(String, u32, bool)>,
     /// Confirmación pendiente (`Outcome::Confirm`): texto, botón y comando a ejecutar.
     pub(crate) confirm: Option<(iuredesk_engine::lang::Text, iuredesk_engine::lang::Text, String)>,
+    /// UX-23: mensaje que se borrará si se confirma (Supr con el ratón sobre su fila).
+    pub(crate) hover_delete: Option<iuredesk_model::MessageId>,
     /// R2.1: tiempo por cuadro, memoria y estado para Ajustes → Avanzado.
     pub(crate) diag: crate::diagnostics::DiagState,
     /// R1.2: archivos abiertos desde el sistema.
@@ -194,6 +199,7 @@ impl DeskApp {
             applied: None,
             applied_fonts: None,
             confirm: None,
+            hover_delete: None,
             diag: Default::default(),
             opened: Default::default(),
             attach,
@@ -800,6 +806,37 @@ impl DeskApp {
         self.applied_fonts = Some(want);
     }
 
+    /// UX-23: pregunta antes de borrar el mensaje bajo el ratón (no es el elegido: el aviso dice
+    /// cuál es).
+    fn ask_hover_delete(&mut self, id: iuredesk_model::MessageId) {
+        let Some(env) = self.session.envelope(id).cloned() else { return };
+        let subject = if env.subject.trim().is_empty() {
+            pick("(no subject)", "(sin asunto)").to_string()
+        } else {
+            env.subject.chars().take(80).collect()
+        };
+        let who = env.sender_display().chars().take(60).collect::<String>();
+        let (text, yes) = if self.session.in_trash(id) {
+            (
+                iuredesk_engine::lang::Text::new(
+                    format!("Delete «{subject}» from {who} permanently? It can't be undone."),
+                    format!("¿Eliminar definitivamente «{subject}» de {who}? No se puede deshacer."),
+                ),
+                iuredesk_engine::lang::Text::new("Delete permanently", "Eliminar definitivamente"),
+            )
+        } else {
+            (
+                iuredesk_engine::lang::Text::new(
+                    format!("Move «{subject}» from {who} to the trash?"),
+                    format!("¿Enviar a la papelera «{subject}» de {who}?"),
+                ),
+                iuredesk_engine::lang::Text::new("Delete", "Eliminar"),
+            )
+        };
+        self.hover_delete = Some(id);
+        self.confirm = Some((text, yes, HOVER_DELETE.to_string()));
+    }
+
     /// Diálogo de confirmación de `Outcome::Confirm` («¿Eliminar 3 contactos?»).
     fn confirm_dialog(&mut self, ctx: &Context) {
         let Some((text, yes, command)) = self.confirm.clone() else { return };
@@ -825,7 +862,16 @@ impl DeskApp {
         match answer {
             Some(true) => {
                 self.confirm = None;
-                self.run(ctx, &command);
+                if command == HOVER_DELETE {
+                    if let Some(id) = self.hover_delete.take() {
+                        match self.session.delete_message(id) {
+                            Ok(out) => self.outcome(ctx, out),
+                            Err(e) => self.notice(Notice::error(e.text())),
+                        }
+                    }
+                } else {
+                    self.run(ctx, &command);
+                }
             }
             Some(false) => self.confirm = None,
             None => {}
@@ -1091,6 +1137,34 @@ impl DeskApp {
         let in_mail = self.session.module == Module::Mail;
         let in_tasks = self.session.module == Module::Tasks;
         let mut fire: Option<&'static str> = None;
+        // UX-23: Supr (o el atajo de borrar del esquema) con el ratón sobre una fila que no es la
+        // elegida la borra a ella, con aviso; sobre la elegida, lo de siempre.
+        let pass = ctx.cumulative_pass_nr();
+        let hovered = self
+            .mail
+            .hover_row
+            .filter(|(_, p)| in_mail && !typing && p.saturating_add(1) >= pass)
+            .map(|(id, _)| id)
+            .filter(|id| !self.session.selection().contains(id) && self.session.focused() != Some(*id));
+        let delete_chord = command::shortcut("mail.delete", scheme);
+        let mut hover_delete = None;
+        if let Some(id) = hovered {
+            ctx.input_mut(|i| {
+                let hit = i.events.iter().position(|e| {
+                    matches!(e, egui::Event::Key { key, pressed: true, modifiers, .. }
+                        if (*key == Key::Delete && modifiers.is_none())
+                            || delete_chord.as_ref().is_some_and(|c| chord_matches(c, *key, *modifiers)))
+                });
+                if let Some(idx) = hit {
+                    i.events.remove(idx);
+                    hover_delete = Some(id);
+                }
+            });
+        }
+        if let Some(id) = hover_delete {
+            self.ask_hover_delete(id);
+            return;
+        }
         ctx.input_mut(|i| {
             let mut consumed = None;
             for (idx, e) in i.events.iter().enumerate() {
