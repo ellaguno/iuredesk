@@ -33,6 +33,7 @@ mod net;
 pub mod print;
 pub mod sanitize;
 mod text;
+pub mod textmap;
 mod ua;
 
 use std::collections::HashMap;
@@ -162,6 +163,8 @@ pub struct Rendered {
     pub rgba: Vec<u8>,
     /// Enlaces y su zona, en px físicos.
     pub links: Vec<LinkRect>,
+    /// UX-22: el texto pintado con la caja de cada carácter (seleccionar y copiar).
+    pub text: textmap::TextMap,
     /// Recursos remotos que se bloquearon (URLs únicas, en orden de aparición).
     pub blocked: Vec<String>,
     /// El documento era más alto que [`RenderOptions::max_height`] y se cortó.
@@ -176,6 +179,7 @@ impl std::fmt::Debug for Rendered {
             .field("width", &self.width)
             .field("height", &self.height)
             .field("links", &self.links.len())
+            .field("text", &self.text.len())
             .field("blocked", &self.blocked.len())
             .field("truncated", &self.truncated)
             .field("dark_applied", &self.dark_applied)

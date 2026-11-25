@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use egui::{ColorImage, Context, TextureHandle, TextureOptions};
 use iuredesk_engine::{Fetched, JobId, JobOutput, Session};
+use iuredesk_html_view::textmap::TextMap;
 use iuredesk_html_view::{Bytes, Fetcher, LinkRect, RenderOptions};
 use iuredesk_model::MessageId;
 
@@ -47,6 +48,8 @@ pub struct HtmlImage {
     pub(crate) size: [usize; 2],
     pub(crate) links: Vec<LinkRect>,
     pub(crate) blocked: Vec<String>,
+    /// UX-22: el texto pintado (seleccionar y copiar).
+    pub(crate) text: Arc<TextMap>,
 }
 
 /// Lado máximo de textura si aún no se conoce el de la GPU (el mínimo que egui garantiza).
@@ -72,7 +75,7 @@ pub(crate) fn to_image(r: iuredesk_html_view::Rendered, max_side: usize) -> Resu
         tiles.push(ColorImage::from_rgba_unmultiplied([size[0], h], bytes));
         y += h;
     }
-    Ok(HtmlImage { tiles, size, links: r.links, blocked: r.blocked })
+    Ok(HtmlImage { tiles, size, links: r.links, blocked: r.blocked, text: Arc::new(r.text) })
 }
 
 /// Estado de un render.
@@ -84,6 +87,8 @@ pub enum HtmlState {
         size_px: [usize; 2],
         links: Vec<LinkRect>,
         blocked: Vec<String>,
+        /// UX-22: el texto pintado (seleccionar y copiar).
+        text: Arc<TextMap>,
         scale: f32,
     },
     Failed,
@@ -209,6 +214,7 @@ impl HtmlCache {
                     size_px: size,
                     links: r.links,
                     blocked: r.blocked,
+                    text: r.text,
                     scale: done.key.ppp_x100 as f32 / 100.0,
                 }
             }
@@ -312,6 +318,7 @@ mod tests {
             height: h,
             rgba: vec![255; (w * h * 4) as usize],
             links: Vec::new(),
+            text: Default::default(),
             blocked: Vec::new(),
             truncated: false,
             dark_applied: false,

@@ -86,6 +86,26 @@ pub fn pill(app: &mut DeskApp, ctx: &Context) {
     }
 }
 
+/// El punto de «grabando», dibujado: el carácter «●» no está en todas las letras del sistema y
+/// salía como un cuadro (lo vio el dueño 2026-11-25).
+fn rec_dot(ui: &mut egui::Ui, color: egui::Color32) {
+    let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+    ui.painter().circle_filled(r.center(), 5.0, color);
+}
+
+/// Botón «● Grabar» con el punto dibujado (no como carácter).
+pub(crate) fn record_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let c = theme::colors(ui);
+    let id = egui::IdSalt::new("rec-dot");
+    let out = egui::Button::new((egui::Atom::custom(id, egui::vec2(10.0, 10.0)), RichText::new(text).color(c.danger)))
+        .atom_ui(ui);
+    if let Some(r) = out.rect(id) {
+        ui.painter().circle_filled(r.center(), 5.0, c.danger);
+    }
+    iurefficient_ui::a11y::button(&out.response, text);
+    out.response
+}
+
 enum PillAct {
     Pause(bool),
     Stop,
@@ -95,7 +115,7 @@ fn pill_body(ui: &mut egui::Ui, st: &RecordingState) -> Option<PillAct> {
     let c = theme::colors(ui);
     let mut act = None;
     let dot = if st.paused { c.text_muted } else { c.danger };
-    ui.label(RichText::new("●").color(dot));
+    rec_dot(ui, dot);
     let state = if st.stopping {
         pick("Saving the recording…", "Guardando la grabación…")
     } else if st.paused {

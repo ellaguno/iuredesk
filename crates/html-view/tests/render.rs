@@ -96,6 +96,32 @@ fn links_are_hit_testable() {
     assert_eq!(r.link_at(1.0, 1.0), None);
 }
 
+/// UX-22: el texto pintado se puede seleccionar: cada carácter con su caja, en orden, con un
+/// salto entre párrafos; el cursor bajo un punto cae en el carácter que se ve ahí.
+#[test]
+fn painted_text_is_selectable() {
+    let html = r#"<p style="margin:0">Hola <b>mundo</b> &amp; más</p><table><tr><td>Uno</td><td>Dos</td></tr></table><p>Fin</p>"#;
+    let opts = RenderOptions { scale: 2.0, ..RenderOptions::default() };
+    let r = render(html, &opts).unwrap();
+    let t = &r.text;
+    let all = t.text_between(0, t.len());
+    assert_eq!(all, "Hola mundo & más\nUno\nDos\nFin", "{all:?}");
+    // Las cajas caen dentro de la imagen y la primera línea va arriba.
+    assert!(t.glyphs.iter().all(|g| g.rect.x >= 0.0 && g.rect.x + g.rect.width <= r.width as f32 + 1.0));
+    let first = t.lines.first().unwrap().rect;
+    assert!(first.y < 40.0 && first.height > 10.0, "{first:?}");
+    // El cursor en medio de «mundo» y la palabra con doble clic.
+    let m = t.glyphs[6].rect;
+    let c = t.caret_at(m.x + 1.0, m.y + m.height / 2.0).unwrap();
+    assert_eq!(c, 6);
+    let (s, e) = t.word_at(c);
+    assert_eq!(t.text_between(s, e), "mundo");
+    // En la tabla: el punto sobre «Dos» elige su celda, no la de al lado.
+    let dos = (0..t.len()).find(|&i| t.text_between(i, i + 1) == "D").unwrap();
+    let d = t.glyphs[dos].rect;
+    assert_eq!(t.caret_at(d.x + 1.0, d.y + 2.0), Some(dos));
+}
+
 #[test]
 fn dark_mode_only_when_supported() {
     let plain = render("<p>hola</p>", &RenderOptions { dark_mode: true, ..RenderOptions::default() }).unwrap();

@@ -85,8 +85,14 @@ fn main() -> ExitCode {
     }
 }
 
+/// Raíz del repositorio. Se toma de `CARGO_MANIFEST_DIR` **al ejecutarse** (`cargo xtask` la pone
+/// con la copia desde la que se llama) y solo si falta, de la ruta con que se compiló: varias copias
+/// de trabajo comparten `target/` y, con la misma versión, Cargo reutiliza el `xtask` compilado en
+/// otra; con la ruta fija, `ci` revisaba aquella copia y no esta (2026-11-25).
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+    let dir =
+        std::env::var_os("CARGO_MANIFEST_DIR").map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::from);
+    dir.parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf)
 }
 
 fn cargo(args: &[&str]) -> Res {

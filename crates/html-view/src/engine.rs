@@ -14,7 +14,9 @@ use peniko::{Color, Fill};
 
 use crate::net::MailNet;
 use crate::sanitize::Sanitized;
+use crate::textmap::TextMap;
 use crate::{Error, LinkRect, Rect, RenderOptions, Rendered, fonts, ua};
+use parley::PositionedLayoutItem;
 
 /// Alto del viewport para el layout (px CSS). Solo afecta a unidades `vh` y similares: el documento
 /// se pinta entero, no solo el viewport.
@@ -104,6 +106,7 @@ pub(crate) fn render_sanitized(clean: &Sanitized, opts: &RenderOptions) -> Resul
     let height = full_h.min(max_h);
 
     let links = collect_links(doc, scale, height);
+    let text = collect_text(doc, scale, height);
 
     let bg = match opts.background {
         Some([r, g, b]) => Color::from_rgba8(r, g, b, 255),
@@ -138,12 +141,62 @@ pub(crate) fn render_sanitized(clean: &Sanitized, opts: &RenderOptions) -> Resul
     }
     doc.set_viewport_scroll(blitz_dom::util::Point { x: 0.0, y: 0.0 });
 
-    Ok(Rendered { width, height, rgba, links, blocked: net.take_blocked(), truncated, dark_applied: dark })
+    Ok(Rendered { width, height, rgba, links, text, blocked: net.take_blocked(), truncated, dark_applied: dark })
 }
 
 fn css_to_px(css: f32, scale: f32) -> u32 {
     let v = (css * scale).ceil();
     if v.is_finite() && v > 0.0 { v.min(u32::MAX as f32) as u32 } else { 0 }
+}
+
+/// UX-22: cada carácter pintado con su caja (px físicos), en orden del documento y línea a línea,
+/// de los layouts de `parley` de cada raíz de texto (lo mismo que pinta `blitz-paint`).
+fn collect_text(doc: &BaseDocument, scale: f32, max_h: u32) -> TextMap {
+    let mut map = TextMap::default();
+    for id in TreeTraverser::new(doc) {
+        let Some(node) = doc.get_node(id) else { continue };
+        if !node.flags.is_inline_root() {
+            continue;
+        }
+        let Some(tl) = node.element_data().and_then(|e| e.inline_layout_data.as_ref()) else { continue };
+        let ls = tl.layout.scale();
+        if !ls.is_finite() || ls <= 0.0 {
+            continue;
+        }
+        // Origen de la caja de contenido (px CSS) y de layout a px físicos.
+        let lay = node.final_layout();
+        let origin = node.absolute_position(0.0, 0.0);
+        let cx = (origin.x + lay.border.left + lay.padding.left) * scale;
+        let cy = (origin.y + lay.border.top + lay.padding.top + tl.block_offset) * scale;
+        let k = scale / ls;
+        for line in tl.layout.lines() {
+            let m = line.metrics();
+            let top = cy + m.block_min_coord * k;
+            let h = (m.block_max_coord - m.block_min_coord) * k;
+            if !top.is_finite() || !h.is_finite() || h <= 0.5 || top >= max_h as f32 {
+                continue;
+            }
+            let start = map.len();
+            for item in line.items() {
+                let PositionedLayoutItem::GlyphRun(run) = item else { continue };
+                let mut x = run.offset();
+                for cl in run.run().visual_clusters() {
+                    let adv = cl.advance();
+                    let text = tl.text.get(cl.text_range()).unwrap_or("");
+                    if !cl.is_hard_line_break() && !text.is_empty() && adv.is_finite() {
+                        let rect = Rect { x: cx + x * k, y: top, width: (adv * k).max(0.0), height: h };
+                        if !map.push_glyph(rect, text) {
+                            map.end_line(start);
+                            return map;
+                        }
+                    }
+                    x += adv;
+                }
+            }
+            map.end_line(start);
+        }
+    }
+    map
 }
 
 /// Zonas de cada `<a href>` (una por línea si el enlace se parte), en px físicos.

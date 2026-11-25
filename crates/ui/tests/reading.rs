@@ -346,3 +346,63 @@ fn earlier_message_in_a_conversation_opens_on_click() {
     settle(&mut h);
     assert!(opened(&h), "se abre en la ventana");
 }
+
+/// UX-22: el texto de un correo HTML (pintado como imagen) se selecciona arrastrando y se copia
+/// con Ctrl+C; un clic suelto quita la selección.
+#[test]
+fn html_body_text_selects_and_copies() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let app = app_on(sample_store(dir.path()));
+    let mut h = harness(app, vec2(1440.0, 900.0));
+    settle(&mut h);
+    let id = h.state().session.rows()[0].id;
+    let env = h.state().session.store().get_envelope(id).unwrap().unwrap();
+    let raw = "From: a@example.com\r\nTo: b@example.com\r\nSubject: Seleccionar\r\nMIME-Version: 1.0\r\n\
+               Content-Type: text/html; charset=utf-8\r\n\r\n\
+               <p style=\"font-size:22px;margin:0\">Texto para copiar del correo</p><p>Segunda línea</p>\r\n";
+    h.state().session.store().put_message(env, raw.as_bytes()).unwrap();
+    h.state_mut().session.retry_body(id);
+    focus(&mut h, id);
+    let body = h.get_by_label_contains("Texto para copiar").rect();
+    // De la izquierda del cuerpo hasta abajo de todo: las dos líneas.
+    let from = body.left_top() + vec2(2.0, 12.0);
+    let to = body.left_bottom() + vec2(400.0, -2.0);
+    let press = |h: &mut Harness<'_, DeskApp>, pos: egui::Pos2, pressed: bool| {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(1);
+    };
+    h.hover_at(from);
+    h.run_steps(1);
+    press(&mut h, from, true);
+    for k in 1..=8 {
+        h.event(egui::Event::PointerMoved(from + (to - from) * (k as f32 / 8.0)));
+        h.run_steps(1);
+    }
+    press(&mut h, to, false);
+    h.event(egui::Event::Copy);
+    h.run_steps(1);
+    let copied: Vec<String> = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(copied, ["Texto para copiar del correo\nSegunda línea"], "{copied:?}");
+    // Un clic suelto quita la selección: Ctrl+C ya no copia nada.
+    h.hover_at(from);
+    press(&mut h, from, true);
+    press(&mut h, from, false);
+    h.event(egui::Event::Copy);
+    h.run_steps(1);
+    assert!(!h.output().platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::CopyText(_))));
+}

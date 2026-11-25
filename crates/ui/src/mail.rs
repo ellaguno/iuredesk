@@ -19,6 +19,15 @@ use crate::app::DeskApp;
 use crate::html::{HtmlCache, HtmlKey, HtmlState};
 use crate::widgets::{hairline, pane_title, tool_button, wide_primary};
 
+/// UX-22: selección de texto sobre la imagen de un cuerpo HTML. Vale para ese render (`key`):
+/// con otro ancho o zoom los cursores ya no corresponden y se descarta.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct BodySel {
+    pub key: HtmlKey,
+    pub anchor: usize,
+    pub focus: usize,
+}
+
 /// Estado de la vista de correo.
 pub struct MailState {
     pub list: ListState,
@@ -35,6 +44,8 @@ pub struct MailState {
     card: Option<(MessageId, u64, ContextCard)>,
     /// Mensajes con la historia citada desplegada.
     show_quoted: HashSet<MessageId>,
+    /// UX-22: texto elegido en el cuerpo HTML de un mensaje (cursores del mapa de su render).
+    pub(crate) body_sel: Option<BodySel>,
     /// F7.1: «Nueva carpeta…» / «Renombrar…» abierto.
     pub(crate) folder_dialog: Option<FolderDialog>,
     /// UX-3: lectura enfocada (sin carpetas ni lista; Esc vuelve).
@@ -92,6 +103,7 @@ impl Default for MailState {
             conv: None,
             card: None,
             show_quoted: HashSet::new(),
+            body_sel: None,
             focus: false,
             strip_open: false,
             readers: Vec::new(),
@@ -1766,9 +1778,9 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
         app.html.set_max_texture_side(ctx.input(|i| i.max_texture_side));
         let state = app.html.get(&mut app.session, key, html, &body.inline);
         match state {
-            Some(HtmlState::Ready { tiles, size_px, links, blocked, scale }) => {
-                let (tiles, size_px, links, blocked, scale) =
-                    (tiles.clone(), *size_px, links.clone(), blocked.clone(), *scale);
+            Some(HtmlState::Ready { tiles, size_px, links, blocked, text, scale }) => {
+                let (tiles, size_px, links, blocked, text, scale) =
+                    (tiles.clone(), *size_px, links.clone(), blocked.clone(), text.clone(), *scale);
                 // UX-5: aviso con «Mostrar siempre de este remitente / dominio», o carga sola
                 // según Ajustes → Privacidad.
                 crate::remote_images_ui::banner(app, ui, env.id, html, blocked);
@@ -1778,7 +1790,7 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
                 let fit = if zoom > 1.0 { 1.0 } else { (ui.available_width() / natural.x).clamp(0.3, 1.0) };
                 let size = natural * fit;
                 let scale = size_px[0].max(1) as f32 / size.x.max(1.0);
-                let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+                let (rect, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
                 // Franjas de arriba abajo (un boletín largo no cabe en una sola textura).
                 let full_h = size_px[1].max(1) as f32;
                 let mut y = 0usize;
@@ -1790,7 +1802,9 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
                     y += h;
                 }
                 iurefficient_ui::a11y::label(&resp, &body.text.chars().take(400).collect::<String>());
-                if let Some(p) = resp.hover_pos() {
+                // UX-22: seleccionar texto (arrastrar, doble y triple clic) y copiarlo.
+                let link_hit = body_selection(app, ui, &resp, rect, scale, key, &text, &links);
+                if let Some(p) = resp.hover_pos().filter(|_| !link_hit) {
                     let px = (p - rect.min) * scale;
                     if let Some(l) = links.iter().rev().find(|l| l.rect.contains(px.x, px.y)) {
                         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -1853,6 +1867,120 @@ fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {
             .collect();
         crate::attach_ui::show(app, ui, env.id, &items, false);
     }
+}
+
+/// UX-22: selección de texto sobre la imagen de un cuerpo HTML (el mapa de texto del render):
+/// arrastrar elige, doble clic una palabra, triple clic la línea; Ctrl+C o el menú copian. Un
+/// clic sencillo (sin arrastrar) sigue abriendo los enlaces. Devuelve `true` si este cuadro el
+/// puntero está seleccionando (para no tratarlo como clic en un enlace).
+#[allow(clippy::too_many_arguments)]
+fn body_selection(
+    app: &mut DeskApp,
+    ui: &mut Ui,
+    resp: &egui::Response,
+    rect: Rect,
+    scale: f32,
+    key: HtmlKey,
+    text: &iuredesk_html_view::textmap::TextMap,
+    links: &[iuredesk_html_view::LinkRect],
+) -> bool {
+    let ctx = ui.ctx().clone();
+    let to_px = |p: egui::Pos2| (p - rect.min) * scale;
+    let caret = |p: egui::Pos2| {
+        let px = to_px(p);
+        text.caret_at(px.x, px.y)
+    };
+    // Una selección de otro render de este mensaje (otro ancho o zoom) ya no corresponde.
+    if app.mail.body_sel.is_some_and(|s| s.key.id == key.id && s.key != key) {
+        app.mail.body_sel = None;
+    }
+    let mine = |app: &DeskApp| app.mail.body_sel.filter(|s| s.key == key);
+    let mut selecting = false;
+    // Cursor de texto sobre las líneas (salvo en un enlace, que lleva la mano).
+    if let Some(p) = resp.hover_pos() {
+        let px = to_px(p);
+        let on_link = links.iter().any(|l| l.rect.contains(px.x, px.y));
+        let on_text = text.lines.iter().any(|l| l.rect.contains(px.x, px.y));
+        if on_text && !on_link {
+            ctx.set_cursor_icon(egui::CursorIcon::Text);
+        }
+    }
+    if resp.drag_started()
+        && let Some(c) = ctx.input(|i| i.pointer.press_origin()).and_then(caret)
+    {
+        app.mail.body_sel = Some(BodySel { key, anchor: c, focus: c });
+    }
+    if resp.dragged() {
+        selecting = true;
+        if let (Some(p), Some(mut s)) = (ctx.pointer_latest_pos(), mine(app))
+            && let Some(c) = caret(p)
+        {
+            s.focus = c;
+            app.mail.body_sel = Some(s);
+            // Arrastrar fuera del panel lo desplaza.
+            ui.scroll_to_rect(Rect::from_center_size(p, vec2(1.0, 48.0)), None);
+        }
+        ctx.set_cursor_icon(egui::CursorIcon::Text);
+    }
+    if resp.triple_clicked() {
+        if let Some(c) = resp.interact_pointer_pos().and_then(caret) {
+            let (a, b) = text.line_at(c);
+            app.mail.body_sel = Some(BodySel { key, anchor: a, focus: b });
+        }
+        selecting = true;
+    } else if resp.double_clicked() {
+        if let Some(c) = resp.interact_pointer_pos().and_then(caret) {
+            let (a, b) = text.word_at(c);
+            app.mail.body_sel = Some(BodySel { key, anchor: a, focus: b });
+        }
+        selecting = true;
+    } else if resp.clicked() && mine(app).is_some() {
+        // Un clic suelto quita la selección (y abre el enlace si cae en uno).
+        app.mail.body_sel = None;
+    }
+    // Resaltado encima de la imagen.
+    let sel = mine(app).filter(|s| s.anchor != s.focus);
+    if let Some(s) = sel {
+        let fill = theme::colors(ui).accent.gamma_multiply(0.32);
+        for r in text.selection_rects(s.anchor, s.focus) {
+            let min = rect.min + vec2(r.x, r.y) / scale;
+            let sr = Rect::from_min_size(min, vec2(r.width, r.height) / scale);
+            ui.painter().rect_filled(sr.intersect(rect), 2.0, fill);
+        }
+    }
+    // Copiar: Ctrl+C (si no se está escribiendo en otro sitio) o el menú contextual.
+    let copy = |app: &DeskApp| mine(app).map(|s| text.text_between(s.anchor, s.focus)).filter(|t| !t.is_empty());
+    if sel.is_some()
+        && !ctx.egui_wants_keyboard_input()
+        && ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy)))
+        && let Some(t) = copy(app)
+    {
+        ctx.copy_text(t);
+    }
+    let link_here = resp
+        .interact_pointer_pos()
+        .or(resp.hover_pos())
+        .map(to_px)
+        .and_then(|px| links.iter().rev().find(|l| l.rect.contains(px.x, px.y)).map(|l| l.href.clone()));
+    resp.context_menu(|ui| {
+        if ui.add_enabled(sel.is_some(), egui::Button::new(pick("Copy", "Copiar")).shortcut_text("Ctrl+C")).clicked() {
+            if let Some(t) = copy(app) {
+                ui.ctx().copy_text(t);
+            }
+            ui.close();
+        }
+        if ui.button(pick("Select all", "Seleccionar todo")).clicked() {
+            app.mail.body_sel = Some(BodySel { key, anchor: 0, focus: text.len() });
+            ui.close();
+        }
+        if let Some(href) = &link_here
+            && ui.button(pick("Copy link", "Copiar enlace")).clicked()
+        {
+            ui.ctx().copy_text(href.clone());
+            ui.close();
+        }
+    });
+    selecting
 }
 
 /// Texto plano con la historia citada plegada tras «… mostrar texto citado» (como Gmail).

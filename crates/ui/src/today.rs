@@ -993,8 +993,7 @@ fn next_box(app: &DeskApp, ui: &mut Ui, e: &AgendaItem, st: NextState, acts: &mu
                                 acts.push(Act::Join(j.url.clone()));
                             }
                             if record
-                                && ui
-                                    .button(RichText::new(format!("● {}", pick("Record", "Grabar"))).color(c.danger))
+                                && crate::recording_ui::record_button(ui, pick("Record", "Grabar"))
                                     .on_hover_text(pick(
                                         "Record this meeting with IureTranscribe (without opening it)",
                                         "Grabar esta reunión con IureTranscribe (sin abrirlo)",
