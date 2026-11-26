@@ -142,7 +142,7 @@ fn edit_task_from_today() {
     let mut h = harness(app(dir.path()));
     h.state_mut().session.module = Module::Today;
     settle(&mut h);
-    h.get_by_label("Presentar escrito caso 241/2026").click();
+    h.get_by_label("Presentar escrito Arrendamiento Altamira").click();
     settle(&mut h);
     assert!(h.state().task_editor_open());
     assert_eq!(h.state().session.module, Module::Today);

@@ -849,7 +849,7 @@ pub fn populate_in(store: &Store, seed: u64, now: DateTime<Utc>, offset: FixedOf
     let tasks: [(usize, &str, i64, u8, bool); 12] = [
         (0, "Enviar propuesta a Altamira", 1, 1, false),
         (0, "Revisar honorarios de octubre", 2, 5, false),
-        (0, "Presentar escrito caso 241/2026", 0, 1, false),
+        (0, "Presentar escrito Arrendamiento Altamira", 0, 1, false),
         (0, "Actualizar plantilla de contrato", 6, 9, false),
         (0, "Llamar al notario", -1, 5, true),
         (0, "Archivar expedientes 2024", 10, 0, false),

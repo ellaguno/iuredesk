@@ -178,19 +178,19 @@ fn tasks_by_case() {
     let ctx = h.ctx.clone();
     h.state_mut().run(&ctx, "tasks.view.case");
     h.run_steps(4);
-    for case in ["1452/2026", "241/2026", "Sin caso"] {
+    for case in ["Amparo Ruiz Mendoza", "Arrendamiento Altamira", "Sin caso"] {
         assert!(h.query_by_label(case).is_some(), "falta el grupo {case}");
     }
-    // Las dos tareas del caso 1452/2026 están debajo de su encabezado y antes del siguiente grupo.
+    // Las dos tareas del caso «Amparo Ruiz Mendoza» están debajo de su encabezado y antes del siguiente grupo.
     let y = |l: &str| h.get_by_label(l).rect().top();
-    let (a, b) = (y("1452/2026"), y("241/2026"));
+    let (a, b) = (y("Amparo Ruiz Mendoza"), y("Arrendamiento Altamira"));
     for name in ["Revisar escrito de contestación", "Llamar a la contraparte"] {
         let t = y(&format!("Tarea {name}"));
-        assert!(t > a && t < b, "{name} no está en 1452/2026");
+        assert!(t > a && t < b, "{name} no está en Amparo Ruiz Mendoza");
     }
-    // Una tarea local que nombra el número del caso va con él.
-    let local = y("Tarea Presentar escrito caso 241/2026");
-    assert!(local > b && local < y("Sin caso"), "la tarea local del caso 241/2026 no está en su grupo");
+    // Una tarea local que nombra el caso va con él.
+    let local = y("Tarea Presentar escrito Arrendamiento Altamira");
+    assert!(local > b && local < y("Sin caso"), "la tarea local del caso no está en su grupo");
     // La vista se recuerda.
     assert_eq!(h.state().session.task_view(), iuredesk_engine::tasks_view::TaskView::ByCase);
 }

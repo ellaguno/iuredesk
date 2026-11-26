@@ -203,7 +203,10 @@ fn task_status_changes_and_task_cases() {
     let iure: Vec<_> = all.iter().filter(|t| t.remote_id.as_deref().is_some_and(|r| r.starts_with("iure:"))).collect();
     assert!(!iure.is_empty(), "el ejemplo trae tareas de Iurefficient");
     let with_case: Vec<_> = iure.iter().filter_map(|t| s.task_case(t).map(|c| c.title)).collect();
-    assert!(with_case.iter().any(|c| c == "1452/2026") && with_case.iter().any(|c| c == "241/2026"), "{with_case:?}");
+    assert!(
+        with_case.iter().any(|c| c == "Amparo Ruiz Mendoza") && with_case.iter().any(|c| c == "Arrendamiento Altamira"),
+        "{with_case:?}"
+    );
     assert!(iure.iter().any(|t| s.task_case(t).is_none()), "una tarea sin caso");
     // Una tarea local: por hacer → en curso → terminada; deshacer la deja en curso.
     let local = all.iter().find(|t| !t.is_done() && t.remote_id.is_none()).unwrap().clone();

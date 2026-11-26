@@ -90,7 +90,7 @@ fn today_renders_and_items_navigate() {
     assert!(h.query_all_by_label_contains("Día despejado").next().is_none(), "el ejemplo tiene citas hoy");
 
     // UX-6: tarea → su editor, encima de «Mi día»; «Todas» lleva al módulo de Tareas.
-    h.get_by_label("Presentar escrito caso 241/2026").click();
+    h.get_by_label("Presentar escrito Arrendamiento Altamira").click();
     settle(&mut h);
     assert!(h.state().task_editor_open());
     assert_eq!(h.state().session.module, Module::Today);
@@ -120,11 +120,11 @@ fn completing_a_task_from_today() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(app(dir.path()));
     settle(&mut h);
-    h.get_by_label("Terminar Presentar escrito caso 241/2026").click();
+    h.get_by_label("Terminar Presentar escrito Arrendamiento Altamira").click();
     settle(&mut h);
     assert!(h.query_all_by_label_contains("Tarea terminada").next().is_some(), "aviso con deshacer");
     let day = h.state_mut().session.day_summary().unwrap();
-    assert!(!day.tasks.today.iter().any(|t| t.task.summary == "Presentar escrito caso 241/2026"));
+    assert!(!day.tasks.today.iter().any(|t| t.task.summary == "Presentar escrito Arrendamiento Altamira"));
     assert_eq!(h.state().session.module, Module::Today, "terminar no navega");
 }
 
@@ -224,7 +224,7 @@ fn projects_card_shows_plans_and_opens_them() {
     assert!(h.query_by_label("43 %").is_some() || h.query_by_label("42 %").is_some(), "el avance");
     assert!(h.query_by_label("Peritaje — vencía 10 oct").is_some(), "lo atrasado");
     assert!(h.query_by_label("Audiencia — 30 nov").is_some(), "el próximo hito");
-    // La del plan y la vencida del caso 1452/2026 del ejemplo (S1.37).
+    // La del plan y la vencida del caso «Amparo Ruiz Mendoza» del ejemplo (S1.37).
     assert!(h.query_by_label("2 atrasadas").is_some(), "la cifra");
     assert!(h.query_by_label("El archivo ya no está.").is_some(), "el que no se pudo leer");
     h.get_by_label("Caso Ramírez").click();
@@ -453,7 +453,7 @@ fn projects_card_shows_your_cases() {
     assert!(h.query_by_label("2 pendientes · 1 vencida").is_some(), "el caso con vencidas, primero");
     assert!(h.query_by_label("2 pendientes").is_some());
     // «IureProject» del primer caso (sin plan seguido): el expediente.
-    h.get_by_label("1452/2026").scroll_to_me();
+    h.get_by_label("Amparo Ruiz Mendoza").scroll_to_me();
     settle(&mut h);
     h.query_all_by_label("IureProject").next().unwrap().click();
     settle(&mut h);
@@ -463,9 +463,9 @@ fn projects_card_shows_your_cases() {
         std::thread::sleep(Duration::from_millis(20));
     }
     let l = launches.0.lock().unwrap().join("\n");
-    assert!(l.contains("--iurefficient-case") && l.contains("--case-title 1452/2026"), "{l}");
+    assert!(l.contains("--iurefficient-case") && l.contains("--case-title Amparo Ruiz Mendoza"), "{l}");
     // Picar el caso: Tareas → «Por caso».
-    h.get_by_label("1452/2026").click();
+    h.get_by_label("Amparo Ruiz Mendoza").click();
     settle(&mut h);
     assert_eq!(h.state().session.module, Module::Tasks);
     assert_eq!(h.state().session.task_view(), TaskView::ByCase);
@@ -495,7 +495,7 @@ fn projects_card_opens_a_case_on_the_web() {
     settle(&mut h);
     let n = h.query_all_by_label("Abrir en Iurefficient (web)").count();
     assert!(n >= 2, "un símbolo por caso: {n}");
-    h.get_by_label("1452/2026").scroll_to_me();
+    h.get_by_label("Amparo Ruiz Mendoza").scroll_to_me();
     settle(&mut h);
     h.query_all_by_label("Abrir en Iurefficient (web)").next().unwrap().click();
     settle(&mut h);

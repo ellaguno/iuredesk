@@ -1179,7 +1179,7 @@ pub mod sample {
             end: day(d, h + 1),
             event_type: kind.into(),
             location: Some("Iurefficient".into()),
-            case_title: Some("241/2026".into()),
+            case_title: Some("Arrendamiento Altamira".into()),
             ..Default::default()
         };
         let due = |d: i64| (now.date_naive() + chrono::Duration::days(d)).format("%Y-%m-%d").to_string();
@@ -1200,7 +1200,7 @@ pub mod sample {
                     status: "pending".into(),
                     due_date: Some(due(2)),
                     case_id: Some("c-1452/2026".into()),
-                    case_title: Some("1452/2026".into()),
+                    case_title: Some("Amparo Ruiz Mendoza".into()),
                     ..Default::default()
                 },
                 pim::Task {
@@ -1210,7 +1210,7 @@ pub mod sample {
                     priority: Some("high".into()),
                     due_date: Some(due(0)),
                     case_id: Some("c-241/2026".into()),
-                    case_title: Some("241/2026".into()),
+                    case_title: Some("Arrendamiento Altamira".into()),
                     ..Default::default()
                 },
                 pim::Task {
@@ -1219,7 +1219,7 @@ pub mod sample {
                     status: "pending".into(),
                     due_date: Some(due(-1)),
                     case_id: Some("c-1452/2026".into()),
-                    case_title: Some("1452/2026".into()),
+                    case_title: Some("Amparo Ruiz Mendoza".into()),
                     ..Default::default()
                 },
                 pim::Task {
