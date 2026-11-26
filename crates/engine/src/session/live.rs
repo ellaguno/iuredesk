@@ -122,16 +122,21 @@ impl Session {
             .cloned()
             .collect();
         self.live.status.retain(|aid, _| self.account_ids.values().any(|a| a == aid));
-        if accounts.is_empty() {
-            self.restart_pim();
-            return;
-        }
+        // BUG-OAUTHSEND: el gestor de tokens se crea aquí, después de la bandeja de salida; sin
+        // rehacer los transportes, las cuentas de Google o Microsoft se quedaban sin él y el envío
+        // decía que «esta copia no puede pedir el permiso». También cuenta para las cuentas que
+        // solo envían (sin entrante que sincronizar).
         if self.live.tokens.is_none()
             && let Ok(http) = iuredesk_oauth::http_client()
         {
             let tm =
                 iuredesk_oauth::TokenManager::from_settings(http, Arc::clone(&self.secrets), &self.oauth_settings());
             self.live.tokens = Some(Arc::new(tm));
+        }
+        self.refresh_transports();
+        if accounts.is_empty() {
+            self.restart_pim();
+            return;
         }
         for a in &accounts {
             if let Some(aid) = self.account_ids.get(&a.id) {

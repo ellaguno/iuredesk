@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::error::Result;
 use crate::mcp_client::McpClient;
-use crate::suite::{Outcome, SisterApp, Suite};
+use crate::suite::{Outcome, SisterApp, Suite, Text};
 
 /// Tiempo máximo de cada llamada (detener puede tardar: cierra y mezcla las pistas).
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -59,6 +59,19 @@ impl Suite {
             Outcome::NotInstalled(h) => return Ok(Outcome::NotInstalled(h)),
             Outcome::NotAvailable(t) => return Ok(Outcome::NotAvailable(t)),
         };
+        // IureTranscribe 0.8.5 y anteriores no graban por MCP: decirlo así, no «respondió algo
+        // inesperado» (el `unknown tool` que devuelven).
+        if !client.list_tools()?.iter().any(|t| t.name == "start_recording") {
+            let v = client.server().version.chars().take(40).collect::<String>();
+            return Ok(Outcome::NotAvailable(Text::new(
+                format!(
+                    "Your IureTranscribe ({v}) can't record meetings from IureDesk yet. Update IureTranscribe, or record from its own window."
+                ),
+                format!(
+                    "Tu IureTranscribe ({v}) todavía no sabe grabar reuniones desde IureDesk. Actualiza IureTranscribe o graba desde su propia ventana."
+                ),
+            )));
+        }
         let data = client.call_tool("start_recording", json!({}), Some(TIMEOUT))?.into_ok()?.data().unwrap_or_default();
         let path = data.get("path").and_then(Value::as_str).map(PathBuf::from).unwrap_or_default();
         Ok(Outcome::Ready(Recording { client, path }))

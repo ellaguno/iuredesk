@@ -154,8 +154,18 @@ fn sidebar(app: &mut DeskApp, ui: &mut Ui, anchor: NaiveDate, today: NaiveDate) 
         }
     }
     ui.add_space(14.0);
-    calendar_list(app, ui);
-    ui.add_space(14.0);
+    // BUG-CALSCROLL: con muchos calendarios (p. ej. los «Transferido desde …» de Google) la lista
+    // no cabía y los de las otras cuentas quedaban fuera de la ventana sin forma de llegar a ellos.
+    egui::ScrollArea::vertical().id_salt("cal-side-scroll").auto_shrink([false, false]).show(ui, |ui| {
+        calendar_list(app, ui);
+        ui.add_space(14.0);
+        second_zone(app, ui);
+        ui.add_space(8.0);
+    });
+}
+
+/// Selector de la segunda zona horaria (bajo la lista de calendarios).
+fn second_zone(app: &mut DeskApp, ui: &mut Ui) {
     section_label(ui, pick("Second time zone", "Segunda zona horaria"));
     ui.add_space(2.0);
     let current = app.session.prefs.secondary_tz.clone();

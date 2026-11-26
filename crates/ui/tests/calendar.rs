@@ -23,10 +23,16 @@ fn now() -> chrono::DateTime<Utc> {
 }
 
 fn app(dir: &std::path::Path) -> DeskApp {
+    app_with(dir, |_| {})
+}
+
+/// Como `app`, con datos extra en el almacén antes de abrir la sesión.
+fn app_with(dir: &std::path::Path, extra: impl FnOnce(&Store)) -> DeskApp {
     iuredesk_ui::iurefficient_ui::lang::set_lang(iuredesk_ui::iurefficient_ui::lang::Lang::Es);
     iuredesk_engine::lang::set_lang(iuredesk_engine::lang::Lang::Es);
     let store = Store::open(dir).unwrap();
     sample::populate(&store, sample::DEFAULT_SEED, now()).unwrap();
+    extra(&store);
     let mut s = Session::new(SessionConfig {
         store: Arc::new(store),
         accounts: None,
@@ -182,4 +188,49 @@ fn time_list_opens_at_the_chosen_hour_and_description_uses_the_suite_editor() {
         early.bottom() < combo.bottom(),
         "00:15 debería quedar fuera de la vista: {early:?} (lista bajo {combo:?})"
     );
+}
+
+/// BUG-CALSCROLL (dueño 2026-11-26): con muchos calendarios en una cuenta (los «Transferido desde
+/// …» de Google) la lista no cabía en la barra lateral y no había forma de llegar a los de abajo.
+#[test]
+fn long_calendar_list_scrolls_in_the_sidebar() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app_with(dir.path(), |store| {
+        let account = store.calendars().unwrap().first().map(|c| c.account).unwrap();
+        for i in 0..40 {
+            store
+                .put_calendar(&iuredesk_model::Calendar {
+                    id: iuredesk_model::CalendarId(0),
+                    account,
+                    name: format!("Transferido {i}"),
+                    color: Some(0x888888),
+                    remote_path: format!("/cal/transferido-{i}/"),
+                    read_only: false,
+                    sync_token: None,
+                })
+                .unwrap();
+        }
+    });
+    a.session.module = Module::Calendar;
+    let height = 700.0;
+    let mut h = Harness::builder().with_size(vec2(1440.0, height)).build_ui_state(
+        |ui, app: &mut DeskApp| {
+            let full = ui.ctx().content_rect();
+            ui.scope_builder(egui::UiBuilder::new().max_rect(full), |ui| {
+                ui.set_clip_rect(full);
+                app.ui(ui);
+            });
+        },
+        a,
+    );
+    settle(&mut h);
+    assert!(
+        h.query_all_by_label("Transferido 39").next().unwrap().rect().top() > height,
+        "la prueba necesita una lista que no quepa"
+    );
+    h.query_all_by_label("Transferido 39").next().unwrap().scroll_to_me();
+    settle(&mut h);
+    let r = h.query_all_by_label("Transferido 39").next().unwrap().rect();
+    assert!(r.bottom() <= height, "el último calendario se alcanza desplazando la barra: {r:?}");
 }

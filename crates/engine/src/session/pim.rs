@@ -206,6 +206,7 @@ impl Session {
     #[doc(hidden)]
     pub fn set_token_provider(&mut self, tokens: Arc<dyn iuredesk_oauth::TokenProvider>) {
         self.live.tokens = Some(tokens);
+        self.refresh_transports();
         self.restart_sync();
     }
 

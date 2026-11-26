@@ -4,7 +4,8 @@
 //! e IureVoz, con herramientas que imitan las suyas. `FAKE_MCP_MODE` cambia su conducta:
 //! - `silent`: lee stdin y nunca responde (prueba de tiempos de espera);
 //! - `garbage`: escribe basura en stdout antes de servir (el cliente debe ignorarla);
-//! - `exit`: termina sin responder.
+//! - `exit`: termina sin responder;
+//! - `no-recording`: sin las herramientas de grabación (como IureTranscribe 0.8.5).
 #![deny(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -62,9 +63,11 @@ impl Handler for Fake {
             "pause_recording",
             "stop_recording",
         ];
+        let old = std::env::var("FAKE_MCP_MODE").as_deref() == Ok("no-recording");
         Value::Array(
             names
                 .iter()
+                .filter(|n| !(old && n.contains("recording")))
                 .map(|n| json!({"name": n, "description": format!("tool {n}"), "inputSchema": {"type": "object"}}))
                 .collect(),
         )
@@ -167,6 +170,9 @@ impl Handler for Fake {
                 })))
             }
             // Como IureTranscribe: una grabación a la vez.
+            n if n.contains("recording") && std::env::var("FAKE_MCP_MODE").as_deref() == Ok("no-recording") => {
+                Err(CallError::Params(format!("unknown tool: {n}")))
+            }
             "start_recording" => {
                 let mut r = self.recording.lock().unwrap_or_else(|e| e.into_inner());
                 if r.is_some() {

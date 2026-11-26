@@ -90,6 +90,15 @@ fn grabar_una_reunion() {
     assert!(matches!(Suite::empty().start_recording().unwrap(), Outcome::NotInstalled(_)));
 }
 
+/// BUG-RECOLD (dueño 2026-11-26): «Grabar» con IureTranscribe 0.8.5, que aún no graba por MCP,
+/// decía «la otra app respondió algo inesperado». Ahora dice que hay que actualizarla.
+#[test]
+fn grabar_con_iuretranscribe_sin_grabacion_pide_actualizarlo() {
+    let s = Suite::empty().with_app(SisterApp::Transcribe, FAKE).with_mcp_options(opts(Some("no-recording")));
+    let Outcome::NotAvailable(t) = s.start_recording().unwrap() else { panic!("debería no estar disponible") };
+    assert!(t.get(true).contains("Actualiza IureTranscribe") && t.get(true).contains("0.0.1"), "{}", t.get(true));
+}
+
 /// S1.6: el estado de varios planes con un solo proceso; uno roto no detiene a los demás.
 #[test]
 fn resumen_de_planes_de_iureproject() {
