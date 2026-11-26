@@ -85,7 +85,8 @@ pub fn contacts(app: &mut DeskApp, ui: &mut Ui) {
         v.sort_by_key(|(s, i)| (std::cmp::Reverse(*s), *i));
         v.into_iter().map(|(_, i)| i).collect()
     };
-    split::left(ui, "contacts-list", PaneKind::Sidebar, 320.0, 240.0..=480.0, |ui| {
+    let tint = app.session.prefs.sidebar_color;
+    crate::widgets::side_left(ui, "contacts-list", PaneKind::Sidebar, 320.0, 240.0..=480.0, tint, |ui| {
         ui.add_space(4.0);
         let selected_n = app.pim.contact_list.selection.len();
         ui.horizontal(|ui| {
@@ -488,7 +489,8 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
     let mut pick_note: Option<NoteId> = None;
     let mut fire: Option<&'static str> = None;
     let editor_installed = app.suite.hub.installed(iuredesk_engine::iuredesk_integrations::SisterApp::Editor);
-    split::left(ui, "notes-list", PaneKind::Sidebar, 300.0, 220.0..=460.0, |ui| {
+    let tint = app.session.prefs.sidebar_color;
+    crate::widgets::side_left(ui, "notes-list", PaneKind::Sidebar, 300.0, 220.0..=460.0, tint, |ui| {
         let c = theme::colors(ui);
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -993,7 +995,8 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let lists = app.session.task_lists();
     let selected = app.pim.task_list.or(lists.first().map(|l| l.id));
-    split::left(ui, "task-lists", PaneKind::Sidebar, 244.0, 190.0..=360.0, |ui| {
+    let tint = app.session.prefs.sidebar_color;
+    crate::widgets::side_left(ui, "task-lists", PaneKind::Sidebar, 244.0, 190.0..=360.0, tint, |ui| {
         ui.add_space(6.0);
         section_label(ui, pick("Lists", "Listas"));
         ui.add_space(2.0);

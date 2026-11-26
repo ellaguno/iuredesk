@@ -235,7 +235,8 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
     }
     let current = all.iter().find(|m| Some(&m.id) == app.files.mount.as_ref()).cloned();
     let mut act = None;
-    split::left(ui, "files-mounts", PaneKind::Sidebar, 260.0, 200.0..=420.0, |ui| {
+    let tint = app.session.prefs.sidebar_color;
+    crate::widgets::side_left(ui, "files-mounts", PaneKind::Sidebar, 260.0, 200.0..=420.0, tint, |ui| {
         let c = theme::colors(ui);
         ui.add_space(12.0);
         ui.label(RichText::new(pick("Drives", "Unidades")).font(theme::semibold_font(ui.ctx(), 15.0)).color(c.text));

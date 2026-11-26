@@ -292,6 +292,13 @@ pub struct Prefs {
     /// UX-13: fondo de «Mi día».
     #[serde(default)]
     pub today_background: crate::today_bg::TodayBackground,
+    /// UX-27: color de la barra lateral (riel de módulos y paneles de la izquierda); `None` = del
+    /// tema. El texto de encima pasa a la paleta clara u oscura según lo oscuro del color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_color: Option<[u8; 3]>,
+    /// UX-27: color de la barra de título integrada (la de la búsqueda); `None` = del tema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub titlebar_color: Option<[u8; 3]>,
     /// Inicio de sesión con Microsoft de la propia organización (F8.1).
     #[serde(default, skip_serializing_if = "MicrosoftOrg::is_empty")]
     pub microsoft_org: MicrosoftOrg,
@@ -484,6 +491,8 @@ impl Default for Prefs {
             crisp_text: false,
             show_empty_contacts: false,
             today_background: Default::default(),
+            sidebar_color: None,
+            titlebar_color: None,
             microsoft_org: MicrosoftOrg::default(),
             today_layout: Default::default(),
             weather: Default::default(),
@@ -589,6 +598,9 @@ mod tests {
             crisp_text: true,
             show_empty_contacts: true,
             today_background: Default::default(),
+            // UX-27.
+            sidebar_color: Some([0x1f, 0x29, 0x37]),
+            titlebar_color: Some([0x1e, 0x3a, 0x8a]),
             ..Default::default()
         };
         prefs.save(&p).unwrap();

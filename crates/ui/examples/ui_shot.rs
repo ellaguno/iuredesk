@@ -179,6 +179,13 @@ fn main() -> Result<(), String> {
         session.prefs.text_scale_pct = p;
     }
     session.prefs.crisp_text = args.iter().any(|a| a == "--crisp");
+    // UX-27: `--sidebar-color 1f2937`, `--titlebar-color 1e3a8a`.
+    let hex = |v: String| {
+        let n = u32::from_str_radix(v.trim_start_matches('#'), 16).ok()?;
+        Some([(n >> 16) as u8, (n >> 8) as u8, n as u8])
+    };
+    session.prefs.sidebar_color = flag("--sidebar-color").and_then(hex);
+    session.prefs.titlebar_color = flag("--titlebar-color").and_then(hex);
     if let Some(sc) = flag("--scheme").and_then(|k| iuredesk_engine::ShortcutScheme::from_key(&k)) {
         session.prefs.scheme = sc;
     }

@@ -8,7 +8,7 @@ use iuredesk_engine::command::{self, Chord};
 use iuredesk_engine::{Event, Module, Notice, NoticeKind, Outcome, Session, SyncStatus};
 use iurefficient_ui::palette::{CommandPalette, PaletteItem};
 use iurefficient_ui::widgets::nav_rail::rail_width;
-use iurefficient_ui::{NavItem, PaneKind, Severity, Toasts, lang, nav_rail, pick, split, system, theme};
+use iurefficient_ui::{NavItem, PaneKind, Severity, Toasts, lang, nav_rail, pick, system, theme};
 
 use crate::calendar::CalendarState;
 use crate::compose::ComposeWindow;
@@ -1333,7 +1333,8 @@ impl DeskApp {
         let w = rail_width(ui.ctx());
         let current = self.session.module.key();
         let mut clicked: Option<String> = None;
-        split::left(ui, "rail", PaneKind::Rail, w, w..=w, |ui| {
+        let tint = self.session.prefs.sidebar_color;
+        crate::widgets::side_left(ui, "rail", PaneKind::Rail, w, w..=w, tint, |ui| {
             let full = ui.max_rect();
             if let Some(id) = nav_rail(ui, &items, current) {
                 clicked = Some(id.to_string());

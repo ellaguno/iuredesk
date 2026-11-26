@@ -59,7 +59,10 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
     crate::today_projects::ensure(app);
     let today = app.session.today();
     let anchor = app.session.cal_anchor();
-    split::left(ui, "cal-side", PaneKind::Sidebar, 244.0, 200.0..=360.0, |ui| sidebar(app, ui, anchor, today));
+    let tint = app.session.prefs.sidebar_color;
+    crate::widgets::side_left(ui, "cal-side", PaneKind::Sidebar, 244.0, 200.0..=360.0, tint, |ui| {
+        sidebar(app, ui, anchor, today)
+    });
     split::top_bar(ui, "cal-top", |ui| top_bar(app, ui, anchor, today));
     split::center(ui, PaneKind::Content, |ui| match app.session.cal_view() {
         CalView::Month => month_view(app, ui, anchor, today),

@@ -204,9 +204,61 @@ pub fn text_label(resp: &Response, text: &str) {
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, enabled, text.clone()));
 }
 
+/// UX-27: color propio de una zona (barra lateral, barra de título): su relleno y si el texto de
+/// encima va con la paleta oscura (color oscuro) o la clara.
+pub fn tint(rgb: Option<[u8; 3]>) -> Option<(Color32, bool)> {
+    let [r, g, b] = rgb?;
+    // Luminancia percibida (0..1): por debajo de la mitad, texto claro.
+    let l = (0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b)) / 255.0;
+    Some((Color32::from_rgb(r, g, b), l < 0.5))
+}
+
+/// Pone en `ui` (y lo que cuelga de él) el estilo claro u oscuro de la app.
+pub fn tint_style(ui: &mut Ui, dark: bool) {
+    let style = ui.ctx().style_of(if dark { egui::Theme::Dark } else { egui::Theme::Light });
+    ui.set_style(style);
+}
+
+/// Panel a la izquierda como `split::left` del kit, con el color propio de la barra lateral si lo
+/// hay (UX-27).
+pub fn side_left<R>(
+    ui: &mut Ui,
+    id: &str,
+    kind: iurefficient_ui::PaneKind,
+    width: f32,
+    range: std::ops::RangeInclusive<f32>,
+    color: Option<[u8; 3]>,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let Some((fill, dark)) = tint(color) else {
+        return iurefficient_ui::split::left(ui, id, kind, width, range, add);
+    };
+    let frame = iurefficient_ui::split::frame(ui, kind).fill(fill);
+    let panel = egui::Panel::left(id.to_string());
+    let panel = if kind == iurefficient_ui::PaneKind::Rail {
+        panel.exact_size(width).resizable(false)
+    } else {
+        let (lo, hi) = (range.start().min(*range.end()), range.end().max(*range.start()));
+        panel.default_size(width.clamp(lo, hi)).size_range(lo..=hi).resizable(true)
+    };
+    panel.frame(frame).show(ui, |ui| {
+        tint_style(ui, dark);
+        add(ui)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tint_picks_the_text_palette_by_lightness() {
+        assert_eq!(tint(None), None);
+        assert_eq!(tint(Some([0x1f, 0x29, 0x37])), Some((Color32::from_rgb(0x1f, 0x29, 0x37), true)));
+        assert_eq!(tint(Some([0xf5, 0xf0, 0xe6])).map(|t| t.1), Some(false));
+        assert_eq!(tint(Some([0xff, 0xff, 0x00])).map(|t| t.1), Some(false), "amarillo: texto oscuro");
+        assert_eq!(tint(Some([0x1e, 0x3a, 0x8a])).map(|t| t.1), Some(true));
+    }
 
     #[test]
     fn sizes_and_colors() {

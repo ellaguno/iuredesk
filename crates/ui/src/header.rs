@@ -176,8 +176,15 @@ pub(crate) fn show(app: &mut DeskApp, ui: &mut Ui, full: bool) {
     let chrome = app.chrome().cloned();
     let windows = chrome.as_ref().is_some_and(|ch| ch.style == ControlStyle::Windows);
     let right_pad: i8 = if windows { 0 } else { 8 };
-    let frame = Frame::new().fill(c.surface_alt).inner_margin(Margin { left: 10, right: right_pad, top: 0, bottom: 0 });
+    // UX-27: color propio de la barra (el texto de encima, claro u oscuro según el color).
+    let tint = crate::widgets::tint(app.session.prefs.titlebar_color);
+    let fill = tint.map_or(c.surface_alt, |(f, _)| f);
+    let frame = Frame::new().fill(fill).inner_margin(Margin { left: 10, right: right_pad, top: 0, bottom: 0 });
     egui::Panel::top("app-header").exact_size(h).resizable(false).frame(frame).show(ui, |ui| {
+        if let Some((_, dark)) = tint {
+            crate::widgets::tint_style(ui, dark);
+        }
+        let c = theme::colors(ui);
         let inner = ui.max_rect();
         let whole =
             Rect::from_min_max(pos2(inner.left() - 10.0, inner.top()), pos2(inner.right() + 8.0, inner.bottom()));

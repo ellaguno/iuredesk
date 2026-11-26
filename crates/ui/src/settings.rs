@@ -909,6 +909,8 @@ fn appearance(app: &mut DeskApp, ui: &mut Ui, run: &mut Option<String>) {
     ui.add_space(14.0);
     today_background(app, ui);
     ui.add_space(14.0);
+    bar_colors(app, ui);
+    ui.add_space(14.0);
     section_label(ui, pick("Window", "Ventana"));
     let mut native = app.session.prefs.native_decorations;
     if ui.checkbox(&mut native, pick("System title bar", "Barra de título del sistema")).changed() {
@@ -1011,6 +1013,79 @@ fn today_background(app: &mut DeskApp, ui: &mut Ui) {
     if let Some(e) = &app.today.bg.error {
         ui.label(RichText::new(e.get()).color(c.danger));
     }
+}
+
+/// UX-27: color de la barra lateral y de la barra de título (o los del tema). El texto de encima
+/// se vuelve claro u oscuro solo, según el color.
+fn bar_colors(app: &mut DeskApp, ui: &mut Ui) {
+    section_label(ui, pick("Bar colors", "Colores de las barras"));
+    // Tonos sugeridos (con buen contraste en los dos temas) y el que se elija a mano.
+    const SWATCHES: [[u8; 3]; 6] = [
+        [0x1f, 0x29, 0x37],
+        [0x1e, 0x3a, 0x8a],
+        [0x0f, 0x76, 0x6e],
+        [0x6d, 0x28, 0xd9],
+        [0xe0, 0xe7, 0xff],
+        [0xf5, 0xf0, 0xe6],
+    ];
+    let rows: [(&str, &str, bool); 2] = [
+        ("Left sidebar", "Barra lateral izquierda", true),
+        ("Title bar (with the search)", "Barra de título (la de la búsqueda)", false),
+    ];
+    let mut changes: Vec<(bool, Option<[u8; 3]>)> = Vec::new();
+    egui::Grid::new("bar-colors").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        for (en, es, sidebar) in rows {
+            let current = if sidebar { app.session.prefs.sidebar_color } else { app.session.prefs.titlebar_color };
+            let mut next: Option<Option<[u8; 3]>> = None;
+            ui.label(pick(en, es));
+            ui.horizontal(|ui| {
+                if ui.selectable_label(current.is_none(), pick("Theme", "Del tema")).clicked() {
+                    next = Some(None);
+                }
+                for sw in SWATCHES {
+                    let (r, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+                    let fill = egui::Color32::from_rgb(sw[0], sw[1], sw[2]);
+                    ui.painter().rect_filled(r, 4.0, fill);
+                    let stroke = if current == Some(sw) {
+                        egui::Stroke::new(2.0, theme::colors(ui).accent)
+                    } else {
+                        egui::Stroke::new(1.0, theme::colors(ui).separator)
+                    };
+                    ui.painter().rect_stroke(r.expand(1.0), 5.0, stroke, egui::StrokeKind::Outside);
+                    let name = format!("{} #{:02x}{:02x}{:02x}", pick(en, es), sw[0], sw[1], sw[2]);
+                    crate::widgets::named(&resp, egui::Role::Button, &name);
+                    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        next = Some(Some(sw));
+                    }
+                }
+                let mut v = current.unwrap_or(SWATCHES[0]);
+                let r = ui.color_edit_button_srgb(&mut v).on_hover_text(pick("Another color…", "Otro color…"));
+                crate::widgets::named(&r, egui::Role::Button, &format!("{} {}", pick(en, es), pick("color", "color")));
+                if r.changed() {
+                    next = Some(Some(v));
+                }
+            });
+            ui.end_row();
+            if let Some(n) = next {
+                changes.push((sidebar, n));
+            }
+        }
+    });
+    for (sidebar, n) in changes {
+        if sidebar {
+            app.session.prefs.sidebar_color = n;
+        } else {
+            app.session.prefs.titlebar_color = n;
+        }
+        app.session.save_prefs();
+    }
+    muted(
+        ui,
+        pick(
+            "The text on top turns light or dark by itself so it stays readable.",
+            "El texto de encima se vuelve claro u oscuro solo, para que siempre se lea.",
+        ),
+    );
 }
 
 /// Selector de imagen (portal del escritorio) en su hilo; la ruta vuelve por `picked_id`.
