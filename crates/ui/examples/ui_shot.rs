@@ -805,6 +805,16 @@ fn main() -> Result<(), String> {
             later(&mut harness);
         }
     }
+    // UX-24: `--person-card` abre la tarjeta del remitente del mensaje abierto.
+    if args.iter().any(|a| a == "--person-card") {
+        use egui_kittest::kittest::Queryable;
+        if let Some(node) = harness.query_all_by_label_contains("Contact card for").next() {
+            node.click();
+        } else if let Some(node) = harness.query_all_by_label_contains("Tarjeta de contacto de").next() {
+            node.click();
+        }
+        later(&mut harness);
+    }
     // S1.12: `--note-edit` muestra la nota en el DocEditor (Markdown con estilo al teclear).
     if args.iter().any(|a| a == "--note-edit") {
         let ctx = harness.ctx.clone();

@@ -21,6 +21,7 @@ mod notes;
 mod notes_files;
 mod opened;
 mod outbox;
+mod people;
 mod pim;
 mod rules_glue;
 mod shared;
@@ -418,6 +419,8 @@ pub struct Session {
     selection: Vec<MessageId>,
     focused: Option<MessageId>,
     focus_request: Option<MessageId>,
+    /// UX-24: filas que la UI debe marcar (seleccionar los correos de una persona).
+    select_request: Option<Vec<MessageId>>,
     search: String,
     undo: Vec<UndoEntry>,
     now: Option<DateTime<Utc>>,
@@ -516,6 +519,7 @@ impl Session {
             selection: Vec::new(),
             focused: None,
             focus_request: None,
+            select_request: None,
             search: String::new(),
             undo: Vec::new(),
             now: cfg.now,
@@ -1173,9 +1177,7 @@ impl Session {
             .chain(env.to.iter())
             .find(|m| !mine.iter().any(|a| a.eq_ignore_ascii_case(&m.addr)))
             .cloned();
-        let contact = other.as_ref().and_then(|m| {
-            self.contacts().iter().find(|c| c.emails.iter().any(|e| e.value.eq_ignore_ascii_case(&m.addr))).cloned()
-        });
+        let contact = other.as_ref().and_then(|m| self.contact_by_email(&m.addr));
         let links = crate::context::detect_links(&env, contact.as_ref());
         ContextCard { contact, links, history: 0 }
     }
@@ -1225,6 +1227,7 @@ impl Session {
                 self.focused.is_some()
             }
             "mail.edit_draft" => self.focused.is_some_and(|m| self.is_draft(m)),
+            "mail.from_sender" | "mail.select_sender" => id.contains(':') || self.focused.is_some(),
             b if (b == "nav.notes" || b.starts_with("notes.")) && !self.notes_available => false,
             "nav.files" if !self.files_available => false,
             b if (b == "nav.assistant" || b.starts_with("ai.")) && !self.ai_available => false,
@@ -1315,6 +1318,8 @@ impl Session {
             }
             "mail.reply" | "mail.reply_all" | "mail.forward" => self.reply_like(base),
             "mail.edit_draft" => self.edit_draft_focused(),
+            "mail.from_sender" => self.run_from_sender(arg),
+            "mail.select_sender" => self.run_select_sender(arg),
             "mail.new_folder" | "mail.rename_folder" | "mail.delete_folder" => self.run_folder_command(base, arg),
             "mail.toggle_account_visible" => {
                 let Some(a) = arg.and_then(|a| a.trim_start_matches("acct:").parse::<u64>().ok()).map(AccountId) else {

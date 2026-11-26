@@ -304,9 +304,12 @@ fn earlier_message_in_a_conversation_opens_on_click() {
         .expect("una conversación de tres o más");
     focus(&mut h, id);
     let addr = first.from[0].addr.clone();
-    let opened = |h: &Harness<'_, DeskApp>| h.query_all_by_label_contains(&format!("{addr}  ·")).next().is_some();
-    assert!(!opened(&h), "empieza plegado");
     let name = first.from[0].name.clone().filter(|n| !n.is_empty()).unwrap_or(addr.clone());
+    // UX-24: desplegado, el remitente abre su tarjeta (nombre, avatar y dirección); plegado no.
+    let card = format!("Tarjeta de contacto de {name}");
+    let cards = |h: &Harness<'_, DeskApp>| h.query_all_by_label(&card).count();
+    let closed = cards(&h);
+    let opened = |h: &Harness<'_, DeskApp>| cards(h) > closed;
     let label = format!("Mensaje de {name}");
     let headers: Vec<_> = h.query_all_by_label(&label).collect();
     assert!(!headers.is_empty(), "cabecera del mensaje anterior");
@@ -341,10 +344,10 @@ fn earlier_message_in_a_conversation_opens_on_click() {
     h.state_mut().run(&ctx, "mail.open_window");
     settle(&mut h);
     assert_eq!(h.state().reader_windows(), vec![id]);
-    assert!(!opened(&h));
+    let before = cards(&h);
     h.query_all_by_label(&label).last().expect("cabecera en la ventana").click();
     settle(&mut h);
-    assert!(opened(&h), "se abre en la ventana");
+    assert!(cards(&h) > before, "se abre en la ventana");
 }
 
 /// UX-22: el texto de un correo HTML (pintado como imagen) se selecciona arrastrando y se copia

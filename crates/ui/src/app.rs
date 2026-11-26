@@ -623,6 +623,11 @@ impl DeskApp {
         crate::task_editor::is_open(self)
     }
 
+    /// UX-24: texto del campo de búsqueda del correo (pruebas).
+    pub fn mail_search(&self) -> &str {
+        &self.mail.search
+    }
+
     /// UX-10: ¿está abierto el editor de contactos? (pruebas)
     pub fn contact_editor_open(&self) -> bool {
         crate::contact_editor::is_open(self)

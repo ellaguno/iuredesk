@@ -952,6 +952,22 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         app.session.set_selection(vec![id], Some(id));
     }
     let rows = app.session.rows_shared();
+    // UX-24: «Seleccionar sus correos» marca esas filas como con las casillas.
+    if let Some(ids) = app.session.take_select_request() {
+        let key_of = |i: usize| rows.get(i).map_or(u64::MAX - i as u64, |r| r.id.get());
+        let want: HashSet<MessageId> = ids.into_iter().collect();
+        app.mail.list.selection.clear();
+        let mut first = None;
+        for (i, _) in rows.iter().enumerate().filter(|(_, r)| want.contains(&r.id)) {
+            app.mail.list.selection.check(i, &key_of);
+            first.get_or_insert(i);
+        }
+        if let Some(i) = first {
+            app.mail.list.scroll_to(i);
+        }
+        let sel: Vec<MessageId> = app.mail.list.selection.keys().map(MessageId).collect();
+        app.session.set_selection(sel, None);
+    }
     let conversations = app.session.prefs.conversations && app.session.search_query().is_empty();
 
     // Encabezado: carpeta, total, conversaciones y densidad.
@@ -1381,6 +1397,9 @@ fn message_menu(app: &mut DeskApp, resp: &egui::Response) {
     let snoozed = app.session.focused().is_some_and(|m| app.session.is_snoozed(m));
     let mut extra: Option<String> = None;
     let project = app.suite.hub.installed(iuredesk_engine::iuredesk_integrations::SisterApp::Project);
+    // UX-24: lo que se hace con el remitente (sus correos, seleccionarlos, copiar su dirección).
+    let sender = app.session.focused().and_then(|id| app.session.envelope(id)).and_then(|e| e.from.first().cloned());
+    let mut person: Option<crate::person::Action> = None;
     egui::Popup::context_menu(resp).show(|ui| {
         for (id, ic, en, es) in [
             ("mail.reply", Icon::Reply, "Reply", "Responder"),
@@ -1404,6 +1423,10 @@ fn message_menu(app: &mut DeskApp, resp: &egui::Response) {
             chosen = Some("suite.project_task");
             ui.close();
         }
+        if let Some(m) = &sender {
+            ui.separator();
+            crate::person::sender_items(ui, m, &mut person);
+        }
         crate::rules_ui::context_items(ui, &snooze, snoozed, &mut extra);
     });
     if let Some(id) = chosen {
@@ -1411,6 +1434,9 @@ fn message_menu(app: &mut DeskApp, resp: &egui::Response) {
     }
     if let Some(id) = extra {
         app.run(&ctx, &id);
+    }
+    if let Some(a) = person {
+        crate::person::apply(app, &ctx, a);
     }
 }
 
@@ -1677,46 +1703,56 @@ pub(crate) fn message_card(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope
     let zone = app.session.zone();
     let from_name = env.from.first().and_then(|m| m.name.clone()).unwrap_or_default();
     let from_addr = env.from.first().map(|m| m.addr.clone()).unwrap_or_default();
-    let header = ui
-        .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
-            avatar(ui, &from_name, &from_addr, if expanded { 36.0 } else { 28.0 });
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                ui.horizontal(|ui| {
-                    let name = if from_name.is_empty() { from_addr.clone() } else { from_name.clone() };
-                    ui.label(
-                        RichText::new(name)
-                            .font(theme::bold_font(&ctx, theme::density(&ctx).body_size()))
-                            .color(c.text),
-                    );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(long_date(env.date, zone))
-                                .color(c.text_muted)
-                                .size(theme::density(&ctx).small_size()),
-                        );
-                        if env.flags.flagged {
-                            badge(ui, pick("Flagged", "Seguimiento"), BadgeKind::Warning);
-                        }
-                    });
-                });
-                if expanded {
-                    let to: Vec<String> = env.to.iter().map(|m| m.display().to_string()).collect();
-                    let mut line = format!("{from_addr}  ·  {} {}", pick("To:", "Para:"), to.join(", "));
-                    if !env.cc.is_empty() {
-                        let cc: Vec<String> = env.cc.iter().map(|m| m.display().to_string()).collect();
-                        line.push_str(&format!("   Cc: {}", cc.join(", ")));
+    let sender = env.from.first().cloned();
+    // UX-24: la franja de la cabecera se registra antes que los nombres (con su rectángulo del
+    // cuadro anterior) para que el clic en un nombre abra su tarjeta y no pliegue el mensaje.
+    let head_id = ui.scope_id().with(("msg-head", env.id));
+    let prev: Option<Rect> = ctx.data(|d| d.get_temp(head_id));
+    let early = prev.map(|r| ui.interact(r, head_id, Sense::click()));
+    let inner = ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        let av = avatar(ui, &from_name, &from_addr, if expanded { 36.0 } else { 28.0 });
+        if expanded && let Some(m) = &sender {
+            crate::person::attach(app, &av.interact(Sense::click()), m);
+        }
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.horizontal(|ui| {
+                match &sender {
+                    Some(m) if expanded => {
+                        crate::person::name(app, ui, m, true);
                     }
-                    ui.add(egui::Label::new(RichText::new(line).color(c.text_muted)).truncate());
-                } else {
-                    let p = painter_safe_preview(&env.preview);
-                    ui.add(egui::Label::new(RichText::new(p).color(c.text_muted)).truncate());
+                    _ => {
+                        let name = if from_name.is_empty() { from_addr.clone() } else { from_name.clone() };
+                        ui.label(
+                            RichText::new(name)
+                                .font(theme::bold_font(&ctx, theme::density(&ctx).body_size()))
+                                .color(c.text),
+                        );
+                    }
                 }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(long_date(env.date, zone))
+                            .color(c.text_muted)
+                            .size(theme::density(&ctx).small_size()),
+                    );
+                    if env.flags.flagged {
+                        badge(ui, pick("Flagged", "Seguimiento"), BadgeKind::Warning);
+                    }
+                });
             });
-        })
-        .response
-        .interact(Sense::click());
+            if expanded {
+                recipients(app, ui, env, head_id);
+            } else {
+                let p = painter_safe_preview(&env.preview);
+                ui.add(egui::Label::new(RichText::new(p).color(c.text_muted)).truncate());
+            }
+        });
+    });
+    let rect = inner.response.rect;
+    ctx.data_mut(|d| d.insert_temp(head_id, rect));
+    let header = early.unwrap_or_else(|| ui.interact(rect, head_id, Sense::click()));
     iurefficient_ui::a11y::button(
         &header,
         &format!(
@@ -1732,6 +1768,50 @@ pub(crate) fn message_card(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope
     ui.add_space(10.0);
     message_body(app, ui, env);
     clicked
+}
+
+/// UX-24: dirección del remitente y destinatarios (Para, Cc) como nombres con su tarjeta; con
+/// muchos, los primeros y «+N» para ver el resto.
+fn recipients(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope, head_id: egui::Id) {
+    let ctx = ui.ctx().clone();
+    let c = theme::colors(ui);
+    let small = theme::density(&ctx).small_size();
+    let all_id = head_id.with("todos");
+    let show_all: bool = ctx.data(|d| d.get_temp(all_id)).unwrap_or(false);
+    let mut more = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(4.0, 3.0);
+        if let Some(m) = env.from.first() {
+            let r =
+                ui.add(egui::Label::new(RichText::new(&m.addr).color(c.text_muted).size(small)).sense(Sense::click()));
+            crate::person::attach(app, &r, m);
+        }
+        let mut shown = 0usize;
+        for (label, list) in [(pick("To:", "Para:"), &env.to), ("Cc:", &env.cc)] {
+            if list.is_empty() {
+                continue;
+            }
+            ui.add_space(6.0);
+            ui.label(RichText::new(label).color(c.text_muted).size(small));
+            for m in list.iter().take(500) {
+                if !show_all && shown >= crate::person::MAX_CHIPS {
+                    break;
+                }
+                crate::person::name(app, ui, m, false);
+                shown += 1;
+            }
+        }
+        let total = env.to.len() + env.cc.len();
+        if !show_all && total > shown {
+            let r = ui.link(RichText::new(format!("+{}", total - shown)).size(small));
+            if r.on_hover_text(pick("Show everyone", "Ver a todos")).clicked() {
+                more = true;
+            }
+        }
+    });
+    if more {
+        ctx.data_mut(|d| d.insert_temp(all_id, true));
+    }
 }
 
 fn message_body(app: &mut DeskApp, ui: &mut Ui, env: &MessageEnvelope) {

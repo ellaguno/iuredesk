@@ -205,6 +205,56 @@ fn every_command_runs_or_explains() {
 }
 
 #[test]
+fn messages_and_selection_from_a_sender() {
+    // UX-24: «Ver sus correos» y «Seleccionar sus correos» desde la tarjeta de la persona.
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    // Un remitente con varios correos en la lista.
+    let ids: Vec<MessageId> = s.rows().iter().map(|r| r.id).collect();
+    let mut by: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for id in &ids {
+        let a = s.envelope(*id).unwrap().from[0].addr.to_lowercase();
+        *by.entry(a).or_default() += 1;
+    }
+    let (addr, n) = by.into_iter().max_by_key(|(_, n)| *n).unwrap();
+    assert!(n > 1, "el buzón de ejemplo tiene remitentes repetidos");
+    let first = *ids.iter().find(|id| s.envelope(**id).unwrap().from[0].addr.eq_ignore_ascii_case(&addr)).unwrap();
+    select(&mut s, first);
+    assert_eq!(s.focused_sender().map(|a| a.to_lowercase()), Some(addr.clone()));
+
+    // Sin argumento: el remitente del abierto.
+    let out = s.run("mail.select_sender").unwrap();
+    assert!(matches!(out, Outcome::Notice(_)));
+    assert_eq!(s.selection().len(), n);
+    let req = s.take_select_request().unwrap();
+    assert_eq!(req.len(), n);
+    assert_eq!(s.take_select_request(), None, "se entrega una vez");
+    // Las acciones en lote van a esos mismos.
+    s.run("mail.mark_unread").unwrap();
+    settle(&mut s);
+    for id in &req {
+        assert!(!s.envelope(*id).unwrap().flags.seen);
+    }
+
+    // Con argumento hostil: se explica, no falla ni cambia nada.
+    let before = s.selection().to_vec();
+    assert!(matches!(s.run("mail.select_sender:no es correo").unwrap(), Outcome::Notice(_)));
+    assert!(matches!(s.run("mail.select_sender:nadie@example.invalid").unwrap(), Outcome::Notice(_)));
+    assert_eq!(s.selection(), before);
+    assert_eq!(s.take_select_request(), None);
+
+    // «Ver sus correos»: búsqueda `de:`.
+    s.run(&format!("mail.from_sender:{addr}")).unwrap();
+    assert_eq!(s.search_query(), format!("de:{addr}"));
+    settle(&mut s);
+    assert!(!s.rows().is_empty());
+    let rows: Vec<MessageId> = s.rows().iter().map(|r| r.id).collect();
+    for id in rows {
+        assert!(s.envelope(id).unwrap().from.iter().any(|m| m.addr.eq_ignore_ascii_case(&addr)));
+    }
+}
+
+#[test]
 fn conversations_group_threads_and_archive_whole_conversation() {
     let dir = tempfile::tempdir().unwrap();
     let flat = session(dir.path(), false);

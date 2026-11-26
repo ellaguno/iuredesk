@@ -143,6 +143,22 @@ pub(crate) fn open_new(app: &mut DeskApp) {
     app.pim.contact_editor = Some(ContactEditor::new(c, books));
 }
 
+/// UX-24: el editor de un contacto nuevo con el nombre y el correo de alguien que escribió
+/// («Ana Pérez» → nombre «Ana», apellidos «Pérez»).
+pub(crate) fn open_new_with(app: &mut DeskApp, m: &iuredesk_model::Mailbox) {
+    let books = app.session.writable_address_books();
+    let name = m.name.as_deref().unwrap_or("").trim().trim_matches('"').trim();
+    let (given, family) = name.split_once(' ').map_or((name, ""), |(g, f)| (g.trim(), f.trim()));
+    let c = Contact {
+        address_book: books.first().map(|b| b.id).unwrap_or_default(),
+        given_name: given.to_string(),
+        family_name: family.to_string(),
+        emails: vec![Labeled::new("work", m.addr.trim())],
+        ..Default::default()
+    };
+    app.pim.contact_editor = Some(ContactEditor::new(c, books));
+}
+
 /// ¿Está abierto? (pruebas)
 pub(crate) fn is_open(app: &DeskApp) -> bool {
     app.pim.contact_editor.is_some()

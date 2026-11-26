@@ -184,6 +184,23 @@ pub const COMMANDS: &[CommandSpec] = &[
     // Explícitos (para varios mensajes a la vez, donde «alternar» no dice qué pasará).
     c("mail.mark_read", "Mark as read", "Marcar como leído", "check", Group::Mail, "read leido visto"),
     c("mail.mark_unread", "Mark as unread", "Marcar como no leído", "mail", Group::Mail, "unread no leido nuevo"),
+    // UX-24: las personas (tarjeta flotante); con `:dirección`, de esa persona.
+    c(
+        "mail.from_sender",
+        "Messages from this sender",
+        "Correos de este remitente",
+        "search",
+        Group::Mail,
+        "from sender person contact de remitente persona buscar",
+    ),
+    c(
+        "mail.select_sender",
+        "Select messages from this sender",
+        "Seleccionar los correos de este remitente",
+        "check",
+        Group::Mail,
+        "select sender person seleccionar remitente persona todos",
+    ),
     c(
         "mail.toggle_flag",
         "Flag / unflag",
