@@ -19,14 +19,23 @@ use crate::app::DeskApp;
 use crate::html::{HtmlCache, HtmlKey, HtmlState};
 use crate::widgets::{hairline, pane_title, tool_button, wide_primary};
 
-/// UX-22: selección de texto sobre la imagen de un cuerpo HTML. Vale para ese render (`key`):
-/// con otro ancho o zoom los cursores ya no corresponden y se descarta.
+/// UX-22: selección de texto sobre la imagen de un cuerpo HTML, una por lugar (panel de lectura,
+/// ventana propia) y mensaje: el mismo correo abierto a la vez en el panel y en su ventana se pinta
+/// con dos anchos y cada uno borraba la selección del otro. Los cursores son posiciones de glifo en
+/// orden de lectura: si el render cambia de ancho o zoom con el mismo texto, siguen valiendo.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BodySel {
     pub key: HtmlKey,
+    /// Dónde se pinta (ventana y capa).
+    pub place: (egui::ViewportId, egui::LayerId),
     pub anchor: usize,
     pub focus: usize,
+    /// Glifos del render en que se eligió (para saber si los cursores siguen valiendo).
+    pub glyphs: usize,
 }
+
+/// Selecciones que se recuerdan a la vez (lugares × mensajes visibles).
+const MAX_BODY_SELS: usize = 8;
 
 /// Estado de la vista de correo.
 pub struct MailState {
@@ -45,7 +54,7 @@ pub struct MailState {
     /// Mensajes con la historia citada desplegada.
     show_quoted: HashSet<MessageId>,
     /// UX-22: texto elegido en el cuerpo HTML de un mensaje (cursores del mapa de su render).
-    pub(crate) body_sel: Option<BodySel>,
+    pub(crate) body_sel: Vec<BodySel>,
     /// UX-23: fila bajo el ratón y en qué pasada se vio (Supr la borra aunque no esté elegida).
     pub(crate) hover_row: Option<(MessageId, u64)>,
     /// UX-25: «Posponer» abierto desde el icono de una fila (mensaje y rectángulo del icono).
@@ -111,7 +120,7 @@ impl Default for MailState {
             conv: None,
             card: None,
             show_quoted: HashSet::new(),
-            body_sel: None,
+            body_sel: Vec::new(),
             hover_row: None,
             row_snooze: None,
             toggle_check: false,
@@ -162,7 +171,10 @@ pub fn show(app: &mut DeskApp, ui: &mut Ui) {
             let tip = pick("Show accounts and folders", "Mostrar cuentas y carpetas");
             pane_rail(app, ui, "folders-rail", false, Icon::Folder, tip, "view.toggle_folders");
         } else {
-            split::left(ui, "folders", PaneKind::Sidebar, 244.0, 190.0..=380.0, |ui| folders(app, ui));
+            let tint = app.session.prefs.sidebar_color;
+            crate::widgets::side_left(ui, "folders", PaneKind::Sidebar, 244.0, 190.0..=380.0, tint, |ui| {
+                folders(app, ui)
+            });
         }
     }
     folder_dialog(app, &ctx);
@@ -276,10 +288,18 @@ const PANE_RAIL: f32 = 30.0;
 /// El riel de una columna plegada: un botón para desplegarla (y su nombre en la ayuda).
 fn pane_rail(app: &mut DeskApp, ui: &mut Ui, id: &str, right: bool, ic: Icon, tip: &str, cmd: &'static str) {
     let ctx = ui.ctx().clone();
-    let frame = split::frame(ui, PaneKind::Sidebar).inner_margin(egui::Margin::symmetric(2, 8));
+    let mut frame = split::frame(ui, PaneKind::Sidebar).inner_margin(egui::Margin::symmetric(2, 8));
+    // UX-27: el riel de las carpetas plegadas lleva el color de la barra lateral.
+    let tint = if id == "folders-rail" { crate::widgets::tint(app.session.prefs.sidebar_color) } else { None };
+    if let Some((fill, _)) = tint {
+        frame = frame.fill(fill);
+    }
     let panel = if right { egui::Panel::right(id.to_string()) } else { egui::Panel::left(id.to_string()) };
     let mut go = false;
     panel.frame(frame).resizable(false).exact_size(PANE_RAIL).show(ui, |ui| {
+        if let Some((_, dark)) = tint {
+            crate::widgets::tint_style(ui, dark);
+        }
         ui.vertical_centered(|ui| {
             if icons::icon_button(ui, if right { Icon::ChevronLeft } else { Icon::ChevronRight }, tip, true).clicked() {
                 go = true;
@@ -2175,11 +2195,29 @@ fn body_selection(
         let px = to_px(p);
         text.caret_at(px.x, px.y)
     };
-    // Una selección de otro render de este mensaje (otro ancho o zoom) ya no corresponde.
-    if app.mail.body_sel.is_some_and(|s| s.key.id == key.id && s.key != key) {
-        app.mail.body_sel = None;
+    let place = (ctx.viewport_id(), ui.layer_id());
+    let glyphs = text.len();
+    // La de este lugar y mensaje: con otro render (ancho, zoom) sigue si el texto es el mismo.
+    if let Some(i) = app.mail.body_sel.iter().position(|s| s.place == place && s.key.id == key.id)
+        && let Some(s) = app.mail.body_sel.get_mut(i)
+        && s.key != key
+    {
+        if s.glyphs == glyphs && s.key.full == key.full {
+            s.key = key;
+        } else {
+            app.mail.body_sel.remove(i);
+        }
     }
-    let mine = |app: &DeskApp| app.mail.body_sel.filter(|s| s.key == key);
+    let mine = |app: &DeskApp| app.mail.body_sel.iter().copied().find(|s| s.key == key && s.place == place);
+    let set = |app: &mut DeskApp, sel: Option<(usize, usize)>| {
+        app.mail.body_sel.retain(|s| !(s.place == place && s.key.id == key.id));
+        if let Some((anchor, focus)) = sel {
+            app.mail.body_sel.push(BodySel { key, place, anchor, focus, glyphs });
+            if app.mail.body_sel.len() > MAX_BODY_SELS {
+                app.mail.body_sel.remove(0);
+            }
+        }
+    };
     let mut selecting = false;
     // Cursor de texto sobre las líneas (salvo en un enlace, que lleva la mano).
     if let Some(p) = resp.hover_pos() {
@@ -2193,15 +2231,14 @@ fn body_selection(
     if resp.drag_started()
         && let Some(c) = ctx.input(|i| i.pointer.press_origin()).and_then(caret)
     {
-        app.mail.body_sel = Some(BodySel { key, anchor: c, focus: c });
+        set(app, Some((c, c)));
     }
     if resp.dragged() {
         selecting = true;
-        if let (Some(p), Some(mut s)) = (ctx.pointer_latest_pos(), mine(app))
+        if let (Some(p), Some(s)) = (ctx.pointer_latest_pos(), mine(app))
             && let Some(c) = caret(p)
         {
-            s.focus = c;
-            app.mail.body_sel = Some(s);
+            set(app, Some((s.anchor, c)));
             // Arrastrar fuera del panel lo desplaza.
             ui.scroll_to_rect(Rect::from_center_size(p, vec2(1.0, 48.0)), None);
         }
@@ -2210,18 +2247,18 @@ fn body_selection(
     if resp.triple_clicked() {
         if let Some(c) = resp.interact_pointer_pos().and_then(caret) {
             let (a, b) = text.line_at(c);
-            app.mail.body_sel = Some(BodySel { key, anchor: a, focus: b });
+            set(app, Some((a, b)));
         }
         selecting = true;
     } else if resp.double_clicked() {
         if let Some(c) = resp.interact_pointer_pos().and_then(caret) {
             let (a, b) = text.word_at(c);
-            app.mail.body_sel = Some(BodySel { key, anchor: a, focus: b });
+            set(app, Some((a, b)));
         }
         selecting = true;
     } else if resp.clicked() && mine(app).is_some() {
         // Un clic suelto quita la selección (y abre el enlace si cae en uno).
-        app.mail.body_sel = None;
+        set(app, None);
     }
     // Resaltado encima de la imagen.
     let sel = mine(app).filter(|s| s.anchor != s.focus);
@@ -2255,7 +2292,7 @@ fn body_selection(
             ui.close();
         }
         if ui.button(pick("Select all", "Seleccionar todo")).clicked() {
-            app.mail.body_sel = Some(BodySel { key, anchor: 0, focus: text.len() });
+            set(app, Some((0, text.len())));
             ui.close();
         }
         if let Some(href) = &link_here

@@ -410,6 +410,70 @@ fn html_body_text_selects_and_copies() {
     assert!(!h.output().platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::CopyText(_))));
 }
 
+/// UX-22 (regresión, dueño 2026-11-26): con el correo abierto a la vez en su ventana y en el panel,
+/// cada render borraba la selección del otro y en el panel «se deseleccionaba de inmediato».
+#[test]
+fn selection_in_the_pane_survives_with_the_window_open() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let app = app_on(sample_store(dir.path()));
+    let mut h = harness(app, vec2(1600.0, 900.0));
+    settle(&mut h);
+    let id = h.state().session.rows()[0].id;
+    let env = h.state().session.store().get_envelope(id).unwrap().unwrap();
+    let raw = "From: a@example.com\r\nTo: b@example.com\r\nSubject: Seleccionar\r\nMIME-Version: 1.0\r\n\
+               Content-Type: text/html; charset=utf-8\r\n\r\n\
+               <p style=\"font-size:22px;margin:0\">Texto para copiar del correo</p><p>Segunda línea</p>\r\n";
+    h.state().session.store().put_message(env, raw.as_bytes()).unwrap();
+    h.state_mut().session.retry_body(id);
+    focus(&mut h, id);
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "mail.open_window");
+    settle(&mut h);
+    assert_eq!(h.state().reader_windows(), vec![id]);
+    // Los dos cuerpos: el del panel (a la derecha) y el de la ventana, que flota encima de parte
+    // del panel; el arrastre empieza en la parte del panel que queda a la vista.
+    let mut bodies: Vec<egui::Rect> = h.get_all_by_label_contains("Texto para copiar").map(|n| n.rect()).collect();
+    bodies.sort_by(|a, b| a.left().total_cmp(&b.left()));
+    let (window, body) = (bodies[0], bodies[1]);
+    // De derecha a izquierda, hasta poco después del borde de la ventana.
+    let from = egui::pos2(body.right() - 20.0, body.top() + 12.0);
+    let to = egui::pos2(window.right().max(body.left()) + 60.0, body.top() + 12.0);
+    let press = |h: &mut Harness<'_, DeskApp>, pos: egui::Pos2, pressed: bool| {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(1);
+    };
+    h.hover_at(from);
+    h.run_steps(1);
+    press(&mut h, from, true);
+    for k in 1..=8 {
+        h.event(egui::Event::PointerMoved(from + (to - from) * (k as f32 / 8.0)));
+        h.run_steps(1);
+    }
+    press(&mut h, to, false);
+    // Unos cuadros después la selección sigue ahí.
+    h.run_steps(10);
+    h.event(egui::Event::Copy);
+    h.run_steps(1);
+    let copied: Vec<String> = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(copied.len(), 1, "{copied:?}");
+    assert!(!copied[0].is_empty() && "Texto para copiar del correo".ends_with(&copied[0]), "{copied:?}");
+}
+
 /// UX-23: Supr con el ratón sobre una fila que no es la elegida pide confirmación y borra solo esa;
 /// la elegida sigue elegida y abierta. Cancelar no borra nada.
 #[test]
