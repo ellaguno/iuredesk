@@ -255,6 +255,116 @@ fn messages_and_selection_from_a_sender() {
 }
 
 #[test]
+fn row_actions_act_on_that_row_and_keep_the_selection() {
+    // UX-25: los iconos al pasar sobre una fila actúan sobre ella; lo elegido no cambia.
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    let rows: Vec<MessageId> = s.rows().iter().map(|r| r.id).take(4).collect();
+    let (open, other, third) = (rows[0], rows[2], rows[3]);
+    select(&mut s, open);
+    // Leído / no leído: la fila sigue y la selección también.
+    let seen = s.envelope(other).unwrap().flags.seen;
+    s.run_on(other, if seen { "mail.mark_unread" } else { "mail.mark_read" }).unwrap();
+    settle(&mut s);
+    assert_eq!(s.envelope(other).unwrap().flags.seen, !seen);
+    assert_eq!(s.selection(), [open]);
+    assert_eq!(s.focused(), Some(open));
+    // Archivar: se va de la lista; deshacer la devuelve.
+    s.run_on(other, "mail.archive").unwrap();
+    settle(&mut s);
+    assert!(!s.rows().iter().any(|r| r.id == other));
+    assert_eq!(s.selection(), [open]);
+    assert_eq!(s.focused(), Some(open));
+    s.run("undo").unwrap();
+    settle(&mut s);
+    assert!(s.rows().iter().any(|r| r.id == other));
+    // Posponer con una opción rápida.
+    let key = s.snooze_menu()[0].0.clone();
+    s.run_on(third, &format!("mail.snooze:{key}")).unwrap();
+    settle(&mut s);
+    assert!(s.is_snoozed(third));
+    assert_eq!(s.focused(), Some(open));
+    // Lo que abriría un diálogo no se acepta.
+    assert!(s.run_on(other, "mail.snooze").is_err());
+    assert!(s.run_on(other, "mail.move").is_err());
+}
+
+#[test]
+fn select_by_criterion() {
+    // UX-25: «Seleccionar ▾» (Todos, Ninguno, Leídos, No leídos, Con / sin seguimiento).
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    let total = s.rows().len();
+    let ids: Vec<MessageId> = s.rows().iter().map(|r| r.id).collect();
+    let unread = ids.iter().filter(|id| !s.envelope(**id).unwrap().flags.seen).count();
+    let flagged = ids.iter().filter(|id| s.envelope(**id).unwrap().flags.flagged).count();
+    assert!(unread > 0 && flagged > 0);
+    s.run("mail.select.all").unwrap();
+    assert_eq!(s.selection().len(), total);
+    assert_eq!(s.take_select_request().unwrap().len(), total);
+    s.run("mail.select.unread").unwrap();
+    assert_eq!(s.selection().len(), unread);
+    s.run("mail.select.read").unwrap();
+    assert_eq!(s.selection().len(), total - unread);
+    s.run("mail.select.flagged").unwrap();
+    assert_eq!(s.selection().len(), flagged);
+    s.run("mail.select.unflagged").unwrap();
+    assert_eq!(s.selection().len(), total - flagged);
+    assert_eq!(s.run("mail.select.none").unwrap(), Outcome::Done);
+    assert!(s.selection().is_empty());
+    assert_eq!(s.take_select_request(), Some(vec![]));
+    assert!(s.run("mail.select.otra").is_err());
+}
+
+#[test]
+fn gmail_keys_next_go_and_spam() {
+    // UX-26: `j`/`k`, `g i`/`g t`, `!`, y el reconocimiento de lo escrito.
+    use iuredesk_engine::ShortcutScheme;
+    use iuredesk_engine::command::{Typed, match_typed};
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = session(dir.path(), false);
+    let rows: Vec<MessageId> = s.rows().iter().map(|r| r.id).take(3).collect();
+    // Sin abierto, `j` abre el primero; luego el siguiente y `k` vuelve.
+    s.run("mail.next").unwrap();
+    assert_eq!(s.take_focus_request().map(|(_, id)| id), Some(rows[0]));
+    select(&mut s, rows[0]);
+    s.run("mail.next").unwrap();
+    assert_eq!(s.take_focus_request().map(|(_, id)| id), Some(rows[1]));
+    select(&mut s, rows[1]);
+    s.run("mail.prev").unwrap();
+    assert_eq!(s.take_focus_request().map(|(_, id)| id), Some(rows[0]));
+    // Es spam: a «No deseado», con deshacer.
+    select(&mut s, rows[2]);
+    s.run("mail.spam").unwrap();
+    settle(&mut s);
+    assert_eq!(s.folder(folder_of(&s, rows[2])).unwrap().role, FolderRole::Junk);
+    s.run("undo").unwrap();
+    settle(&mut s);
+    assert_eq!(s.folder(folder_of(&s, rows[2])).unwrap().role, FolderRole::Inbox);
+    // Ir a.
+    s.run("mail.go.sent").unwrap();
+    assert_eq!(s.folder_sel(), FolderSel::Unified(FolderRole::Sent));
+    s.run("mail.go.flagged").unwrap();
+    assert_eq!(s.folder_sel(), FolderSel::Flagged);
+    s.run("mail.go.inbox").unwrap();
+    assert_eq!(s.folder_sel(), FolderSel::Unified(FolderRole::Inbox));
+    // Lo escrito.
+    let g = ShortcutScheme::Gmail;
+    assert_eq!(match_typed("g", g), Typed::Prefix);
+    assert_eq!(match_typed("g i", g), Typed::Run("mail.go.inbox"));
+    assert_eq!(match_typed("G I", g), Typed::Run("mail.go.inbox"));
+    assert_eq!(match_typed("*", g), Typed::Prefix);
+    assert_eq!(match_typed("* u", g), Typed::Run("mail.select.unread"));
+    assert_eq!(match_typed("!", g), Typed::Run("mail.spam"));
+    assert_eq!(match_typed("?", g), Typed::Run("help.shortcuts"));
+    assert_eq!(match_typed("g x", g), Typed::None);
+    assert_eq!(match_typed("q", g), Typed::None);
+    // En Outlook solo `?`.
+    assert_eq!(match_typed("g", ShortcutScheme::Outlook), Typed::None);
+    assert_eq!(match_typed("?", ShortcutScheme::Outlook), Typed::Run("help.shortcuts"));
+}
+
+#[test]
 fn conversations_group_threads_and_archive_whole_conversation() {
     let dir = tempfile::tempdir().unwrap();
     let flat = session(dir.path(), false);

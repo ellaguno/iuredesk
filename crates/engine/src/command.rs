@@ -201,6 +201,80 @@ pub const COMMANDS: &[CommandSpec] = &[
         Group::Mail,
         "select sender person seleccionar remitente persona todos",
     ),
+    // UX-26: atajos de Gmail que faltaban.
+    c("mail.next", "Next message", "Mensaje siguiente", "chevron-down", Group::Mail, "next down siguiente abajo j"),
+    c("mail.prev", "Previous message", "Mensaje anterior", "chevron-up", Group::Mail, "previous up anterior arriba k"),
+    c(
+        "mail.back_to_list",
+        "Back to the message list",
+        "Volver a la lista de correos",
+        "list",
+        Group::Mail,
+        "back list volver lista u",
+    ),
+    c(
+        "mail.toggle_select",
+        "Select / unselect this message",
+        "Seleccionar / quitar este mensaje",
+        "check",
+        Group::Mail,
+        "select toggle seleccionar marcar x",
+    ),
+    c("mail.spam", "Report spam", "Es spam", "junk", Group::Mail, "spam junk no deseado correo basura"),
+    c("mail.go.inbox", "Go to Inbox", "Ir a Recibidos", "inbox", Group::Navigate, "go inbox ir entrada recibidos"),
+    c(
+        "mail.go.flagged",
+        "Go to Flagged",
+        "Ir a Marcados",
+        "flag",
+        Group::Navigate,
+        "go starred flagged ir destacados marcados",
+    ),
+    c("mail.go.sent", "Go to Sent", "Ir a Enviados", "send", Group::Navigate, "go sent ir enviados"),
+    c("mail.go.drafts", "Go to Drafts", "Ir a Borradores", "drafts", Group::Navigate, "go drafts ir borradores"),
+    c(
+        "help.shortcuts",
+        "Keyboard shortcuts",
+        "Atajos de teclado",
+        "info",
+        Group::App,
+        "shortcuts keys help atajos teclas ayuda",
+    ),
+    // UX-25: selección por criterio (el desplegable «Seleccionar» de la lista; `*a`, `*n`, `*u`).
+    c("mail.select.all", "Select all", "Seleccionar todos", "check", Group::Mail, "select all seleccionar todo"),
+    c(
+        "mail.select.none",
+        "Select none",
+        "No seleccionar ninguno",
+        "close",
+        Group::Mail,
+        "deselect clear quitar selección ninguno",
+    ),
+    c("mail.select.read", "Select read", "Seleccionar leídos", "check", Group::Mail, "select read seleccionar leidos"),
+    c(
+        "mail.select.unread",
+        "Select unread",
+        "Seleccionar no leídos",
+        "mail",
+        Group::Mail,
+        "select unread seleccionar no leidos",
+    ),
+    c(
+        "mail.select.flagged",
+        "Select flagged",
+        "Seleccionar con seguimiento",
+        "flag",
+        Group::Mail,
+        "select starred flagged seleccionar destacados",
+    ),
+    c(
+        "mail.select.unflagged",
+        "Select unflagged",
+        "Seleccionar sin seguimiento",
+        "flag",
+        Group::Mail,
+        "select unstarred seleccionar sin destacar",
+    ),
     c(
         "mail.toggle_flag",
         "Flag / unflag",
@@ -831,6 +905,13 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
         (Gmail, "mail.move") => Some(Chord::key("V")),
         (Gmail, "mail.search") => Some(Chord::key("Slash")),
         (Gmail, "mail.snooze") => Some(Chord::key("B")),
+        // UX-26.
+        (Gmail, "mail.next") => Some(Chord::key("J")),
+        (Gmail, "mail.prev") => Some(Chord::key("K")),
+        (Gmail, "mail.open_window") => Some(Chord::key("O")),
+        (Gmail, "mail.back_to_list") => Some(Chord::key("U")),
+        (Gmail, "mail.toggle_select") => Some(Chord::key("X")),
+        (Gmail, "mail.label") => Some(Chord::key("L")),
         (Gmail, "undo") => Some(Chord::key("Z")),
         // Apple Mail.
         (AppleMail, "mail.new") => Some(Chord::cmd("N")),
@@ -848,6 +929,65 @@ pub fn shortcut(id: &str, scheme: ShortcutScheme) -> Option<Chord> {
 }
 
 /// Todos los atajos de un esquema (comando, combinación).
+/// UX-26: atajos que se escriben (Gmail): un carácter o dos seguidos («g i», «* a»), por el
+/// carácter tecleado y no por la tecla física, así valen en cualquier distribución del teclado.
+/// `?` (la hoja de atajos) vale en todos los esquemas.
+pub fn typed(id: &str, scheme: ShortcutScheme) -> Option<&'static str> {
+    if id == "help.shortcuts" {
+        return Some("?");
+    }
+    if scheme != ShortcutScheme::Gmail {
+        return None;
+    }
+    Some(match id {
+        "mail.select.all" => "* a",
+        "mail.select.none" => "* n",
+        "mail.select.read" => "* r",
+        "mail.select.unread" => "* u",
+        "mail.select.flagged" => "* s",
+        "mail.select.unflagged" => "* t",
+        "mail.go.inbox" => "g i",
+        "mail.go.flagged" => "g s",
+        "mail.go.sent" => "g t",
+        "mail.go.drafts" => "g d",
+        "mail.spam" => "!",
+        _ => return None,
+    })
+}
+
+/// Atajos escritos del esquema: `(comando, secuencia)`.
+pub fn typed_bindings(scheme: ShortcutScheme) -> Vec<(&'static str, &'static str)> {
+    COMMANDS.iter().filter_map(|c| typed(c.id, scheme).map(|k| (c.id, k))).collect()
+}
+
+/// Qué hacer con lo escrito hasta ahora (`pending`, caracteres separados por espacio).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Typed {
+    /// Completa este comando.
+    Run(&'static str),
+    /// Es el principio de alguno: esperar la siguiente tecla.
+    Prefix,
+    /// No es nada.
+    None,
+}
+
+/// Busca `pending` («g», «g i») entre los atajos escritos del esquema.
+pub fn match_typed(pending: &str, scheme: ShortcutScheme) -> Typed {
+    let mut prefix = false;
+    for (id, seq) in typed_bindings(scheme) {
+        if seq.eq_ignore_ascii_case(pending) {
+            return Typed::Run(id);
+        }
+        if seq.len() > pending.len()
+            && seq.get(..pending.len()).is_some_and(|p| p.eq_ignore_ascii_case(pending))
+            && seq.as_bytes().get(pending.len()) == Some(&b' ')
+        {
+            prefix = true;
+        }
+    }
+    if prefix { Typed::Prefix } else { Typed::None }
+}
+
 pub fn bindings(scheme: ShortcutScheme) -> Vec<(&'static str, Chord)> {
     COMMANDS.iter().filter_map(|c| shortcut(c.id, scheme).map(|k| (c.id, k))).collect()
 }
@@ -871,7 +1011,8 @@ pub fn shortcuts_markdown(spanish: bool) -> String {
     let mut current: Option<Group> = None;
     for c in COMMANDS {
         let keys: Vec<Option<Chord>> = ShortcutScheme::ALL.iter().map(|sc| shortcut(c.id, *sc)).collect();
-        if keys.iter().all(Option::is_none) {
+        let typed_keys: Vec<Option<&str>> = ShortcutScheme::ALL.iter().map(|sc| typed(c.id, *sc)).collect();
+        if keys.iter().all(Option::is_none) && typed_keys.iter().all(Option::is_none) {
             continue;
         }
         if current != Some(c.group) {
@@ -891,7 +1032,15 @@ pub fn shortcuts_markdown(spanish: bool) -> String {
         }
         let cell = |k: &Option<Chord>| k.map(|k| format!("`{}`", k.label_in(false, spanish))).unwrap_or_default();
         let name = if spanish { c.es } else { c.en };
-        let cells: Vec<String> = keys.iter().map(cell).collect();
+        let cells: Vec<String> = keys
+            .iter()
+            .zip(&typed_keys)
+            .map(|(k, t)| match (k, t) {
+                (Some(_), _) => cell(k),
+                (None, Some(t)) => t.split(' ').map(|c| format!("`{c}`")).collect::<Vec<_>>().join(" "),
+                (None, None) => String::new(),
+            })
+            .collect();
         s.push_str(&format!("| {} | {} |\n", name.replace('|', "\\|"), cells.join(" | ")));
     }
     s

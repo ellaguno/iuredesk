@@ -14,6 +14,37 @@ Generated from IureDesk's commands; don't edit by hand. Choose the scheme in Set
 | Archive | `Backspace` | `E` | `Ctrl+A` |
 | Delete | `Del` | `#` | `Backspace` |
 | Mark as read / unread | `Ctrl+Q` | `Shift+U` | `Ctrl+Shift+U` |
+| Next message |  | `J` |  |
+| Previous message |  | `K` |  |
+| Back to the message list |  | `U` |  |
+| Select / unselect this message |  | `X` |  |
+| Report spam |  | `!` |  |
+
+## Go to
+
+| Command | Outlook | Gmail | Apple Mail |
+|---|---|---|---|
+| Go to Inbox |  | `g` `i` |  |
+| Go to Flagged |  | `g` `s` |  |
+| Go to Sent |  | `g` `t` |  |
+| Go to Drafts |  | `g` `d` |  |
+
+## App
+
+| Command | Outlook | Gmail | Apple Mail |
+|---|---|---|---|
+| Keyboard shortcuts | `?` | `?` | `?` |
+
+## Mail
+
+| Command | Outlook | Gmail | Apple Mail |
+|---|---|---|---|
+| Select all |  | `*` `a` |  |
+| Select none |  | `*` `n` |  |
+| Select read |  | `*` `r` |  |
+| Select unread |  | `*` `u` |  |
+| Select flagged |  | `*` `s` |  |
+| Select unflagged |  | `*` `t` |  |
 | Flag / unflag | `Ins` | `S` | `Ctrl+Shift+L` |
 | Move to folder… | `Ctrl+Shift+V` | `V` |  |
 | Search mail | `Ctrl+E` | `/` | `Ctrl+Alt+F` |
@@ -45,6 +76,7 @@ Generated from IureDesk's commands; don't edit by hand. Choose the scheme in Set
 | Command | Outlook | Gmail | Apple Mail |
 |---|---|---|---|
 | Snooze… |  | `B` |  |
+| Label… |  | `L` |  |
 | Iurefficient tab | `Ctrl+Alt+I` | `Ctrl+Alt+I` | `Ctrl+Alt+I` |
 
 ## Calendar

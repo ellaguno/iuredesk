@@ -15,6 +15,7 @@ mod folders;
 mod images;
 mod invites;
 mod iure;
+mod keys;
 mod live;
 mod mailops;
 mod notes;
@@ -421,6 +422,10 @@ pub struct Session {
     focus_request: Option<MessageId>,
     /// UX-24: filas que la UI debe marcar (seleccionar los correos de una persona).
     select_request: Option<Vec<MessageId>>,
+    /// UX-26: la petición de foco viene de `j`/`k` (con filas marcadas solo mueve el cursor).
+    step_request: bool,
+    /// UX-26: abierto cuando se dio el último paso y la fila a la que se llegó.
+    step_cursor: Option<(Option<MessageId>, MessageId)>,
     search: String,
     undo: Vec<UndoEntry>,
     now: Option<DateTime<Utc>>,
@@ -520,6 +525,8 @@ impl Session {
             focused: None,
             focus_request: None,
             select_request: None,
+            step_request: false,
+            step_cursor: None,
             search: String::new(),
             undo: Vec::new(),
             now: cfg.now,
@@ -985,6 +992,7 @@ impl Session {
 
     /// Pide a la UI que seleccione y muestre este mensaje (atajos, capturas, enlaces).
     pub fn request_focus(&mut self, id: MessageId) {
+        self.step_request = false;
         self.focus_request = Some(id);
     }
 
@@ -1228,6 +1236,7 @@ impl Session {
             }
             "mail.edit_draft" => self.focused.is_some_and(|m| self.is_draft(m)),
             "mail.from_sender" | "mail.select_sender" => id.contains(':') || self.focused.is_some(),
+            "mail.spam" => self.has_target(),
             b if (b == "nav.notes" || b.starts_with("notes.")) && !self.notes_available => false,
             "nav.files" if !self.files_available => false,
             b if (b == "nav.assistant" || b.starts_with("ai.")) && !self.ai_available => false,
@@ -1319,6 +1328,13 @@ impl Session {
             "mail.reply" | "mail.reply_all" | "mail.forward" => self.reply_like(base),
             "mail.edit_draft" => self.edit_draft_focused(),
             "mail.from_sender" => self.run_from_sender(arg),
+            // UX-26: atajos de Gmail que faltaban.
+            "mail.next" => self.run_step(true),
+            "mail.prev" => self.run_step(false),
+            b if b.starts_with("mail.go.") => self.run_go(b.trim_start_matches("mail.go.")),
+            "mail.spam" => self.run_spam(),
+            "mail.back_to_list" | "mail.toggle_select" | "help.shortcuts" => Ok(Outcome::View(base.to_string())),
+            b if b.starts_with("mail.select.") => self.run_select_where(b.trim_start_matches("mail.select.")),
             "mail.select_sender" => self.run_select_sender(arg),
             "mail.new_folder" | "mail.rename_folder" | "mail.delete_folder" => self.run_folder_command(base, arg),
             "mail.toggle_account_visible" => {
@@ -1527,6 +1543,29 @@ impl Session {
         self.selection = selection.into_iter().filter(|m| *m != id).collect();
         self.focused = focused.filter(|f| *f != id);
         // La lista conserva su propia selección (por clave): no se mueve a «el siguiente».
+        self.focus_request = None;
+        out
+    }
+
+    /// UX-25: ejecuta un comando sobre un mensaje concreto (los iconos al pasar sobre su fila) sin
+    /// tocar la selección ni el mensaje abierto; si el mensaje se va de la lista (archivar,
+    /// eliminar, posponer), deja de contar en ellos. Solo acciones sin diálogo.
+    pub fn run_on(&mut self, id: MessageId, command: &str) -> Result<Outcome> {
+        let (base, arg) = command.split_once(':').map_or((command, None), |(b, a)| (b, Some(a)));
+        let leaves = match base {
+            "mail.archive" | "mail.delete" => true,
+            "mail.snooze" if arg.is_some() => true,
+            "mail.toggle_read" | "mail.mark_read" | "mail.mark_unread" | "mail.toggle_flag" => false,
+            _ => return Err(EngineError::Invalid(format!("no se ejecuta sobre una fila: {command}"))),
+        };
+        if base == "mail.delete" {
+            return self.delete_message(id);
+        }
+        let (selection, focused) = (self.selection.clone(), self.focused);
+        self.selection = vec![id];
+        let out = self.run(command);
+        self.selection = if leaves { selection.into_iter().filter(|m| *m != id).collect() } else { selection };
+        self.focused = if leaves { focused.filter(|f| *f != id) } else { focused };
         self.focus_request = None;
         out
     }

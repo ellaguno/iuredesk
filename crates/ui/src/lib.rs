@@ -47,6 +47,7 @@ mod rules_ui;
 mod security_ui;
 mod server_form;
 mod settings;
+mod shortcuts_ui;
 mod suite_ui;
 mod task_board;
 mod task_editor;

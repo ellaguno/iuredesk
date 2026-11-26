@@ -140,6 +140,10 @@ pub struct DeskApp {
     pub(crate) confirm: Option<(iuredesk_engine::lang::Text, iuredesk_engine::lang::Text, String)>,
     /// UX-23: mensaje que se borrará si se confirma (Supr con el ratón sobre su fila).
     pub(crate) hover_delete: Option<iuredesk_model::MessageId>,
+    /// UX-26: hoja de atajos (`?`) abierta.
+    pub(crate) show_shortcuts: bool,
+    /// UX-26: lo escrito de un atajo de dos teclas («g», «*») y cuándo.
+    typed: (String, f64),
     /// R2.1: tiempo por cuadro, memoria y estado para Ajustes → Avanzado.
     pub(crate) diag: crate::diagnostics::DiagState,
     /// R1.2: archivos abiertos desde el sistema.
@@ -200,6 +204,8 @@ impl DeskApp {
             applied_fonts: None,
             confirm: None,
             hover_delete: None,
+            show_shortcuts: false,
+            typed: (String::new(), 0.0),
             diag: Default::default(),
             opened: Default::default(),
             attach,
@@ -408,6 +414,7 @@ impl DeskApp {
             || self.rules.modal()
             || self.attach.modal()
             || self.today.weather.setup_open
+            || self.show_shortcuts
             || !self.crash.is_empty();
         // Escribiendo en el redactor, los atajos de la aplicación no se disparan.
         let composing = !self.composers.is_empty() && ctx.egui_wants_keyboard_input();
@@ -454,6 +461,7 @@ impl DeskApp {
         crate::event_editor::show(self, &ctx);
         crate::task_editor::show(self, &ctx);
         crate::contact_editor::show(self, &ctx);
+        crate::shortcuts_ui::show(self, &ctx);
         crate::opened::frame(self, &ctx);
         crate::reminders::show(self, &ctx);
         crate::compose::show_all(self, &ctx);
@@ -1137,7 +1145,11 @@ impl DeskApp {
     /// Atajos del esquema elegido. Los de una tecla (Gmail) no se disparan mientras se escribe.
     fn shortcuts(&mut self, ctx: &Context) {
         let scheme = self.session.scheme();
-        let typing = ctx.egui_wants_keyboard_input();
+        // Con el foco en un panel que no es de texto (la lista, la lectura) los atajos de una
+        // tecla valen (UX-26: tras un clic en una fila la lista se queda con el foco).
+        let focus = ctx.memory(|m| m.focused());
+        let typing = focus
+            .is_some_and(|f| ctx.text_edit_focused() || !(self.panes.contains(&f) || self.panes_prev.contains(&f)));
         let in_calendar = self.session.module == Module::Calendar;
         let in_mail = self.session.module == Module::Mail;
         let in_tasks = self.session.module == Module::Tasks;
@@ -1170,6 +1182,13 @@ impl DeskApp {
             self.ask_hover_delete(id);
             return;
         }
+        // UX-26: atajos escritos («g i», «* a», «?», «!»), por el carácter y no por la tecla.
+        if !typing && let Some(id) = self.typed_shortcut(ctx, scheme) {
+            if !mail_only(id) || in_mail {
+                self.run(ctx, id);
+            }
+            return;
+        }
         ctx.input_mut(|i| {
             let mut consumed = None;
             for (idx, e) in i.events.iter().enumerate() {
@@ -1183,6 +1202,7 @@ impl DeskApp {
                         || (cmd.starts_with("cal.") && !in_calendar)
                         || (cmd.starts_with("tasks.view.") && !in_tasks)
                         || ((cmd == "mail.open_window" || cmd == "view.reading_focus") && !in_mail)
+                        || (mail_only(cmd) && !in_mail)
                     {
                         continue;
                     }
@@ -1210,6 +1230,43 @@ impl DeskApp {
         if let Some(cmd) = fire {
             self.run(ctx, cmd);
         }
+    }
+
+    /// UX-26: sigue lo escrito fuera de un campo. Devuelve el comando si se completó un atajo; con
+    /// uno a medias (o recién completado) las teclas de este cuadro no disparan otros atajos.
+    fn typed_shortcut(&mut self, ctx: &Context, scheme: iuredesk_engine::ShortcutScheme) -> Option<&'static str> {
+        let now = ctx.input(|i| i.time);
+        if now - self.typed.1 > 1.5 {
+            self.typed.0.clear();
+        }
+        let texts: Vec<String> = ctx.input(|i| {
+            i.events.iter().filter_map(|e| if let egui::Event::Text(t) = e { Some(t.clone()) } else { None }).collect()
+        });
+        let mut swallow = !self.typed.0.is_empty() && !texts.is_empty();
+        let mut fire = None;
+        for ch in texts.iter().flat_map(|t| t.chars()).take(8) {
+            let candidate = if self.typed.0.is_empty() { ch.to_string() } else { format!("{} {ch}", self.typed.0) };
+            match command::match_typed(&candidate, scheme) {
+                command::Typed::Run(id) => {
+                    fire = Some(id);
+                    self.typed.0.clear();
+                    swallow = true;
+                }
+                command::Typed::Prefix => {
+                    self.typed = (candidate, now);
+                    swallow = true;
+                }
+                command::Typed::None => self.typed.0.clear(),
+            }
+        }
+        if swallow {
+            ctx.input_mut(|i| {
+                i.events.retain(|e| {
+                    !matches!(e, egui::Event::Key { modifiers, .. } if !modifiers.command && !modifiers.ctrl && !modifiers.alt)
+                });
+            });
+        }
+        fire
     }
 
     fn rail(&mut self, ui: &mut Ui) {
@@ -1493,6 +1550,12 @@ impl DeskApp {
 }
 
 /// `F1`…`F12`: no escriben nada, así que sus atajos no estorban en un campo de texto.
+/// UX-26: atajos que solo tienen sentido en el correo (fuera de él no hacen nada).
+fn mail_only(cmd: &str) -> bool {
+    matches!(cmd, "mail.next" | "mail.prev" | "mail.toggle_select" | "mail.back_to_list" | "mail.spam")
+        || cmd.starts_with("mail.select.")
+}
+
 fn is_function_key(key: &str) -> bool {
     key.strip_prefix('F').is_some_and(|n| !n.is_empty() && n.len() <= 2 && n.bytes().all(|b| b.is_ascii_digit()))
 }

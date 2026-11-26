@@ -14,6 +14,37 @@ Generado a partir de los comandos de IureDesk; no se edita a mano. El esquema se
 | Archivar | `Retroceso` | `E` | `Ctrl+A` |
 | Eliminar | `Supr` | `#` | `Retroceso` |
 | Marcar como leído / no leído | `Ctrl+Q` | `Shift+U` | `Ctrl+Shift+U` |
+| Mensaje siguiente |  | `J` |  |
+| Mensaje anterior |  | `K` |  |
+| Volver a la lista de correos |  | `U` |  |
+| Seleccionar / quitar este mensaje |  | `X` |  |
+| Es spam |  | `!` |  |
+
+## Ir a
+
+| Comando | Outlook | Gmail | Apple Mail |
+|---|---|---|---|
+| Ir a Recibidos |  | `g` `i` |  |
+| Ir a Marcados |  | `g` `s` |  |
+| Ir a Enviados |  | `g` `t` |  |
+| Ir a Borradores |  | `g` `d` |  |
+
+## Aplicación
+
+| Comando | Outlook | Gmail | Apple Mail |
+|---|---|---|---|
+| Atajos de teclado | `?` | `?` | `?` |
+
+## Correo
+
+| Comando | Outlook | Gmail | Apple Mail |
+|---|---|---|---|
+| Seleccionar todos |  | `*` `a` |  |
+| No seleccionar ninguno |  | `*` `n` |  |
+| Seleccionar leídos |  | `*` `r` |  |
+| Seleccionar no leídos |  | `*` `u` |  |
+| Seleccionar con seguimiento |  | `*` `s` |  |
+| Seleccionar sin seguimiento |  | `*` `t` |  |
 | Marcar / quitar seguimiento | `Insert` | `S` | `Ctrl+Shift+L` |
 | Mover a carpeta… | `Ctrl+Shift+V` | `V` |  |
 | Buscar en el correo | `Ctrl+E` | `/` | `Ctrl+Alt+F` |
@@ -45,6 +76,7 @@ Generado a partir de los comandos de IureDesk; no se edita a mano. El esquema se
 | Comando | Outlook | Gmail | Apple Mail |
 |---|---|---|---|
 | Posponer… |  | `B` |  |
+| Etiquetar… |  | `L` |  |
 | Pestaña Iurefficient | `Ctrl+Alt+I` | `Ctrl+Alt+I` | `Ctrl+Alt+I` |
 
 ## Calendario

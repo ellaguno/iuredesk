@@ -1,6 +1,7 @@
 //! Las personas como objetos (UX-24): el contacto de una dirección, «sus correos» (búsqueda
 //! `de:`) y «seleccionar sus correos» en la lista actual. La tarjeta flotante de la UI y los
-//! comandos `mail.from_sender` / `mail.select_sender` (paleta, CLI, MCP) llegan aquí.
+//! comandos `mail.from_sender` / `mail.select_sender` (paleta, CLI, MCP) llegan aquí, y la
+//! selección por criterio de UX-25 (`mail.select.*`).
 
 use iuredesk_model::{Contact, MessageId};
 
@@ -98,6 +99,40 @@ impl Session {
                 format!("{n} messages from {addr} selected"),
                 format!("{n} correos de {addr} seleccionados"),
             )
+        }))
+    }
+
+    /// UX-25: selección por criterio (`mail.select.all`, `none`, `read`, `unread`, `flagged`,
+    /// `unflagged`), como el desplegable de Gmail. «Ninguno» quita la selección.
+    pub(crate) fn run_select_where(&mut self, what: &str) -> Result<Outcome> {
+        let keep: fn(&iuredesk_model::Flags) -> bool = match what {
+            "all" => |_| true,
+            "none" => |_| false,
+            "read" => |f| f.seen,
+            "unread" => |f| !f.seen,
+            "flagged" => |f| f.flagged,
+            "unflagged" => |f| !f.flagged,
+            _ => return Err(crate::EngineError::UnknownCommand(format!("mail.select.{what}"))),
+        };
+        let rows = self.rows_shared();
+        let mut ids = Vec::new();
+        if what != "none" {
+            for r in rows.iter().take(MAX_SCAN) {
+                if self.envelope(r.id).is_some_and(|e| keep(&e.flags)) {
+                    ids.push(r.id);
+                }
+            }
+        }
+        let n = ids.len();
+        self.selection = ids.clone();
+        self.select_request = Some(ids);
+        if what == "none" {
+            return Ok(Outcome::Done);
+        }
+        Ok(Outcome::Notice(match n {
+            0 => Notice::info("Nothing in this list matches.", "Nada en esta lista coincide."),
+            1 => Notice::success("1 message selected", "1 correo seleccionado"),
+            n => Notice::success(format!("{n} messages selected"), format!("{n} correos seleccionados")),
         }))
     }
 

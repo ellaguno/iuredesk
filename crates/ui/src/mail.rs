@@ -48,6 +48,12 @@ pub struct MailState {
     pub(crate) body_sel: Option<BodySel>,
     /// UX-23: fila bajo el ratón y en qué pasada se vio (Supr la borra aunque no esté elegida).
     pub(crate) hover_row: Option<(MessageId, u64)>,
+    /// UX-25: «Posponer» abierto desde el icono de una fila (mensaje y rectángulo del icono).
+    pub(crate) row_snooze: Option<(MessageId, Rect)>,
+    /// UX-26: `x` marca o desmarca la fila del cursor en el próximo cuadro.
+    pub(crate) toggle_check: bool,
+    /// UX-26: id de la lista (para que `u` le devuelva el foco del teclado).
+    pub(crate) list_id: Option<egui::Id>,
     /// F7.1: «Nueva carpeta…» / «Renombrar…» abierto.
     pub(crate) folder_dialog: Option<FolderDialog>,
     /// UX-3: lectura enfocada (sin carpetas ni lista; Esc vuelve).
@@ -107,6 +113,9 @@ impl Default for MailState {
             show_quoted: HashSet::new(),
             body_sel: None,
             hover_row: None,
+            row_snooze: None,
+            toggle_check: false,
+            list_id: None,
             focus: false,
             strip_open: false,
             readers: Vec::new(),
@@ -304,6 +313,20 @@ pub(crate) fn view_command(app: &mut DeskApp, ctx: &egui::Context, id: &str) {
             app.session.module = iuredesk_engine::Module::Mail;
             app.mail.focus = !app.mail.focus && app.session.focused().is_some();
         }
+        // UX-26 (`u`): sale de la lectura enfocada y lleva el teclado a la lista.
+        "mail.back_to_list" => {
+            app.session.module = iuredesk_engine::Module::Mail;
+            app.mail.focus = false;
+            if let Some(id) = app.mail.list_id {
+                ctx.memory_mut(|m| m.request_focus(id));
+            }
+        }
+        // UX-26 (`x`): marca o desmarca el mensaje del cursor (como su casilla).
+        "mail.toggle_select" => {
+            app.session.module = iuredesk_engine::Module::Mail;
+            app.mail.toggle_check = true;
+        }
+        "help.shortcuts" => app.show_shortcuts = true,
         "view.context_panel" => {
             // En franja se despliega o pliega la franja; en columna, la columna ↔ riel.
             if app.session.prefs.context_layout.strip_at(ctx.content_rect().width()) {
@@ -947,11 +970,33 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         app.mail.list_for = Some(view);
     }
     if let Some((idx, id)) = app.session.take_focus_request() {
-        app.mail.list.selection.select_only(idx, id.get());
+        let step = app.session.take_step_request();
+        if step && app.mail.list.selection.checking() {
+            // UX-26: con filas marcadas, `j`/`k` solo mueven el cursor (como en Gmail).
+            let rows = app.session.rows_shared();
+            let key_of = |i: usize| rows.get(i).map_or(u64::MAX - i as u64, |r| r.id.get());
+            app.mail.list.selection.move_to(idx, false, true, &key_of);
+        } else {
+            app.mail.list.selection.select_only(idx, id.get());
+            app.session.set_selection(vec![id], Some(id));
+        }
         app.mail.list.scroll_to(idx);
-        app.session.set_selection(vec![id], Some(id));
     }
     let rows = app.session.rows_shared();
+    // UX-26: `x` marca o desmarca la fila del cursor (o la del abierto).
+    if std::mem::take(&mut app.mail.toggle_check) {
+        let key_of = |i: usize| rows.get(i).map_or(u64::MAX - i as u64, |r| r.id.get());
+        let at = app.mail.list.selection.cursor().or_else(|| {
+            let f = app.session.focused()?;
+            rows.iter().position(|r| r.id == f)
+        });
+        if let Some(i) = at.filter(|i| *i < rows.len()) {
+            app.mail.list.selection.check(i, &key_of);
+            let sel: Vec<MessageId> = app.mail.list.selection.keys().map(MessageId).collect();
+            let keep = app.session.focused().filter(|f| sel.contains(f));
+            app.session.set_selection(sel, keep);
+        }
+    }
     // UX-24: «Seleccionar sus correos» marca esas filas como con las casillas.
     if let Some(ids) = app.session.take_select_request() {
         let key_of = |i: usize| rows.get(i).map_or(u64::MAX - i as u64, |r| r.id.get());
@@ -1020,6 +1065,7 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
                 if r.clicked() {
                     app.run(&ctx, "mail.toggle_conversations");
                 }
+                select_menu(app, ui);
             });
         });
     });
@@ -1092,10 +1138,13 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         lv = lv.row_height(h).header(false);
     }
     let mut hovered_row: Option<MessageId> = None;
+    // UX-25: iconos de la fila bajo el ratón (en lugar de la fecha) y su estado.
+    let mut row_tools: Option<(MessageId, Rect, bool)> = None;
     let out = lv.show(ui, &mut mail.list, key_of, |row| {
         let Some(&ListRow { id, count }) = rows.get(row.index) else { return };
         // Toda la franja de la fila (también la casilla, que queda fuera de `row.rect`).
-        if hover.is_some_and(|p| p.y >= row.rect.top() && p.y < row.rect.bottom()) {
+        let row_hovered = hover.is_some_and(|p| p.y >= row.rect.top() && p.y < row.rect.bottom());
+        if row_hovered {
             hovered_row = Some(id);
         }
         let Some(env) = session.envelope(id).cloned() else { return };
@@ -1158,6 +1207,16 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
             }
             let subj_font = if unread { bold_font.clone() } else { body_font.clone() };
             row.text_in(Rect::from_min_max(pos2(x, cell.top()), cell.max), Align::Min, &subject, subj_font, col.text);
+            if row_hovered {
+                let date_cell = row.cell(4);
+                let strip = Rect::from_min_max(
+                    pos2(date_cell.right() - ROW_TOOLS_W, date_cell.top()),
+                    pos2(date_cell.right(), date_cell.bottom()),
+                );
+                paint_row_tools(row.painter(), strip, env.flags.seen, hover, &col);
+                row_tools = Some((id, strip, env.flags.seen));
+                return;
+            }
             if env.has_attachments {
                 row.icon_colored(3, Icon::Attachment, col.text_muted, col.text_muted);
             }
@@ -1185,14 +1244,14 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
         // Línea 1: remitente y fecha.
         let date_font = if unread { bold_font.clone() } else { small_font.clone() };
         let date_color = if unread { col.accent } else { col.text_muted };
-        let date_w = 76.0;
-        row.text_in(
-            Rect::from_min_max(pos2(line1.right() - date_w, line1.top()), line1.max),
-            Align::Max,
-            &date,
-            date_font,
-            date_color,
-        );
+        let date_w = if row_hovered { ROW_TOOLS_W } else { 76.0 };
+        let date_rect = Rect::from_min_max(pos2(line1.right() - date_w, line1.top()), line1.max);
+        if row_hovered {
+            paint_row_tools(row.painter(), date_rect, env.flags.seen, hover, &col);
+            row_tools = Some((id, date_rect, env.flags.seen));
+        } else {
+            row.text_in(date_rect, Align::Max, &date, date_font, date_color);
+        }
         let who_font = if unread { bold_font.clone() } else { body_font.clone() };
         let count_w = if count > 1 { 30.0 } else { 0.0 };
         let who_rect = Rect::from_min_max(line1.min, pos2(line1.right() - date_w - 8.0 - count_w, line1.bottom()));
@@ -1270,6 +1329,8 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
     let on_list = hover
         .is_some_and(|p| out.response.rect.contains(p) && ui.ctx().layer_id_at(p).is_none_or(|l| l == ui.layer_id()));
     mail.hover_row = hovered_row.filter(|_| on_list).map(|id| (id, pass));
+    let tool = row_tools.filter(|_| on_list).and_then(|(id, strip, seen)| row_tools_ui(ui, id, strip, seen));
+    mail.list_id = Some(out.response.id);
     // R4.1: la lista es un panel de F6.
     if !panes.contains(&out.response.id) {
         panes.push(out.response.id);
@@ -1303,6 +1364,137 @@ fn message_list(app: &mut DeskApp, ui: &mut Ui) {
     }
     if let Some(id) = open_window {
         crate::reader::open(app, id);
+    }
+    match tool {
+        Some((id, RowTool::Run(cmd))) => match app.session.run_on(id, cmd) {
+            Ok(out) => app.outcome(&ctx, out),
+            Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
+        },
+        Some((id, RowTool::Snooze(r))) => app.mail.row_snooze = Some((id, r)),
+        None => {}
+    }
+    row_snooze_menu(app, ui);
+}
+
+/// UX-25: «Seleccionar ▾» de la cabecera de la lista, como el desplegable de Gmail.
+fn select_menu(app: &mut DeskApp, ui: &mut Ui) {
+    let ctx = ui.ctx().clone();
+    let r = icons::icon_button(ui, Icon::Check, pick("Select…", "Seleccionar…"), true);
+    let mut chosen: Option<&str> = None;
+    egui::Popup::menu(&r).show(|ui| {
+        for (id, en, es) in [
+            ("mail.select.all", "All", "Todos"),
+            ("mail.select.none", "None", "Ninguno"),
+            ("mail.select.read", "Read", "Leídos"),
+            ("mail.select.unread", "Unread", "No leídos"),
+            ("mail.select.flagged", "Flagged", "Con seguimiento"),
+            ("mail.select.unflagged", "Unflagged", "Sin seguimiento"),
+        ] {
+            let hint = iuredesk_engine::command::shortcut(id, app.session.scheme())
+                .map(|k| format!("   {}", k.label(cfg!(target_os = "macos"))))
+                .unwrap_or_default();
+            if ui.button(format!("{}{hint}", pick(en, es))).clicked() {
+                chosen = Some(id);
+                ui.close();
+            }
+        }
+    });
+    if let Some(id) = chosen {
+        app.run(&ctx, id);
+    }
+}
+
+/// UX-25: ancho de los iconos de la fila bajo el ratón (cuatro de 22 px).
+const ROW_TOOLS_W: f32 = 88.0;
+
+/// Lo que se pidió con los iconos de una fila.
+enum RowTool {
+    Run(&'static str),
+    /// Abrir «Posponer» junto a este icono.
+    Snooze(Rect),
+}
+
+/// Los iconos de la fila (de izquierda a derecha): archivar, eliminar, leído/no leído, posponer.
+fn row_tool_items(seen: bool) -> [(Icon, &'static str, &'static str, &'static str); 4] {
+    [
+        (Icon::Archive, "mail.archive", "Archive", "Archivar"),
+        (Icon::Trash, "mail.delete", "Delete", "Eliminar"),
+        if seen {
+            (Icon::Mail, "mail.mark_unread", "Mark as unread", "Marcar como no leído")
+        } else {
+            (Icon::Check, "mail.mark_read", "Mark as read", "Marcar como leído")
+        },
+        (Icon::Clock, "mail.snooze", "Snooze", "Posponer"),
+    ]
+}
+
+fn row_tool_rects(strip: Rect) -> [Rect; 4] {
+    let w = strip.width() / 4.0;
+    std::array::from_fn(|i| {
+        let x = strip.left() + w * i as f32;
+        Rect::from_center_size(pos2(x + w / 2.0, strip.center().y), vec2(w.min(24.0), w.min(24.0)))
+    })
+}
+
+/// Pinta los iconos (el que está bajo el ratón, resaltado).
+fn paint_row_tools(
+    p: &egui::Painter,
+    strip: Rect,
+    seen: bool,
+    hover: Option<egui::Pos2>,
+    col: &iurefficient_ui::Palette,
+) {
+    for ((ic, ..), r) in row_tool_items(seen).into_iter().zip(row_tool_rects(strip)) {
+        let over = hover.is_some_and(|h| r.contains(h));
+        if over {
+            p.rect_filled(r, 5.0, col.pressed);
+        }
+        icons::paint(p, r.shrink(4.0), ic, if over { col.text } else { col.text_muted }, col.accent);
+    }
+}
+
+/// Clics en los iconos (registrados después de la lista, así ganan al clic de la fila).
+fn row_tools_ui(ui: &mut Ui, id: MessageId, strip: Rect, seen: bool) -> Option<(MessageId, RowTool)> {
+    let mut out = None;
+    for ((_, cmd, en, es), r) in row_tool_items(seen).into_iter().zip(row_tool_rects(strip)) {
+        let resp = ui.interact(r, ui.scope_id().with(("fila-icono", cmd)), Sense::click());
+        let resp = resp.on_hover_text(pick(en, es));
+        crate::widgets::named(&resp, egui::Role::Button, pick(en, es));
+        if resp.clicked() {
+            out = Some((id, if cmd == "mail.snooze" { RowTool::Snooze(r) } else { RowTool::Run(cmd) }));
+        }
+    }
+    out
+}
+
+/// «Posponer» de una fila: las opciones rápidas, aunque el ratón ya no esté sobre ella.
+fn row_snooze_menu(app: &mut DeskApp, ui: &mut Ui) {
+    let Some((id, r)) = app.mail.row_snooze else { return };
+    let ctx = ui.ctx().clone();
+    let pid = egui::Id::unique("fila-posponer");
+    let menu = app.session.snooze_menu();
+    let mut chosen: Option<String> = None;
+    let mut open = true;
+    egui::Popup::new(pid, ctx.clone(), r, ui.layer_id())
+        .kind(egui::PopupKind::Menu)
+        .open_bool(&mut open)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            for (key, label, when) in &menu {
+                if icons::menu_item(ui, Some(Icon::Clock), &format!("{} — {when}", label.get())).clicked() {
+                    chosen = Some(format!("mail.snooze:{key}"));
+                }
+            }
+        });
+    if !open {
+        app.mail.row_snooze = None;
+    }
+    if let Some(cmd) = chosen {
+        app.mail.row_snooze = None;
+        match app.session.run_on(id, &cmd) {
+            Ok(out) => app.outcome(&ctx, out),
+            Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
+        }
     }
 }
 

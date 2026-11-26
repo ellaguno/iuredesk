@@ -179,6 +179,9 @@ fn main() -> Result<(), String> {
         session.prefs.text_scale_pct = p;
     }
     session.prefs.crisp_text = args.iter().any(|a| a == "--crisp");
+    if let Some(sc) = flag("--scheme").and_then(|k| iuredesk_engine::ShortcutScheme::from_key(&k)) {
+        session.prefs.scheme = sc;
+    }
     // UX-18: columnas plegadas (`--collapse folders,list,reading`); UX-17: `--hide-second-account`.
     if let Some(c) = flag("--collapse") {
         session.prefs.folders_collapsed = c.contains("folders");
@@ -804,6 +807,29 @@ fn main() -> Result<(), String> {
             }
             later(&mut harness);
         }
+    }
+    // UX-26: `--shortcuts` abre la hoja de atajos (con `--scheme gmail`, los de Gmail).
+    if args.iter().any(|a| a == "--shortcuts") {
+        let ctx = harness.ctx.clone();
+        harness.state_mut().run(&ctx, "help.shortcuts");
+        later(&mut harness);
+    }
+    // UX-25: `--hover-row` pone el ratón sobre la tercera fila (sus iconos en lugar de la fecha).
+    if args.iter().any(|a| a == "--hover-row") {
+        use egui_kittest::kittest::{NodeT, Queryable};
+        let label = harness
+            .query_all_by_role(egui::accesskit::Role::CheckBox)
+            .filter_map(|c| c.accesskit_node().label().map(|l| l.to_string()))
+            .filter(|l| l.starts_with("Select ") || l.starts_with("Seleccionar "))
+            .nth(2);
+        if let Some(l) = label {
+            let l = l.trim_start_matches("Seleccionar ").trim_start_matches("Select ").to_string();
+            if let Some(n) = harness.query_by_label(&l) {
+                let at = n.rect().center();
+                harness.event(egui::Event::PointerMoved(at));
+            }
+        }
+        later(&mut harness);
     }
     // UX-24: `--person-card` abre la tarjeta del remitente del mensaje abierto.
     if args.iter().any(|a| a == "--person-card") {
