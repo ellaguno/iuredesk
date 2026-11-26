@@ -1401,6 +1401,11 @@ impl Session {
         Some(id)
     }
 
+    /// Calendarios que copian la agenda de la instancia (para no repetir las citas del usuario).
+    pub(crate) fn iure_calendars(&self) -> Vec<iuredesk_model::CalendarId> {
+        self.calendars.iter().filter(|c| c.remote_path == IURE_CALENDAR_PATH).map(|c| c.id).collect()
+    }
+
     /// Calendario «Iurefficient» del almacén (lo crea si falta).
     fn iure_calendar(&self, account: AccountId) -> Option<Calendar> {
         let cals = self.store.calendars().ok()?;
@@ -1441,13 +1446,28 @@ impl Session {
     fn iure_apply_agenda(&mut self, a: &Agenda) {
         let Some(account) = self.iure_account() else { return };
         let mut changed = false;
-        if let Some(cal) = self.iure_calendar(account) {
-            let old = self
-                .store
-                .events_between(&[cal.id], DateTime::<Utc>::MIN_UTC, DateTime::<Utc>::MAX_UTC)
-                .unwrap_or_default();
-            let by_remote: HashMap<String, CalEvent> =
-                old.into_iter().filter_map(|e| e.remote_id.clone().map(|r| (r, e))).collect();
+        // BUG-IURECAL (2026-11-25): antes se leía con `events_between(MIN_UTC, MAX_UTC)`, que pasa
+        // del rango máximo y daba error; el error se tomaba como «calendario vacío» y cada vez se
+        // volvía a insertar toda la agenda (13 copias de una cita). Ahora se lee el calendario
+        // entero y, si no se puede leer, no se toca; las copias que ya hubiera se quitan.
+        if let Some(cal) = self.iure_calendar(account)
+            && let Ok(old) = self.store.events_in_calendar(cal.id)
+        {
+            let mut by_remote: HashMap<String, CalEvent> = HashMap::new();
+            for e in old {
+                let Some(rid) = e.remote_id.clone() else { continue };
+                match by_remote.get(&rid) {
+                    // Copia repetida de la misma cita: se borra y queda una.
+                    Some(_) => {
+                        if self.store.delete_event(e.id).is_ok() {
+                            changed = true;
+                        }
+                    }
+                    None => {
+                        by_remote.insert(rid, e);
+                    }
+                }
+            }
             let mut seen = HashSet::new();
             for e in a.events.iter().take(2_000) {
                 let Some(new) = event_from_remote(e, cal.id) else { continue };
@@ -1734,6 +1754,51 @@ fn task_from_remote(t: &iurefficient_connect::pim::Task, list: TaskListId) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// BUG-IURECAL: aplicar la agenda de la instancia una y otra vez no repite citas, y las copias
+    /// que ya hubiera (de versiones con el fallo) se quitan dejando una de cada una.
+    #[test]
+    fn applying_the_agenda_again_does_not_duplicate_and_cleans_old_copies() {
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let store = Arc::new(iuredesk_store::Store::open(dir.path()).unwrap_or_else(|e| panic!("{e}")));
+        let now = chrono::Utc::now();
+        let mut s = Session::new(crate::SessionConfig {
+            store,
+            accounts: None,
+            secrets: Arc::new(iuredesk_accounts::MemoryStore::default()),
+            prefs_path: None,
+            now: Some(now),
+            zone: crate::Zone::utc(),
+            sample: false,
+            sync: None,
+            transport: None,
+        })
+        .unwrap_or_else(|e| panic!("{e:?}"));
+        let agenda = iure::sample::agenda(now);
+        let want = agenda.events.len();
+        assert!(want > 0);
+        let count = |s: &Session| {
+            let cal = s.store.calendars().unwrap_or_default().into_iter().find(|c| c.remote_path == IURE_CALENDAR_PATH);
+            cal.map_or(0, |c| s.store.events_in_calendar(c.id).unwrap_or_default().len())
+        };
+        for _ in 0..3 {
+            s.iure_apply_agenda(&agenda);
+        }
+        assert_eq!(count(&s), want, "tres veces la misma agenda: una copia de cada cita");
+        // Copias viejas (como las que dejó el fallo): se quitan al aplicar otra vez.
+        let cal = s.store.calendars().unwrap_or_default().into_iter().find(|c| c.remote_path == IURE_CALENDAR_PATH);
+        let cal = cal.unwrap_or_else(|| panic!("calendario"));
+        let first = s.store.events_in_calendar(cal.id).unwrap_or_default().remove(0);
+        for _ in 0..5 {
+            let mut dup = first.clone();
+            dup.id = EventId::UNASSIGNED;
+            s.store.put_event(&dup).unwrap_or_else(|e| panic!("{e}"));
+        }
+        assert_eq!(count(&s), want + 5);
+        s.iure_apply_agenda(&agenda);
+        assert_eq!(count(&s), want, "las copias repetidas se borran");
+    }
 
     /// F7.1: la consulta previa va de una en una, con pausa, no repite remitentes ni lo ya
     /// conocido, espera mucho tras un fallo y tiene tope por sesión.

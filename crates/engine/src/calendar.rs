@@ -246,6 +246,24 @@ pub fn occurrences(
 
 /// Columnas para eventos que se solapan en un día: (índice de columna, columnas del grupo) por
 /// cada elemento de `spans` (inicio, fin), que deben venir ordenados por inicio.
+/// BUG-IURECAL (dueño 2026-11-25: «ocultar las repetidas»): la instancia de Iurefficient copia la
+/// agenda del usuario, así que una cita suya llega dos veces: de su cuenta y del calendario
+/// «Iurefficient». Se quitan de `occ` las de los calendarios `mirrors` que coinciden en inicio y
+/// título (sin mayúsculas ni espacios de más) con una de otro calendario; queda la del usuario.
+pub fn hide_mirrored(occ: &mut Vec<Occurrence>, mirrors: &[CalendarId]) {
+    if mirrors.is_empty() {
+        return;
+    }
+    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let own: std::collections::HashSet<(DateTime<Utc>, String)> = occ
+        .iter()
+        .filter(|o| !mirrors.contains(&o.calendar))
+        .take(20_000)
+        .map(|o| (o.start, norm(&o.summary)))
+        .collect();
+    occ.retain(|o| !mirrors.contains(&o.calendar) || !own.contains(&(o.start, norm(&o.summary))));
+}
+
 pub fn layout_columns(spans: &[(i64, i64)]) -> Vec<(usize, usize)> {
     let mut result = vec![(0usize, 1usize); spans.len()];
     let mut group: Vec<usize> = Vec::new();
@@ -294,6 +312,45 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use iuredesk_model::EventTime;
+
+    #[test]
+    fn copies_of_the_users_own_events_are_hidden() {
+        let at = |h: u32| Utc.with_ymd_and_hms(2026, 11, 25, h, 30, 0).unwrap();
+        let o = |cal: u64, h: u32, title: &str| Occurrence {
+            id: EventId(u64::from(h) * 10 + cal),
+            summary: title.into(),
+            location: String::new(),
+            start: at(h),
+            end: at(h) + Duration::hours(1),
+            all_day: false,
+            days: None,
+            color: 0,
+            tentative: false,
+            recurring: false,
+            calendar: CalendarId(cal),
+            recurrence_id: None,
+            busy: true,
+            cancelled: false,
+        };
+        let iure = CalendarId(9);
+        let mut v = vec![
+            o(1, 12, "Presentación a DevOps de TI"),
+            o(9, 12, "  presentación a devops  de TI "),
+            o(9, 13, "Solo en Iurefficient"),
+            o(9, 14, "Otra hora"),
+            o(1, 15, "Otra hora"),
+        ];
+        hide_mirrored(&mut v, &[iure]);
+        let left: Vec<(u64, &str)> = v.iter().map(|o| (o.calendar.get(), o.summary.as_str())).collect();
+        assert_eq!(
+            left,
+            [(1, "Presentación a DevOps de TI"), (9, "Solo en Iurefficient"), (9, "Otra hora"), (1, "Otra hora")],
+            "solo se oculta la copia con el mismo inicio y título"
+        );
+        let mut w = v.clone();
+        hide_mirrored(&mut w, &[]);
+        assert_eq!(w, v, "sin calendario espejo no se toca");
+    }
 
     fn ev(start: DateTime<Utc>, mins: i64, rrule: Option<&str>) -> Event {
         Event {

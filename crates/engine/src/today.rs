@@ -647,6 +647,10 @@ pub fn gather(store: &Store, a: GatherArgs) -> DayInput {
         }
     };
     events.retain(|o| !a.hidden.contains(&o.calendar.get()));
+    // BUG-IURECAL: la copia que hace Iurefficient de una cita del usuario no se repite.
+    let mirrors: Vec<iuredesk_model::CalendarId> =
+        a.calendars.iter().filter(|c| c.remote_path == IURE_CALENDAR_PATH).map(|c| c.id).collect();
+    crate::calendar::hide_mirrored(&mut events, &mirrors);
     events.truncate(500);
     let mut event_text = HashMap::new();
     for o in events.iter().take(200) {

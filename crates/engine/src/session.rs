@@ -2101,6 +2101,7 @@ impl Session {
                 let mut v: Vec<Occurrence> =
                     list.iter().map(|o| crate::calendar::from_pim(o, color(o.calendar), tz)).collect();
                 v.sort_by_key(|o| o.start);
+                crate::calendar::hide_mirrored(&mut v, &self.iure_calendars());
                 v
             }
             Err(_) => {
