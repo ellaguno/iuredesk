@@ -230,8 +230,15 @@ mod tests {
         }
 
         let plan = plan(&root, SystemTime::now(), Duration::from_secs(7 * 86_400)).unwrap();
-        let mut names: Vec<String> =
-            plan.remove.iter().map(|p| p.strip_prefix(&root).unwrap().display().to_string()).collect();
+        // Con «/» en todos los sistemas (Windows separa con «\»).
+        let mut names: Vec<String> = plan
+            .remove
+            .iter()
+            .map(|p| {
+                let rel = p.strip_prefix(&root).unwrap();
+                rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
+            })
+            .collect();
         names.sort();
         assert_eq!(
             names,
