@@ -480,3 +480,28 @@ fn projects_card_shows_your_cases() {
     assert!(h.query_by_label("2 pendientes · 1 vencida").is_some());
     assert!(h.query_by_label("IureProject").is_none());
 }
+
+/// UX-29: el símbolo de Iurefficient al inicio de cada caso de «Proyectos» abre su página en la
+/// web de la instancia.
+#[test]
+fn projects_card_opens_a_case_on_the_web() {
+    use iuredesk_engine::iuredesk_integrations::Suite;
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    iuredesk_ui::capture_opened_urls();
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    a.set_suite(Suite::empty());
+    let mut h = harness(a);
+    settle(&mut h);
+    let n = h.query_all_by_label("Abrir en Iurefficient (web)").count();
+    assert!(n >= 2, "un símbolo por caso: {n}");
+    h.get_by_label("1452/2026").scroll_to_me();
+    settle(&mut h);
+    h.query_all_by_label("Abrir en Iurefficient (web)").next().unwrap().click();
+    settle(&mut h);
+    let urls = iuredesk_ui::opened_urls();
+    assert!(
+        urls.iter().any(|u| u.starts_with("https://demo.iurefficient.com/dashboard/cases/")),
+        "la página del caso: {urls:?}"
+    );
+}

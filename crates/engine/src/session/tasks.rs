@@ -381,17 +381,17 @@ impl Session {
     pub fn iure_task_url(&self, t: &Task) -> Option<String> {
         let id = self.iure_task_id(t)?;
         let base = self.iure_web_url()?;
-        let enc: String = id
-            .bytes()
-            .map(|b| {
-                if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
-                    (b as char).to_string()
-                } else {
-                    format!("%{b:02X}")
-                }
-            })
-            .collect();
-        Some(format!("{}/dashboard/tasks?taskId={enc}&view=list", base.trim_end_matches('/')))
+        Some(format!("{}/dashboard/tasks?taskId={}&view=list", base.trim_end_matches('/'), url_component(&id)))
+    }
+
+    /// UX-29: la página de un caso (proyecto) en la web de Iurefficient.
+    pub fn iure_case_url(&self, case_id: &str) -> Option<String> {
+        let id = case_id.trim();
+        if id.is_empty() {
+            return None;
+        }
+        let base = self.iure_web_url()?;
+        Some(format!("{}/dashboard/cases/{}", base.trim_end_matches('/'), url_component(id)))
     }
 
     /// S1.34: la vista de las tareas.
@@ -439,4 +439,17 @@ impl Session {
         let google = l.remote_path.starts_with(iuredesk_pim_sync::GOOGLE_TASKS_LIST_PREFIX);
         Some(if google { format!("Google · {}", label.email) } else { label.email.clone() })
     }
+}
+
+/// Un id como segmento o valor de una URL (lo que no es seguro va con `%XX`).
+fn url_component(id: &str) -> String {
+    id.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }

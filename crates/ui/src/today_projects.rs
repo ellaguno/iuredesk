@@ -259,6 +259,27 @@ enum Act {
     OpenCase(String, String),
     /// S1.37: Tareas → «Por caso».
     ByCase,
+    /// UX-29: la página del caso en la web de Iurefficient.
+    Web(String),
+}
+
+/// UX-29: el símbolo de Iurefficient al inicio de un caso o plan: abre el caso en la web.
+fn web_button(ui: &mut Ui, url: Option<&String>, act: &mut Option<Act>) {
+    let Some(url) = url else { return };
+    let side = theme::density(ui.ctx()).small_size() + 4.0;
+    let (r, resp) = ui.allocate_exact_size(vec2(side, side), egui::Sense::click());
+    let dark = ui.visuals().dark_mode;
+    if resp.hovered() {
+        ui.painter().rect_filled(r.expand(2.0), 4.0, theme::colors(ui).hover);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    crate::iure_badge::paint_mark(ui.painter(), r.shrink(1.0), crate::iure_badge::mark_color(dark));
+    let tip = pick("Open in Iurefficient (web)", "Abrir en Iurefficient (web)");
+    let resp = resp.on_hover_text(tip);
+    iurefficient_ui::a11y::button(&resp, tip);
+    if resp.clicked() {
+        *act = Some(Act::Web(url.clone()));
+    }
 }
 
 /// Casos en la tarjeta antes de «+N más».
@@ -311,6 +332,17 @@ pub fn card(app: &mut DeskApp, ui: &mut Ui) {
     let es = iuredesk_engine::lang::spanish();
     let waiting = app.today.projects.data.is_empty() && app.today.projects.asked.is_some();
     let data = app.today.projects.data.clone();
+    let case_urls: Vec<Option<String>> = cases.iter().map(|l| app.session.iure_case_url(&l.case.id)).collect();
+    let plan_urls: Vec<Option<String>> = app
+        .today
+        .projects
+        .data
+        .iter()
+        .map(|s| {
+            let case = s.overview.as_ref().ok()?.case.as_ref()?;
+            app.session.iure_case_url(&case.id)
+        })
+        .collect();
     let case_plans: Vec<Option<PathBuf>> =
         cases.iter().map(|l| plans_for_case(app, &l.case.id).into_iter().next().map(|(f, _)| f)).collect();
     let clicked = crate::today::card(ui, Icon::Gantt, pick("Projects", "Proyectos"), &detail, action, |ui| {
@@ -322,8 +354,9 @@ pub fn card(app: &mut DeskApp, ui: &mut Ui) {
                     .color(c.text_muted),
             );
             ui.add_space(2.0);
-            for (l, plan) in cases.iter().zip(&case_plans).take(CASE_ROWS) {
+            for ((l, plan), url) in cases.iter().zip(&case_plans).zip(&case_urls).take(CASE_ROWS) {
                 ui.horizontal(|ui| {
+                    web_button(ui, url.as_ref(), &mut act);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if has_project {
                             let tip = if plan.is_some() {
@@ -392,7 +425,7 @@ pub fn card(app: &mut DeskApp, ui: &mut Ui) {
             crate::today::muted(ui, pick("Reading the plans…", "Leyendo los planes…"));
             return;
         }
-        for s in &data {
+        for (s, url) in data.iter().zip(&plan_urls) {
             match &s.overview {
                 Ok(o) => {
                     let label = if o.name.trim().is_empty() {
@@ -401,6 +434,7 @@ pub fn card(app: &mut DeskApp, ui: &mut Ui) {
                         o.name.clone()
                     };
                     ui.horizontal(|ui| {
+                        web_button(ui, url.as_ref(), &mut act);
                         let name = ui
                             .add(egui::Button::new(RichText::new(&label).strong().color(c.text)).frame(false))
                             .on_hover_text(pick("Open this plan in IureProject", "Abrir este plan en IureProject"));
@@ -451,6 +485,9 @@ pub fn card(app: &mut DeskApp, ui: &mut Ui) {
         Some(Act::Launch) => app.suite.hub.run(SuiteAction::Launch(SisterApp::Project)),
         Some(Act::Case(id)) => crate::task_board::reveal_case(app, &id),
         Some(Act::OpenCase(id, title)) => app.suite.hub.run(SuiteAction::OpenProjectCase { id, title }),
+        Some(Act::Web(url)) => {
+            crate::open_url(&url);
+        }
         Some(Act::ByCase) => {
             app.session.set_task_view(iuredesk_engine::tasks_view::TaskView::ByCase);
             app.session.module = iuredesk_engine::Module::Tasks;
