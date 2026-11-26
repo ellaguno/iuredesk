@@ -180,6 +180,26 @@ mod tests {
         std::fs::File::options().write(true).open(p).unwrap().set_modified(t).unwrap();
     }
 
+    /// Abre una carpeta para cambiarle la fecha. En Windows `File::open` no abre carpetas: hace
+    /// falta `FILE_FLAG_BACKUP_SEMANTICS` y el permiso de escribir atributos (falló la CI de Windows).
+    fn open_dir(p: &Path) -> std::fs::File {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            std::fs::OpenOptions::new()
+                .access_mode(FILE_WRITE_ATTRIBUTES)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(p)
+                .unwrap()
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::File::open(p).unwrap()
+        }
+    }
+
     #[test]
     fn keeps_the_newest_copy_per_name_and_source() {
         let root = std::env::temp_dir().join(format!("xtask-sweep-{}", std::process::id()));
@@ -206,10 +226,7 @@ mod tests {
         for (name, age) in [("old-abc", 30 * 86_400), ("new-def", 60)] {
             std::fs::create_dir_all(inc.join(name)).unwrap();
             touch(&inc.join(name).join("s-1"), 5, age);
-            std::fs::File::open(inc.join(name))
-                .unwrap()
-                .set_modified(SystemTime::now() - Duration::from_secs(age))
-                .unwrap();
+            open_dir(&inc.join(name)).set_modified(SystemTime::now() - Duration::from_secs(age)).unwrap();
         }
 
         let plan = plan(&root, SystemTime::now(), Duration::from_secs(7 * 86_400)).unwrap();
