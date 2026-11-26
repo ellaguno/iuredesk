@@ -631,6 +631,11 @@ impl DeskApp {
         crate::task_editor::is_open(self)
     }
 
+    /// Id de la lista de correos (pruebas: darle el foco del teclado).
+    pub fn mail_list_id(&self) -> Option<egui::Id> {
+        self.mail.list_id
+    }
+
     /// UX-24: texto del campo de búsqueda del correo (pruebas).
     pub fn mail_search(&self) -> &str {
         &self.mail.search

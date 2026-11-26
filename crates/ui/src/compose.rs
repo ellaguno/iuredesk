@@ -67,8 +67,10 @@ pub struct ComposeWindow {
     suggest: Suggest,
     want_suggest: Option<(Field, String)>,
     error: Option<String>,
-    /// El cursor del cuerpo ya se puso al principio.
-    cursor_init: bool,
+    /// Cuadros desde que se abrió: en los primeros se pone el foco donde se escribe (el mensaje
+    /// al responder o reenviar; «Para» en uno nuevo) mientras nada lo tenga. Una sola petición
+    /// se perdía en el pase de medida de la ventana recién creada (dueño 2026-11-26).
+    cursor_init: u8,
     /// Plantillas (F5.3).
     pub(crate) templates: crate::rules_ui::ComposeTemplates,
     /// F5.4: «Firmar» / «Cifrar».
@@ -77,6 +79,9 @@ pub struct ComposeWindow {
     /// límites de IureDesk).
     pub(crate) own_window: bool,
 }
+
+/// Cuadros en que se insiste en poner el foco al abrir el redactor.
+const FOCUS_FRAMES: u8 = 6;
 
 enum Act {
     Send,
@@ -108,7 +113,7 @@ impl ComposeWindow {
             suggest: Suggest::default(),
             want_suggest: None,
             error: None,
-            cursor_init: false,
+            cursor_init: 0,
             templates: Default::default(),
             security: Default::default(),
             own_window: false,
@@ -905,10 +910,18 @@ fn form(
         }
         ui.add_space(4.0);
         ui.with_layout(Layout::top_down(Align::Min), |ui| {
-            if !w.cursor_init {
-                // Al abrir, el cursor va al principio (encima de la cita y la firma).
-                w.cursor_init = true;
-                iure_doc_ui::focus_offset(ui.ctx(), body_id, &w.editor.text, 0);
+            if w.cursor_init < FOCUS_FRAMES {
+                w.cursor_init = w.cursor_init.saturating_add(1);
+                // Mientras el foco no esté en este redactor (puede seguir en la lista de correos).
+                let nothing = !mine;
+                if nothing && w.cd.kind == ComposeKind::New && w.cd.draft.to.is_empty() {
+                    // Uno nuevo sin destinatario: a «Para», como en Gmail y Outlook.
+                    ui.memory_mut(|m| m.request_focus(egui::Id::unique(("compose-addr", w.id, Field::To as u8))));
+                } else if nothing || w.cursor_init == 1 {
+                    // Al responder o reenviar, el cursor va al principio del mensaje (encima de la
+                    // cita y la firma).
+                    iure_doc_ui::focus_offset(ui.ctx(), body_id, &w.editor.text, 0);
+                }
             }
             // Imágenes en línea, diagramas y fórmulas dibujados en su lugar (al enviar van como
             // imágenes).

@@ -616,3 +616,40 @@ fn tab_reaches_the_message_and_ctrl_enter_sends() {
     assert_eq!(h.state().composer_count(), 0, "Ctrl+Intro desde el mensaje envía");
     assert_eq!(h.state().session.outbox_entries().len(), 1);
 }
+
+/// Al pulsar Responder (o Responder a todos, Reenviar) el cursor ya está en el mensaje: se puede
+/// escribir sin hacer clic (dueño 2026-11-26). Nuevo mensaje empieza en «Para».
+#[test]
+fn reply_opens_ready_to_type_in_the_message() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    for cmd in ["mail.reply", "mail.reply_all", "mail.forward"] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = harness(sample_app(dir.path(), false), vec2(1440.0, 900.0));
+        settle(&mut h);
+        let id = h.state().session.rows()[0].id;
+        h.state_mut().session.request_focus(id);
+        settle(&mut h);
+        // Como en la vida real: la lista con el foco del teclado tras elegir el correo.
+        if let Some(list) = h.state().mail_list_id() {
+            h.ctx.memory_mut(|m| m.request_focus(list));
+            h.run_steps(2);
+        }
+        let ctx = h.ctx.clone();
+        h.state_mut().run(&ctx, cmd);
+        settle(&mut h);
+        h.event(egui::Event::Text("Escribo de inmediato".into()));
+        settle(&mut h);
+        let body = h.state().composer_body().unwrap_or_default();
+        assert!(body.starts_with("Escribo de inmediato"), "{cmd}: {body:?}");
+    }
+    // Nuevo mensaje: a «Para».
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(sample_app(dir.path(), false), vec2(1440.0, 900.0));
+    settle(&mut h);
+    h.get_by_label("Nuevo mensaje").click();
+    settle(&mut h);
+    h.event(egui::Event::Text("ana@example.com".into()));
+    settle(&mut h);
+    assert_eq!(h.state().composer_body().unwrap_or_default().trim(), "", "no se escribió en el mensaje");
+    assert!(h.query_all_by_value("ana@example.com").next().is_some(), "lo escrito va al campo «Para»");
+}
