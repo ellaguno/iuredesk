@@ -32,7 +32,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0-beta.11"
+version = "0.1.0-beta.12"
 edition = "2024"
 rust-version = "1.91"
 license = "Apache-2.0"
@@ -73,10 +73,10 @@ iurefficient-connect = { git = "https://github.com/ellaguno/iurefficient-connect
 # ui-kit compartido con IureProject (PLAN.md D11). Para desarrollo local: [patch] en .cargo/config.toml.
 iurefficient-ui = { git = "https://github.com/ellaguno/iurefficient-ui", branch = "main" }
 # Documento de la suite y su editor (S1.11, S1.12): repositorio propio, etiqueta fija.
-iure-doc = { git = "https://github.com/ellaguno/iure-doc", tag = "v0.35.2" }
-iure-doc-ui = { git = "https://github.com/ellaguno/iure-doc", tag = "v0.35.2" }
+iure-doc = { git = "https://github.com/ellaguno/iure-doc", tag = "v0.35.3" }
+iure-doc-ui = { git = "https://github.com/ellaguno/iure-doc", tag = "v0.35.3" }
 # Fórmulas de las notas dibujadas con Typst (LaTeX → Typst → imagen; Rust puro).
-iure-doc-export = { git = "https://github.com/ellaguno/iure-doc", tag = "v0.35.2", features = ["math"] }
+iure-doc-export = { git = "https://github.com/ellaguno/iure-doc", tag = "v0.35.3", features = ["math"] }
 
 # base (todo Rust puro; ver docs/excepciones.md)
 thiserror = "2"
