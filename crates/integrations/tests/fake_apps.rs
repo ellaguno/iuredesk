@@ -298,3 +298,26 @@ fn opens_a_case_in_iureproject() {
     assert!(rec.launched.lock().unwrap().last().unwrap().1.is_empty());
     assert!(matches!(Suite::empty().open_case_in_iureproject("c-1", ""), Ok(Outcome::NotInstalled(_))));
 }
+
+/// UX-31: IureTranscribe 0.8.7 redacta resumen y minuta de una grabación; sin IA configurada lo
+/// dice con sus palabras; uno anterior pide actualizarlo.
+#[test]
+fn resumen_y_minuta_de_iuretranscribe() {
+    use iuredesk_integrations::DocKind;
+    let s = fake_suite(SisterApp::Transcribe);
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("reunion.wav");
+    std::fs::write(&wav, b"RIFF").unwrap();
+    let wav = wav.as_path();
+    let d = s.generate_document(wav, DocKind::Minutes).unwrap().ready().unwrap();
+    assert!(d.path.ends_with("reunion_minuta.md"), "{:?}", d.path);
+    assert!(d.content.starts_with("# Minuta"));
+    let d = s.generate_document(wav, DocKind::Summary).unwrap().ready().unwrap();
+    assert!(d.path.ends_with("reunion_resumen.md"));
+    let no_ai = Suite::empty().with_app(SisterApp::Transcribe, FAKE).with_mcp_options(opts(Some("no-ai")));
+    let e = no_ai.generate_document(wav, DocKind::Minutes).unwrap_err();
+    assert!(e.human(true).contains("OpenRouter"), "{}", e.human(true));
+    let old = Suite::empty().with_app(SisterApp::Transcribe, FAKE).with_mcp_options(opts(Some("no-recording")));
+    let Outcome::NotAvailable(t) = old.generate_document(wav, DocKind::Minutes).unwrap() else { panic!() };
+    assert!(t.get(true).contains("Actualízalo"));
+}

@@ -291,3 +291,45 @@ fn no_notes_folder_without_prefs() {
     s.save_note(id, "Solo aquí", "x").unwrap();
     assert_eq!(s.note_path(id), None);
 }
+
+/// UX-30: carpetas de notas. Una nota nueva va a la carpeta abierta; moverla mueve su archivo y
+/// deshacer la devuelve; una carpeta creada fuera aparece; las imágenes van en su `img/`.
+#[test]
+fn notes_live_in_folders() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let notes_dir = folder.path().join("Notas");
+    std::fs::create_dir_all(notes_dir.join("Clientes")).unwrap();
+    let mut s = note_session(dir.path(), &notes_dir);
+    flush(&mut s);
+    assert!(s.note_folders().contains(&"Clientes".to_string()), "{:?}", s.note_folders());
+
+    // Nueva carpeta y nota nueva dentro de ella (la carpeta abierta).
+    let f = s.create_note_folder("", "Reuniones").unwrap();
+    s.set_notes_folder_view(&f);
+    flush(&mut s);
+    assert!(notes_dir.join("Reuniones").is_dir());
+    s.run("notes.new").unwrap();
+    let id = s.note_focus().unwrap();
+    s.save_note(id, "Junta", "acuerdos").unwrap();
+    flush(&mut s);
+    assert!(notes_dir.join("Reuniones/Junta.md").is_file());
+    let n = s.notes().into_iter().find(|n| n.id == id).unwrap();
+    assert_eq!(s.note_folder(&n), "Reuniones");
+    assert_eq!(s.note_dir_of(id).unwrap(), notes_dir.join("Reuniones"));
+
+    // Mover a otra carpeta y deshacer.
+    let Outcome::Notice(_) = s.move_note_to_folder(id, "Clientes").unwrap() else { panic!("aviso con deshacer") };
+    flush(&mut s);
+    assert!(notes_dir.join("Clientes/Junta.md").is_file() && !notes_dir.join("Reuniones/Junta.md").exists());
+    s.run("undo").unwrap();
+    flush(&mut s);
+    assert!(notes_dir.join("Reuniones/Junta.md").is_file() && !notes_dir.join("Clientes/Junta.md").exists());
+    assert_eq!(s.note_path(id).unwrap(), notes_dir.join("Reuniones").join("Junta.md"));
+
+    // Una nota escrita fuera en una subcarpeta llega como nota de esa carpeta.
+    std::fs::write(notes_dir.join("Clientes/Acme.md"), "# Acme\n\nzarzamora-acme").unwrap();
+    until(&mut s, |s| s.notes().iter().any(|n| n.body.contains("zarzamora-acme")));
+    let acme = s.notes().into_iter().find(|n| n.body.contains("zarzamora-acme")).unwrap();
+    assert_eq!(s.note_folder(&acme), "Clientes");
+}

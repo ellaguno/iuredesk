@@ -396,6 +396,51 @@ impl Session {
         Some(d)
     }
 
+    /// UX-31: grabaciones de una cita (para su detalle).
+    pub fn event_recordings(&self, uid: &str) -> Vec<iuredesk_store::EventRecording> {
+        self.store.event_recordings(uid).unwrap_or_default()
+    }
+
+    /// UX-31: guarda la grabación de una reunión en su cita (siempre en IureDesk) y, si la cita no
+    /// tiene invitados y se puede editar, añade a su descripción las ligas (`links`, Markdown).
+    /// Con invitados no se toca: cambiar la descripción les mandaría un aviso de actualización y
+    /// verían las ligas. Devuelve `true` si se escribió en la descripción.
+    pub fn record_meeting_on_event(
+        &mut self,
+        ev: &crate::suite::EventRef,
+        rec: &iuredesk_store::EventRecording,
+        links: &str,
+    ) -> Result<bool> {
+        self.store.add_event_recording(&ev.uid, rec).map_err(super::store_err)?;
+        self.data_gen = self.data_gen.wrapping_add(1);
+        let Some(event) = self.calendar_event(ev.id) else { return Ok(false) };
+        if !self.can_edit(event.calendar) || links.trim().is_empty() {
+            return Ok(false);
+        }
+        let me: Vec<String> = self.my_addresses().iter().map(|a| a.trim().to_lowercase()).collect();
+        let others = event.attendees.iter().any(|a| !me.contains(&a.mailbox.addr.trim().to_lowercase()));
+        if others {
+            return Ok(false);
+        }
+        let around = (ev.start - Duration::minutes(1), ev.start + Duration::minutes(1));
+        let occ =
+            self.visible_occurrences(around.0, around.1).into_iter().find(|o| o.id == ev.id && o.start == ev.start);
+        let Some(occ) = occ else { return Ok(false) };
+        let Some(mut d) = self.draft_for(&occ) else { return Ok(false) };
+        if d.description.contains(links.trim()) {
+            return Ok(false);
+        }
+        d.description = if d.description.trim().is_empty() {
+            links.trim().to_string()
+        } else {
+            format!("{}\n\n{}", d.description.trim_end(), links.trim())
+        };
+        match self.save_event_draft(&d, SeriesScope::This)? {
+            Outcome::Notice(n) if n.kind == super::NoticeKind::Error => Ok(false),
+            _ => Ok(true),
+        }
+    }
+
     /// R4.5: id del maestro si el evento es una aparición de una serie de Microsoft 365.
     pub fn graph_series_master(&self, id: EventId) -> Option<String> {
         iuredesk_pim_sync::ops::graph_series_master(&self.store, id)

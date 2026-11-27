@@ -11,7 +11,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use iuredesk_integrations::{
-    EditorTarget, InstallHint, IntegrationError, JobState, OcrOptions, Outcome as SuiteOutcome, SisterApp, Suite,
+    DocKind, EditorTarget, GeneratedDoc, InstallHint, IntegrationError, JobState, MeetingMeta, OcrOptions,
+    Outcome as SuiteOutcome, SisterApp, Suite,
 };
 use iuredesk_mcp::AgentsStatus;
 use iuredesk_model::MessageId;
@@ -58,8 +59,11 @@ pub enum SuiteAction {
     OpenProjectCase { id: String, title: String },
     /// «Correo → tarea del plan»: agregar una tarea al plan y guardarlo (sin abrir IureProject).
     AddProjectTask { file: PathBuf, task: iuredesk_integrations::NewProjectTask },
-    /// S1.4: grabar una reunión con IureTranscribe (sin abrir su ventana).
-    StartRecording { title: String },
+    /// S1.4: grabar una reunión con IureTranscribe (sin abrir su ventana). UX-31: con los datos
+    /// de la cita, si se grabó desde una.
+    StartRecording { title: String, meeting: MeetingInfo },
+    /// UX-31: abrir una grabación en IureTranscribe (`iuretranscribe://open?path=…`).
+    OpenTranscribeLink(String),
     /// S1.4: pausar (`true`) o reanudar la grabación.
     PauseRecording(bool),
     /// S1.4: detener, guardar y transcribir.
@@ -91,14 +95,48 @@ pub enum SuiteEvent {
     OcrText { name: String, text: String },
     /// S1.6: estado de los planes seguidos.
     Projects(Vec<iuredesk_integrations::ProjectStatus>),
-    /// S1.4: transcripción de una reunión grabada desde IureDesk (para guardarla como minuta).
-    MeetingTranscript { title: String, text: String, audio: PathBuf },
+    /// S1.4: transcripción de una reunión grabada desde IureDesk; UX-31: con resumen y minuta de
+    /// IureTranscribe.
+    MeetingTranscript(Box<MeetingResult>),
+}
+
+/// UX-31: la cita de la que sale una grabación.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EventRef {
+    pub id: iuredesk_model::EventId,
+    /// Inicio de la aparición (en una serie, la de hoy).
+    pub start: chrono::DateTime<chrono::Utc>,
+    pub uid: String,
+}
+
+/// UX-31: lo que se sabe de la reunión al empezar a grabar.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MeetingInfo {
+    pub meta: MeetingMeta,
+    pub event: Option<EventRef>,
+}
+
+/// UX-31: la reunión grabada, transcrita y (si se pudo) con resumen y minuta.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeetingResult {
+    pub title: String,
+    pub text: String,
+    pub audio: PathBuf,
+    /// Abre la grabación en IureTranscribe.
+    pub open_link: Option<String>,
+    pub summary: Option<GeneratedDoc>,
+    pub minutes: Option<GeneratedDoc>,
+    /// Por qué no hay resumen ni minuta (sin IA configurada, IureTranscribe viejo…).
+    pub docs_problem: Option<Text>,
+    pub meeting: MeetingInfo,
 }
 
 /// S1.4: grabación en curso (lo que muestra la interfaz).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RecordingState {
     pub title: String,
+    /// UX-31: la reunión (datos y cita).
+    pub meeting: MeetingInfo,
     pub elapsed_secs: f64,
     pub paused: bool,
     /// Nivel del micrófono y del sistema (0–1).
@@ -289,7 +327,7 @@ impl SuiteHub {
             | SuiteAction::OpenProjectTask { .. }
             | SuiteAction::OpenProjectCase { .. }
             | SuiteAction::AddProjectTask { .. } => Some(SisterApp::Project),
-            SuiteAction::StartRecording { .. } => Some(SisterApp::Transcribe),
+            SuiteAction::StartRecording { .. } | SuiteAction::OpenTranscribeLink(_) => Some(SisterApp::Transcribe),
             _ => None,
         };
         if let Some(app) = needs
@@ -352,7 +390,7 @@ impl SuiteHub {
                         "Abierta en IureEditor. Lo que guardes allá vuelve aquí.",
                     ))
                 }),
-                SuiteAction::StartRecording { title } => {
+                SuiteAction::StartRecording { title, meeting } => {
                     if lock(&recording).is_some() {
                         return vec![Msg::Event(SuiteEvent::NotAvailable(Text::new(
                             "You are already recording.",
@@ -362,7 +400,7 @@ impl SuiteHub {
                     match suite.start_recording() {
                         Ok(SuiteOutcome::Ready(r)) => {
                             *lock(&recording) = Some(r);
-                            *lock(&rec_state) = Some(RecordingState { title, ..Default::default() });
+                            *lock(&rec_state) = Some(RecordingState { title, meeting, ..Default::default() });
                             spawn_recording_status(Arc::clone(&recording), Arc::clone(&rec_state), waker.clone());
                             SuiteEvent::Done(Text::new(
                                 "Recording. Stop it from the bar at the top.",
@@ -372,6 +410,12 @@ impl SuiteHub {
                         other => outcome(other.map(|o| o.map(|_| ())), |_| SuiteEvent::Failed(Text::default())),
                     }
                 }
+                SuiteAction::OpenTranscribeLink(link) => outcome(suite.open_transcribe_link(&link), |_| {
+                    SuiteEvent::Done(Text::new(
+                        "Opening the recording in IureTranscribe",
+                        "Abriendo la grabación en IureTranscribe",
+                    ))
+                }),
                 SuiteAction::PauseRecording(paused) => {
                     let r = lock(&recording).as_mut().map(|r| r.set_paused(paused));
                     match r {
@@ -386,10 +430,10 @@ impl SuiteHub {
                     }
                 }
                 SuiteAction::StopRecording => {
-                    let title = match lock(&rec_state).as_mut() {
+                    let (title, meeting) = match lock(&rec_state).as_mut() {
                         Some(st) => {
                             st.stopping = true;
-                            st.title.clone()
+                            (st.title.clone(), st.meeting.clone())
                         }
                         None => return vec![],
                     };
@@ -402,11 +446,21 @@ impl SuiteHub {
                     *lock(&rec_state) = None;
                     match saved {
                         Err(e) => SuiteEvent::Failed(err_text(&e)),
-                        Ok(rec) => match transcribe(&suite, &rec.path, title, &progress) {
-                            SuiteEvent::Transcript { title, text } => {
-                                SuiteEvent::MeetingTranscript { title, text, audio: rec.path }
+                        Ok(rec) => match transcribe_inner(&suite, &rec.path, &meeting.meta, &progress) {
+                            Err(ev) => ev,
+                            Ok((text, open_link)) => {
+                                let (summary, minutes, docs_problem) = meeting_docs(&suite, &rec.path, &progress);
+                                SuiteEvent::MeetingTranscript(Box::new(MeetingResult {
+                                    title,
+                                    text,
+                                    audio: rec.path,
+                                    open_link,
+                                    summary,
+                                    minutes,
+                                    docs_problem,
+                                    meeting,
+                                }))
                             }
-                            other => other,
                         },
                     }
                 }
@@ -544,34 +598,84 @@ fn transcribe(
     title: String,
     progress: &Arc<Mutex<Option<TranscribeProgress>>>,
 ) -> SuiteEvent {
+    match transcribe_inner(suite, file, &MeetingMeta::default(), progress) {
+        Ok((text, _)) => SuiteEvent::Transcript { title, text },
+        Err(ev) => ev,
+    }
+}
+
+/// UX-31: minuta y luego resumen, con IureTranscribe (lo que falle no impide guardar la
+/// transcripción; se dice por qué).
+fn meeting_docs(
+    suite: &Suite,
+    audio: &Path,
+    progress: &Arc<Mutex<Option<TranscribeProgress>>>,
+) -> (Option<GeneratedDoc>, Option<GeneratedDoc>, Option<Text>) {
+    let set = |p: Option<TranscribeProgress>| *progress.lock().unwrap_or_else(PoisonError::into_inner) = p;
+    let mut minutes = None;
+    let mut summary = None;
+    let mut problem = None;
+    for (kind, stage) in [(DocKind::Minutes, "minutes"), (DocKind::Summary, "summary")] {
+        set(Some(TranscribeProgress { percent: 100, stage: stage.into() }));
+        match suite.generate_document(audio, kind) {
+            Ok(SuiteOutcome::Ready(d)) if !d.content.trim().is_empty() => match kind {
+                DocKind::Minutes => minutes = Some(d),
+                DocKind::Summary => summary = Some(d),
+            },
+            Ok(SuiteOutcome::Ready(_)) => {}
+            Ok(SuiteOutcome::NotAvailable(t)) => {
+                problem = Some(itext(&t));
+                break;
+            }
+            Ok(SuiteOutcome::NotInstalled(_)) => break,
+            Err(e) => {
+                // Sin IA configurada, sin red…: no tiene caso pedir el otro.
+                problem = Some(err_text(&e));
+                break;
+            }
+        }
+    }
+    set(None);
+    (summary, minutes, problem)
+}
+
+/// Transcribe (o lee una transcripción ya escrita): el texto y, si lo dio, el enlace que abre la
+/// grabación en IureTranscribe. El error ya es el evento que se muestra.
+fn transcribe_inner(
+    suite: &Suite,
+    file: &Path,
+    meta: &MeetingMeta,
+    progress: &Arc<Mutex<Option<TranscribeProgress>>>,
+) -> std::result::Result<(String, Option<String>), SuiteEvent> {
     if is_text_transcript(file) {
         let read = std::fs::metadata(file)
             .map_err(|e| e.to_string())
             .and_then(|m| if m.len() > MAX_TRANSCRIPT_FILE { Err("demasiado grande".into()) } else { Ok(()) })
             .and_then(|()| std::fs::read(file).map_err(|e| e.to_string()));
         return match read {
-            Ok(b) => SuiteEvent::Transcript { title, text: String::from_utf8_lossy(&b).into_owned() },
-            Err(e) => SuiteEvent::Failed(Text::new(
+            Ok(b) => Ok((String::from_utf8_lossy(&b).into_owned(), None)),
+            Err(e) => Err(SuiteEvent::Failed(Text::new(
                 format!("The transcript could not be read ({e})."),
                 format!("No se pudo leer la transcripción ({e})."),
-            )),
+            ))),
         };
     }
     let set = |p: Option<TranscribeProgress>| *progress.lock().unwrap_or_else(PoisonError::into_inner) = p;
     set(Some(TranscribeProgress { percent: 0, stage: String::new() }));
-    let mut job = match suite.transcribe_recording(file) {
+    let mut job = match suite.transcribe_meeting(file, meta) {
         Ok(SuiteOutcome::Ready(j)) => j,
         other => {
             set(None);
-            return outcome(other.map(|o| o.map(|_| ())), |_| SuiteEvent::Failed(Text::default()));
+            return Err(outcome(other.map(|o| o.map(|_| ())), |_| SuiteEvent::Failed(Text::default())));
         }
     };
     let mut result =
-        SuiteEvent::Failed(Text::new("The transcription took too long.", "La transcripción tardó demasiado."));
+        Err(SuiteEvent::Failed(Text::new("The transcription took too long.", "La transcripción tardó demasiado.")));
     for _ in 0..MAX_POLLS {
         match job.poll(Duration::from_secs(20)) {
             Ok(JobState::Running { percent, stage }) => set(Some(TranscribeProgress { percent, stage })),
             Ok(JobState::Done(t)) => {
+                let link = t.open_link;
                 let mut text = t.text;
                 let mut next = t.next_offset;
                 let mut guard = 0;
@@ -587,11 +691,11 @@ fn transcribe(
                         Err(_) => break,
                     }
                 }
-                result = SuiteEvent::Transcript { title, text };
+                result = Ok((text, link));
                 break;
             }
             Err(e) => {
-                result = SuiteEvent::Failed(err_text(&e));
+                result = Err(SuiteEvent::Failed(err_text(&e)));
                 break;
             }
         }

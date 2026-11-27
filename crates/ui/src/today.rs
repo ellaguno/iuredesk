@@ -60,7 +60,8 @@ enum Act {
     Event(Box<Occurrence>),
     Join(String),
     /// S1.4: grabar esta reunión con IureTranscribe.
-    Record(String),
+    /// UX-31: grabar la reunión de esta cita.
+    Record(Box<iuredesk_engine::calendar::Occurrence>),
     Calendar,
     /// UX-6: abrir la tarea en el editor (sobre «Mi día»).
     Task(TaskListId, TaskId),
@@ -1000,7 +1001,7 @@ fn next_box(app: &DeskApp, ui: &mut Ui, e: &AgendaItem, st: NextState, acts: &mu
                                     ))
                                     .clicked()
                             {
-                                acts.push(Act::Record(e.occ.summary.clone()));
+                                acts.push(Act::Record(Box::new(e.occ.clone())));
                             }
                         });
                     }
@@ -1469,7 +1470,7 @@ fn apply(app: &mut DeskApp, ctx: &egui::Context, a: Act) {
             crate::event_editor::open_occurrence(app, &o);
         }
         Act::Join(url) => crate::meeting::join(app, ctx, &url),
-        Act::Record(title) => crate::recording_ui::start(app, &title),
+        Act::Record(occ) => crate::recording_ui::start_for(app, &occ),
         Act::Calendar => {
             app.session.cal.anchor = None;
             app.session.module = Module::Calendar;

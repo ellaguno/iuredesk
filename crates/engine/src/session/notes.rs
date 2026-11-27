@@ -20,6 +20,8 @@ pub(crate) enum NoteUndo {
     Deleted(Box<Note>),
     /// UX-8: se cambió el cuerpo desde la vista previa (casilla de tarea): vuelve el anterior.
     Body { id: NoteId, body: String },
+    /// UX-30: se movió de carpeta: vuelve a la anterior.
+    Folder { id: NoteId, folder: String },
 }
 
 fn clip(s: &str, max: usize) -> String {
@@ -108,6 +110,17 @@ impl Session {
     /// S1.5: ¿se muestra Archivos?
     pub fn files_available(&self) -> bool {
         self.files_available
+    }
+
+    /// UX-30: nota nueva vacía en una carpeta (`""` = la raíz), con deshacer y enfocada.
+    pub fn new_note_in(&mut self, folder: &str) -> Result<Outcome> {
+        let out = self.new_note()?;
+        if let Some(id) = self.note_focus
+            && !folder.trim().is_empty()
+        {
+            self.set_note_folder(id, folder);
+        }
+        Ok(out)
     }
 
     /// Nota nueva vacía (con deshacer) y enfocada.
@@ -210,11 +223,16 @@ impl Session {
                 }
             }
             NoteUndo::Deleted(mut n) => {
-                // El archivo se borró con la nota: se vuelve a escribir.
+                // El archivo se borró con la nota: se vuelve a escribir (en su carpeta, UX-30).
+                let folder = n.file.as_ref().map(|f| crate::notes_fs::folder_of(&f.name).to_string());
                 n.file = None;
                 let id = self.store.put_note(&n).map_err(store_err)?;
                 self.note_focus = Some(id);
+                if let Some(f) = folder.filter(|f| !f.is_empty()) {
+                    self.set_note_folder(id, &f);
+                }
             }
+            NoteUndo::Folder { id, folder } => self.set_note_folder(id, &folder),
             NoteUndo::Body { id, body } => {
                 if let Some(n) = self.store.get_note(id).map_err(store_err)? {
                     // `save_note` ya reescribe el archivo y avanza la fecha.

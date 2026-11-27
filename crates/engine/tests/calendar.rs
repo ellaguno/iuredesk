@@ -350,3 +350,60 @@ fn graph_series_occurrence_scopes() {
     let plain = s.new_event_draft(day(20).and_hms_opt(9, 0, 0).unwrap(), day(20).and_hms_opt(10, 0, 0).unwrap(), false);
     assert_eq!(s.series_scopes(&plain.unwrap()).len(), 3);
 }
+
+/// UX-31: la grabación de una reunión queda en su cita. Sin invitados, sus ligas van además a la
+/// descripción; con invitados no se toca la cita (les llegaría un aviso de actualización).
+#[test]
+fn meeting_recording_is_kept_on_its_event() {
+    use iuredesk_engine::suite::EventRef;
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _fake) = session(dir.path());
+    let mk = |s: &mut Session, title: &str, guests: &[&str]| {
+        let start = day(23).and_hms_opt(9, 0, 0).unwrap();
+        let mut d = s.new_event_draft(start, start + chrono::Duration::minutes(30), false).unwrap();
+        d.title = title.into();
+        d.description = "Agenda".into();
+        for g in guests {
+            d.attendees.push(iuredesk_model::Attendee {
+                mailbox: iuredesk_model::Mailbox { name: None, addr: (*g).into() },
+                ..Default::default()
+            });
+        }
+        s.save_event_draft(&d, SeriesScope::All).unwrap();
+        settle(s);
+        let from = Zone::utc().day_start(day(23));
+        let o = s
+            .visible_occurrences(from, from + chrono::Duration::days(1))
+            .into_iter()
+            .find(|o| o.summary == title)
+            .unwrap();
+        let uid = s.calendar_event(o.id).unwrap().uid;
+        EventRef { id: o.id, start: o.start, uid }
+    };
+    let rec = |audio: &str| iuredesk_engine::EventRecording {
+        title: "Junta".into(),
+        audio: audio.into(),
+        open_link: Some("iuretranscribe://open?path=%2Fa.wav".into()),
+        notes_folder: Some("Reuniones/2026-10-23 Junta".into()),
+        created: now(),
+    };
+    let links = "**Grabación de la reunión (IureDesk)**\n- [Transcripción, resumen y minuta en IureTranscribe](iuretranscribe://open?path=%2Fa.wav)";
+
+    // Sin invitados: en la descripción (una sola vez) y en IureDesk.
+    let solo = mk(&mut s, "Repaso a solas", &[]);
+    assert!(s.record_meeting_on_event(&solo, &rec("/a.wav"), links).unwrap());
+    settle(&mut s);
+    let d = s.calendar_event(solo.id).unwrap().description;
+    assert!(d.starts_with("Agenda") && d.contains("iuretranscribe://open?path=%2Fa.wav"), "{d}");
+    assert!(!s.record_meeting_on_event(&solo, &rec("/a.wav"), links).unwrap(), "no se repite");
+    assert_eq!(s.event_recordings(&solo.uid).len(), 1);
+
+    // Con invitados: solo en IureDesk.
+    let team = mk(&mut s, "Junta con Ana", &["ana@example.com"]);
+    assert!(!s.record_meeting_on_event(&team, &rec("/b.wav"), links).unwrap());
+    settle(&mut s);
+    assert_eq!(s.calendar_event(team.id).unwrap().description, "Agenda");
+    let r = s.event_recordings(&team.uid);
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].notes_folder.as_deref(), Some("Reuniones/2026-10-23 Junta"));
+}

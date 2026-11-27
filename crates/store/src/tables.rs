@@ -82,6 +82,8 @@ pub(crate) const PIM_COLLECTIONS: TableDefinition<(u8, u64), &[u8]> = TableDefin
 pub(crate) const EMAIL_LINKS: TableDefinition<&str, &[u8]> = TableDefinition::new("email_links");
 /// S1.34: id remoto de una tarea de Iurefficient → su caso (`TaskCase`).
 pub(crate) const TASK_CASES: TableDefinition<&str, &[u8]> = TableDefinition::new("task_cases");
+/// UX-31: grabaciones de cada cita (`UID` → lista de [`crate::EventRecording`]). Aditiva.
+pub(crate) const EVENT_RECORDINGS: TableDefinition<&str, &[u8]> = TableDefinition::new("event_recordings");
 
 /// Pertenencias secundarias de un mensaje a otras carpetas (etiquetas de Gmail, F2.5): clave
 /// (mensaje, carpeta) → id remoto del mensaje en esa carpeta (`""` si aún no se conoce). La
@@ -127,6 +129,7 @@ pub(crate) fn create_all(tx: &redb::WriteTransaction) -> Result<(), redb::TableE
     tx.open_table(PIM_COLLECTIONS)?;
     tx.open_table(EMAIL_LINKS)?;
     tx.open_table(TASK_CASES)?;
+    tx.open_table(EVENT_RECORDINGS)?;
     tx.open_table(MSG_ALSO_IN)?;
     tx.open_table(PROVIDER_INDEX)?;
     tx.open_table(MSG_PROVIDER)?;

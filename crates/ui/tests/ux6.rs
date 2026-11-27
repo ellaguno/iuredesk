@@ -190,3 +190,43 @@ fn note_has_its_markdown_file() {
         .is_some();
     assert!(shown, "la vista muestra lo nuevo");
 }
+
+/// UX-30: carpetas de notas en la barra lateral: «Nueva carpeta» la crea y entra; una nota nueva
+/// va ahí; la ruta («Notas › Reuniones») vuelve a la principal, donde se ve la carpeta con su cifra.
+#[test]
+fn notes_sidebar_has_folders() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let notes = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    a.session.notes_fs_for_tests(notes.path().to_path_buf(), Duration::from_millis(30));
+    assert!(a.session.notes_fs_flush(Duration::from_secs(10)));
+    a.session.module = Module::Notes;
+    let mut h = harness(a);
+    settle(&mut h);
+    h.get_by_label("Nueva carpeta").click();
+    settle(&mut h);
+    h.get_by_label("Nombre de la carpeta").click();
+    h.event(egui::Event::Text("Reuniones".into()));
+    h.run_steps(2);
+    h.get_by_label("Crear").click();
+    settle(&mut h);
+    assert_eq!(h.state().session.notes_folder_view(), "Reuniones");
+    assert!(h.query_by_label("Esta carpeta aún no tiene notas.").is_some());
+    let ctx = h.ctx.clone();
+    h.state_mut().run(&ctx, "notes.new");
+    let id = h.state().session.note_focus().unwrap();
+    h.state_mut().session.save_note(id, "Junta semanal", "acuerdos").unwrap();
+    assert!(h.state_mut().session.notes_fs_flush(Duration::from_secs(10)));
+    assert!(notes.path().join("Reuniones").join("Junta semanal.md").is_file());
+    settle(&mut h);
+    // La ruta, bajo la búsqueda (no la barra de título, el botón del módulo ni el título del panel).
+    h.query_all_by_label("Notas")
+        .filter(|n| n.rect().left() > 50.0)
+        .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .unwrap()
+        .click();
+    settle(&mut h);
+    assert_eq!(h.state().session.notes_folder_view(), "");
+    assert!(h.query_by_label("Reuniones").is_some(), "la carpeta en la principal");
+}

@@ -412,6 +412,26 @@ impl Suite {
     }
 
     /// Lanza una app sin argumentos (botón «Abrir» del panel).
+    /// UX-31: abre una liga `iuretranscribe://…` (una grabación) lanzando IureTranscribe con ella
+    /// (si ya está abierto, su instancia única la recibe).
+    pub fn open_transcribe_link(&self, link: &str) -> crate::Result<Outcome<()>> {
+        let link = link.trim();
+        if !link.to_ascii_lowercase().starts_with("iuretranscribe:")
+            || link.len() > 8192
+            || link.chars().any(char::is_control)
+        {
+            return Err(crate::IntegrationError::InvalidInput(format!(
+                "enlace no válido: {}",
+                link.chars().take(80).collect::<String>()
+            )));
+        }
+        let Some(program) = self.paths.get(&SisterApp::Transcribe) else {
+            return Ok(Outcome::NotInstalled(SisterApp::Transcribe.install_hint()));
+        };
+        self.opener.launch(program, &[link.to_string()])?;
+        Ok(Outcome::Ready(()))
+    }
+
     pub fn launch(&self, app: SisterApp) -> crate::Result<Outcome<()>> {
         let Some(program) = self.paths.get(&app) else {
             return Ok(Outcome::NotInstalled(app.install_hint()));

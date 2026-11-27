@@ -41,6 +41,8 @@ pub(crate) struct Full {
     optional: bool,
     focused: bool,
     read_only: bool,
+    /// UX-31: cerrar sin guardar (se fue a otra parte, p. ej. a las notas de una grabación).
+    close: bool,
 }
 
 /// Acción que espera «¿solo este evento?».
@@ -74,6 +76,7 @@ impl Full {
             optional: false,
             focused: false,
             read_only,
+            close: false,
         }
     }
 }
@@ -383,6 +386,7 @@ fn full_editor(app: &mut DeskApp, ctx: &Context) {
                 }
             }
         }
+        _ if f.close => {}
         _ => app.calendar.editor.full = Some(f),
     }
 }
@@ -706,6 +710,37 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
         let lower = l.to_ascii_lowercase();
         if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") {
             crate::open_url(&l);
+        } else if lower.starts_with("iuretranscribe:") {
+            app.suite.hub.run(iuredesk_engine::suite::SuiteAction::OpenTranscribeLink(l));
+        }
+    }
+    // UX-31: las reuniones grabadas desde esta cita (solo en IureDesk: con invitados no se escriben
+    // en la descripción).
+    let recordings = f.draft.base.as_ref().map(|e| app.session.event_recordings(&e.uid)).unwrap_or_default();
+    if !recordings.is_empty() {
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            row_icon(ui, Icon::Notes);
+            section_label(ui, pick("Recordings", "Grabaciones"));
+        });
+        let zone = app.session.zone();
+        for r in recordings.iter().rev().take(10) {
+            ui.horizontal_wrapped(|ui| {
+                let when = zone.local(r.created).format("%Y-%m-%d %H:%M").to_string();
+                ui.label(RichText::new(format!("{when} · {}", r.title)).color(c.text));
+                if let Some(l) = &r.open_link
+                    && ui.small_button(pick("Open in IureTranscribe", "Abrir en IureTranscribe")).clicked()
+                {
+                    app.suite.hub.run(iuredesk_engine::suite::SuiteAction::OpenTranscribeLink(l.clone()));
+                }
+                if let Some(folder) = &r.notes_folder
+                    && ui.small_button(pick("See the notes", "Ver las notas")).clicked()
+                {
+                    app.session.set_notes_folder_view(folder);
+                    app.session.module = iuredesk_engine::Module::Notes;
+                    f.close = true;
+                }
+            });
         }
     }
     // El bloque que añade Google (Meet, teléfonos): plegado, tal cual y sin editar.

@@ -40,7 +40,69 @@ pub struct Transcript {
     pub language: Option<String>,
     /// Duración del audio.
     pub audio_secs: Option<f64>,
+    /// UX-31: enlace que abre la grabación en IureTranscribe (`iuretranscribe://open?path=…`;
+    /// desde la 0.8.7).
+    pub open_link: Option<String>,
 }
+
+/// UX-31: datos de la reunión que acompañan a la grabación (IureTranscribe los guarda con ella y
+/// los usa para el resumen y la minuta).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MeetingMeta {
+    pub title: String,
+    /// Fecha y hora legibles («27 nov 2026, 10:00»).
+    pub date: String,
+    pub place: String,
+    pub participants: Vec<String>,
+    pub notes: String,
+}
+
+impl MeetingMeta {
+    /// Los campos con algo, acotados, para `transcribe_file`.
+    fn args(&self, into: &mut Value) {
+        let clip = |s: &str, n: usize| s.trim().chars().take(n).collect::<String>();
+        let Some(obj) = into.as_object_mut() else { return };
+        for (k, v) in [("title", &self.title), ("date", &self.date), ("place", &self.place), ("notes", &self.notes)] {
+            let v = clip(v, if k == "notes" { 4000 } else { 300 });
+            if !v.is_empty() {
+                obj.insert(k.into(), Value::String(v));
+            }
+        }
+        let people: Vec<Value> = self
+            .participants
+            .iter()
+            .map(|p| clip(p, 200))
+            .filter(|p| !p.is_empty())
+            .take(100)
+            .map(Value::String)
+            .collect();
+        if !people.is_empty() {
+            obj.insert("participants".into(), Value::Array(people));
+        }
+    }
+}
+
+/// UX-31: resumen o minuta.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocKind {
+    Summary,
+    Minutes,
+}
+
+/// UX-31: resumen o minuta que redactó IureTranscribe (junto al audio).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeneratedDoc {
+    pub kind: DocKind,
+    /// Archivo escrito (`…_minuta.md`).
+    pub path: PathBuf,
+    /// Markdown.
+    pub content: String,
+}
+
+/// Tiempo máximo de `generate_document` (IureTranscribe corta a los 600 s).
+const DOC_TIMEOUT: Duration = Duration::from_secs(700);
+/// Tope del texto de un resumen o minuta.
+const MAX_DOC_CHARS: usize = 400_000;
 
 impl Transcript {
     fn from_value(v: &Value) -> Self {
@@ -64,6 +126,11 @@ impl Transcript {
             outputs,
             language: v.get("detectedLanguage").and_then(Value::as_str).map(String::from),
             audio_secs: v.get("audioSecs").and_then(Value::as_f64),
+            open_link: v
+                .get("openLink")
+                .and_then(Value::as_str)
+                .filter(|l| l.starts_with("iuretranscribe:") && l.len() <= 8192)
+                .map(String::from),
         }
     }
 
@@ -172,22 +239,53 @@ impl Suite {
     /// Empieza a transcribir una grabación (ruta local). Vuelve enseguida (≤ ~5 s): sigue con
     /// [`TranscriptionJob::poll`] en el runtime de fondo.
     pub fn transcribe_recording(&self, file: &Path) -> Result<Outcome<TranscriptionJob>> {
+        self.transcribe_meeting(file, &MeetingMeta::default())
+    }
+
+    /// UX-31: como [`Suite::transcribe_recording`], con los datos de la reunión.
+    pub fn transcribe_meeting(&self, file: &Path, meta: &MeetingMeta) -> Result<Outcome<TranscriptionJob>> {
         let mut client = match self.connect_mcp(SisterApp::Transcribe)? {
             Outcome::Ready(c) => c,
             Outcome::NotInstalled(h) => return Ok(Outcome::NotInstalled(h)),
             Outcome::NotAvailable(t) => return Ok(Outcome::NotAvailable(t)),
         };
         let input = absolute(file)?;
-        let r = client
-            .call_tool(
-                "transcribe_file",
-                json!({"path": input, "wait_seconds": 2, "timestamps": true}),
-                Some(Duration::from_secs(60)),
-            )?
-            .into_ok()?;
+        let mut args = json!({"path": input, "wait_seconds": 2, "timestamps": true});
+        meta.args(&mut args);
+        let r = client.call_tool("transcribe_file", args, Some(Duration::from_secs(60)))?.into_ok()?;
         let data = r.data().ok_or_else(|| IntegrationError::Protocol("respuesta sin datos".into()))?;
         let (state, job_id) = parse_state(&data)?;
         Ok(Outcome::Ready(TranscriptionJob { client, job_id, input, state }))
+    }
+
+    /// UX-31: pide a IureTranscribe el resumen o la minuta de una grabación ya transcrita (con sus
+    /// instrucciones y su IA; lo escribe junto al audio). Un IureTranscribe anterior a la 0.8.7 no
+    /// lo sabe hacer: [`Outcome::NotAvailable`].
+    pub fn generate_document(&self, file: &Path, kind: DocKind) -> Result<Outcome<GeneratedDoc>> {
+        let mut client = match self.connect_mcp(SisterApp::Transcribe)? {
+            Outcome::Ready(c) => c,
+            Outcome::NotInstalled(h) => return Ok(Outcome::NotInstalled(h)),
+            Outcome::NotAvailable(t) => return Ok(Outcome::NotAvailable(t)),
+        };
+        if !client.list_tools()?.iter().any(|t| t.name == "generate_document") {
+            let v = client.server().version.chars().take(40).collect::<String>();
+            return Ok(Outcome::NotAvailable(crate::suite::Text::new(
+                format!("Your IureTranscribe ({v}) can't write summaries and minutes for IureDesk yet. Update it."),
+                format!("Tu IureTranscribe ({v}) todavía no redacta resúmenes ni minutas para IureDesk. Actualízalo."),
+            )));
+        }
+        let path = absolute(file)?;
+        let k = match kind {
+            DocKind::Summary => "summary",
+            DocKind::Minutes => "minutes",
+        };
+        let r =
+            client.call_tool("generate_document", json!({"path": path, "kind": k}), Some(DOC_TIMEOUT))?.into_ok()?;
+        let data = r.data().ok_or_else(|| IntegrationError::Protocol("respuesta sin datos".into()))?;
+        let content: String =
+            data.get("content").and_then(Value::as_str).unwrap_or("").chars().take(MAX_DOC_CHARS).collect();
+        let out = data.get("path").and_then(Value::as_str).map(PathBuf::from).unwrap_or_default();
+        Ok(Outcome::Ready(GeneratedDoc { kind, path: out, content }))
     }
 
     /// Lee una transcripción o minuta ya escrita (`.txt`, `.srt`, `.vtt`, `.json`, `.md`).
@@ -220,6 +318,28 @@ mod tests {
         let JobState::Done(t) = s else { panic!("no terminó") };
         assert_eq!(t.output("TXT"), Some(Path::new("/a/b.txt")));
         assert!(parse_state(&json!({"status": 3})).is_err());
+    }
+
+    #[test]
+    fn datos_de_la_reunion() {
+        let mut v = json!({"path": "/a.wav"});
+        MeetingMeta {
+            title: "  Junta ".into(),
+            date: String::new(),
+            place: "Sala 2".into(),
+            participants: vec!["Ana".into(), " ".into(), "x".repeat(500)],
+            notes: "n".repeat(10_000),
+        }
+        .args(&mut v);
+        assert_eq!(v["title"], "Junta");
+        assert!(v.get("date").is_none(), "sin campos vacíos");
+        assert_eq!(v["participants"].as_array().unwrap().len(), 2);
+        assert_eq!(v["participants"][1].as_str().unwrap().chars().count(), 200);
+        assert_eq!(v["notes"].as_str().unwrap().chars().count(), 4000);
+        let t = Transcript::from_value(&json!({"openLink": "iuretranscribe://open?path=%2Fa.wav"}));
+        assert_eq!(t.open_link.as_deref(), Some("iuretranscribe://open?path=%2Fa.wav"));
+        let t = Transcript::from_value(&json!({"openLink": "javascript:alert(1)"}));
+        assert!(t.open_link.is_none(), "solo enlaces de IureTranscribe");
     }
 
     #[test]

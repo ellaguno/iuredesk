@@ -23,6 +23,7 @@
 pub mod blob;
 mod codec;
 pub mod error;
+mod event_recordings;
 mod links;
 mod mail;
 mod migrations;
@@ -45,6 +46,7 @@ use serde::de::DeserializeOwned;
 
 pub use blob::{BlobStore, MAX_BLOB_SIZE};
 pub use error::{Result, StoreError};
+pub use event_recordings::{EventRecording, MAX_RECORDINGS_PER_EVENT};
 pub use links::{EmailLink, MAX_LINKS_PER_MESSAGE, link_key};
 pub use mail::{AccountLabel, FolderCount, NewMessage, ProviderMeta};
 pub use migrations::OVERRIDES_BACKFILL_KEY;

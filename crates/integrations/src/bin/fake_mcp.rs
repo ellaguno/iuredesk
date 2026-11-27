@@ -62,12 +62,13 @@ impl Handler for Fake {
             "recording_status",
             "pause_recording",
             "stop_recording",
+            "generate_document",
         ];
         let old = std::env::var("FAKE_MCP_MODE").as_deref() == Ok("no-recording");
         Value::Array(
             names
                 .iter()
-                .filter(|n| !(old && n.contains("recording")))
+                .filter(|n| !(old && (n.contains("recording") || **n == "generate_document")))
                 .map(|n| json!({"name": n, "description": format!("tool {n}"), "inputSchema": {"type": "object"}}))
                 .collect(),
         )
@@ -88,7 +89,23 @@ impl Handler for Fake {
             "fail" => Err(CallError::Tool(anyhow::anyhow!("falló a propósito"))),
             "transcribe_file" => Ok(Reply::Data(json!({
                 "status": "running", "jobId": "job-1", "percent": 10, "stage": "decoding", "input": s(a, "path"),
+                // Lo que llegó de la reunión (UX-31), para que la prueba lo vea.
+                "meta": {"title": s(a, "title"), "place": s(a, "place"), "participants": a.get("participants")},
             }))),
+            // Como IureTranscribe 0.8.7: escribe `<audio>_minuta.md` / `_resumen.md`. Sin IA
+            // configurada (`FAKE_MCP_MODE=no-ai`) es un error de la herramienta.
+            "generate_document" => {
+                if std::env::var("FAKE_MCP_MODE").as_deref() == Ok("no-ai") {
+                    return Err(CallError::Tool(anyhow::anyhow!(
+                        "Configura tu llave de OpenRouter en Ajustes para generar resúmenes y minutas."
+                    )));
+                }
+                let kind = s(a, "kind");
+                let suffix = if kind == "summary" { "_resumen.md" } else { "_minuta.md" };
+                let path = s(a, "path").trim_end_matches(".wav").to_string() + suffix;
+                let title = if kind == "summary" { "Resumen" } else { "Minuta" };
+                Ok(Reply::Data(json!({"kind": kind, "path": path, "content": format!("# {title}\n\n- Acuerdo uno")})))
+            }
             "transcription_status" => {
                 let mut n = self.status_calls.lock().unwrap_or_else(|e| e.into_inner());
                 *n += 1;
@@ -105,6 +122,7 @@ impl Handler for Fake {
                 Ok(Reply::Data(json!({
                     "status": "done", "jobId": "job-1", "audioSecs": 2.5, "detectedLanguage": "es",
                     "outputs": [{"format": "txt", "path": "/tmp/rec.txt"}],
+                    "openLink": "iuretranscribe://open?path=%2Ftmp%2Fgrabaciones%2Freunion.wav",
                     "text": text, "totalChars": 21, "offset": offset,
                     "nextOffset": if offset == 0 { json!(15) } else { Value::Null },
                 })))

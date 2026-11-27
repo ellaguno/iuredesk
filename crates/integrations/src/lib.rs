@@ -51,4 +51,4 @@ pub use opener::{Opener, SystemOpener};
 pub use project::{AddedTask, NewProjectTask, ProjectCase, ProjectOverview, ProjectStatus, ProjectTask};
 pub use recording::{Recorded, Recording, RecordingStatus};
 pub use suite::{AppStatus, InstallHint, Outcome, SisterApp, Suite, Text};
-pub use transcribe::{JobState, Transcript, TranscriptFile, TranscriptionJob};
+pub use transcribe::{DocKind, GeneratedDoc, JobState, MeetingMeta, Transcript, TranscriptFile, TranscriptionJob};

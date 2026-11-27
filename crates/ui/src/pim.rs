@@ -20,6 +20,8 @@ pub struct PimState {
     contact_list: ListState,
     contact_cols: Vec<Column>,
     pub(crate) note_search: String,
+    /// UX-30: nombre de la carpeta nueva que se está escribiendo.
+    new_folder: Option<String>,
     pub(crate) note_edit: Option<NoteEdit>,
     /// S1.12: corrector ortográfico de las notas (se crea al editar la primera; carga los
     /// diccionarios del sistema en otro hilo).
@@ -481,13 +483,23 @@ pub(crate) fn open_note_in_editor(app: &mut DeskApp) {
 
 pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
-    let notes = app.session.notes_matching(&app.pim.note_search);
+    // UX-30: sin buscar se ven las notas de la carpeta abierta; buscando, las de todas.
+    let view = app.session.notes_folder_view().to_string();
+    let searching = !app.pim.note_search.trim().is_empty();
+    let notes: Vec<iuredesk_model::Note> = app
+        .session
+        .notes_matching(&app.pim.note_search)
+        .into_iter()
+        .filter(|n| searching || app.session.note_folder(n) == view)
+        .collect();
+    let folders = app.session.note_folders();
     let total = app.session.notes().len();
     let zone = app.session.zone();
     let now = app.session.now();
     let focus = app.session.note_focus().filter(|id| notes.iter().any(|n| n.id == *id)).or(notes.first().map(|n| n.id));
     let mut pick_note: Option<NoteId> = None;
     let mut fire: Option<&'static str> = None;
+    let mut move_to: Option<(NoteId, String)> = None;
     let editor_installed = app.suite.hub.installed(iuredesk_engine::iuredesk_integrations::SisterApp::Editor);
     let tint = app.session.prefs.sidebar_color;
     crate::widgets::side_left(ui, "notes-list", PaneKind::Sidebar, 300.0, 220.0..=460.0, tint, |ui| {
@@ -499,6 +511,11 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                 if icons::icon_button(ui, Icon::Plus, pick("New note", "Nueva nota"), true).clicked() {
                     fire = Some("notes.new");
                 }
+                if app.session.notes_dir().is_some()
+                    && icons::icon_button(ui, Icon::Folder, pick("New folder", "Nueva carpeta"), true).clicked()
+                {
+                    app.pim.new_folder = Some(String::new());
+                }
             });
         });
         ui.add_space(6.0);
@@ -509,6 +526,13 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
         );
         crate::widgets::text_label(&r, pick("Search notes", "Buscar en las notas"));
         ui.add_space(8.0);
+        if !searching && let Some(f) = folder_nav(app, ui, &view, &folders) {
+            app.session.set_notes_folder_view(&f);
+        }
+        if notes.is_empty() && !searching && !view.is_empty() {
+            crate::today::muted(ui, pick("This folder has no notes yet.", "Esta carpeta aún no tiene notas."));
+            return;
+        }
         if notes.is_empty() {
             let (title, body) = if app.pim.note_search.trim().is_empty() {
                 (
@@ -551,6 +575,11 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                 if n.pinned {
                     title = format!("{title}  ·  {}", pick("pinned", "fijada"));
                 }
+                // Buscando, cada nota dice en qué carpeta está.
+                let place = app.session.note_folder(n);
+                if searching && !place.is_empty() {
+                    title = format!("{title}  ·  {place}");
+                }
                 let gt =
                     iurefficient_ui::widgets::text::elided(ui, &title, title_font, c.text, inner.width() - dw - 8.0);
                 ui.painter().galley(inner.min, gt, c.text);
@@ -585,6 +614,21 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                         let _ = app.session.toggle_note_pin(n.id);
                         ui.close();
                     }
+                    if !folders.is_empty() || !place.is_empty() {
+                        ui.menu_button(pick("Move to folder", "Mover a carpeta"), |ui| {
+                            let root = std::iter::once((
+                                String::new(),
+                                pick("Notes (top level)", "Notas (principal)").to_string(),
+                            ));
+                            let all = root.chain(folders.iter().map(|f| (f.clone(), f.clone())));
+                            for (f, label) in all {
+                                if ui.add_enabled(f != place, egui::Button::new(label)).clicked() {
+                                    move_to = Some((n.id, f));
+                                    ui.close();
+                                }
+                            }
+                        });
+                    }
                     if icons::menu_item(ui, Some(Icon::Trash), pick("Delete note", "Eliminar nota")).clicked() {
                         pick_note = Some(n.id);
                         fire = Some("notes.delete");
@@ -595,6 +639,15 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             }
         });
     });
+    new_folder_dialog(app, &ctx, &view);
+    if let Some((id, folder)) = move_to {
+        flush_note(app);
+        match app.session.move_note_to_folder(id, &folder) {
+            Ok(iuredesk_engine::Outcome::Notice(n)) => app.notice(n),
+            Ok(_) => {}
+            Err(e) => app.notice(iuredesk_engine::Notice::error(e.text())),
+        }
+    }
     if let Some(id) = pick_note.or(focus)
         && app.pim.note_edit.as_ref().is_none_or(|e| e.id != id)
     {
@@ -726,7 +779,7 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             // Los diagramas (Mermaid y mapas mentales, con el motor de la vista) y las imágenes de la
             // carpeta de notas (como en la vista previa) se dibujan en su lugar.
             let mindmap_layout = crate::note_preview::layout_of(app.session.prefs.mindmap_layout);
-            let notes_dir = app.session.notes_dir();
+            let notes_dir = app.session.note_dir_of(id); // UX-30: su carpeta (y su `img/`)
             let speller =
                 app.pim.speller.get_or_insert_with(|| iure_doc_ui::Speller::system(personal_dictionary())).clone();
             // `[[`: las demás notas por su título (y sus títulos internos).
@@ -754,7 +807,7 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
                     paste: Some(std::sync::Arc::new(iure_doc_ui::SystemClipboard)),
                     // Subraya lo mal escrito; clic derecho: sugerencias, agregar, ignorar.
                     spell: Some(speller.clone()),
-                    // Imágenes pegadas o soltadas: en `img/` de la carpeta de notas (donde la vista
+                    // Imágenes pegadas o soltadas: en `img/` de la carpeta de la nota (donde la vista
                     // previa las busca).
                     images: Some(std::sync::Arc::new(iure_doc_ui::FolderImages::new(notes_dir.clone(), "img"))),
                     // `[[` enlaza otras notas; Ctrl+clic las abre.
@@ -865,7 +918,7 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             // enlace lo abre.
             let id = edit.id;
             let mut body = edit.body.clone();
-            let notes_dir = app.session.notes_dir();
+            let notes_dir = app.session.note_dir_of(id);
             let mindmap_layout = crate::note_preview::layout_of(app.session.prefs.mindmap_layout);
             let diagrams: std::sync::Arc<dyn iure_doc_ui::DiagramRenderer> =
                 std::sync::Arc::new(iure_doc_ui::Renderers(vec![
@@ -914,6 +967,12 @@ pub(crate) fn follow_note_link(app: &mut DeskApp, ctx: &egui::Context, link: &st
         let lower = link.to_ascii_lowercase();
         if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") {
             ctx.open_url(egui::OpenUrl::new_tab(link));
+        } else if lower.starts_with("iuretranscribe:") {
+            // UX-31: la grabación de una reunión, en IureTranscribe.
+            app.suite.hub.run(iuredesk_engine::suite::SuiteAction::OpenTranscribeLink(link.to_string()));
+        } else if lower.starts_with("iuredesk:") {
+            // UX-31: la cita de la reunión (`iuredesk://event/<UID>`) y demás enlaces propios.
+            crate::opened::handle(app, ctx, &[link.to_string()]);
         }
         return;
     };
@@ -1337,5 +1396,118 @@ pub(crate) fn personal_dictionary() -> Option<std::path::PathBuf> {
     match std::env::var_os("IUREDESK_DATA_DIR").filter(|v| !v.is_empty()) {
         Some(d) => Some(std::path::PathBuf::from(d).join("diccionario.txt")),
         None => iure_doc_ui::spell::personal_path("iuredesk"),
+    }
+}
+
+/// UX-30: la ruta de la carpeta abierta («Notas › Reuniones») y sus subcarpetas, con cuántas notas
+/// tiene cada una. Devuelve la carpeta a la que se entra.
+fn folder_nav(app: &DeskApp, ui: &mut Ui, view: &str, folders: &[String]) -> Option<String> {
+    let c = theme::colors(ui);
+    let mut go = None;
+    if !view.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let link = |ui: &mut Ui, text: &str| {
+                ui.add(egui::Button::new(RichText::new(text).color(c.accent)).frame(false)).clicked()
+            };
+            if link(ui, pick("Notes", "Notas")) {
+                go = Some(String::new());
+            }
+            let mut acc = String::new();
+            let parts: Vec<&str> = view.split('/').collect();
+            for (i, part) in parts.iter().enumerate() {
+                acc = iuredesk_engine::notes_fs::in_folder(&acc, part);
+                ui.label(RichText::new("›").color(c.text_muted));
+                if i + 1 == parts.len() {
+                    ui.label(RichText::new(*part).strong().color(c.text));
+                } else if link(ui, part) {
+                    go = Some(acc.clone());
+                }
+            }
+        });
+        ui.add_space(4.0);
+    }
+    let notes = app.session.notes();
+    for f in folders.iter().filter(|f| iuredesk_engine::notes_fs::folder_of(f) == view) {
+        let name = iuredesk_engine::notes_fs::base_name(f);
+        let inside = f.clone() + "/";
+        let count = notes
+            .iter()
+            .filter(|n| {
+                let nf = app.session.note_folder(n);
+                nf == *f || nf.starts_with(&inside)
+            })
+            .count();
+        let h = 30.0;
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
+        if resp.hovered() {
+            ui.painter().rect_filled(rect, 8.0, c.hover);
+        }
+        let icon = egui::Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(16.0, 16.0));
+        icons::paint(ui.painter(), icon, Icon::Folder, c.text_muted, c.text_muted);
+        let font = theme::body_font(ui.ctx());
+        let g = iurefficient_ui::widgets::text::elided(ui, name, font.clone(), c.text, rect.width() - 80.0);
+        ui.painter().galley(pos2(rect.left() + 36.0, rect.center().y - g.size().y / 2.0), g, c.text);
+        ui.painter().text(
+            pos2(rect.right() - 10.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            count.to_string(),
+            theme::small_font(ui.ctx()),
+            c.text_muted,
+        );
+        iurefficient_ui::a11y::button(&resp, name);
+        if resp.clicked() {
+            go = Some(f.clone());
+        }
+    }
+    if folders.iter().any(|f| iuredesk_engine::notes_fs::folder_of(f) == view) {
+        ui.add_space(6.0);
+    }
+    go
+}
+
+/// UX-30: diálogo «Nueva carpeta» (dentro de la carpeta abierta).
+fn new_folder_dialog(app: &mut DeskApp, ctx: &egui::Context, view: &str) {
+    let Some(mut name) = app.pim.new_folder.take() else { return };
+    let mut done = false;
+    let mut cancel = false;
+    let resp = egui::Modal::new(egui::Id::unique("notes-new-folder")).show(ctx, |ui| {
+        ui.set_width(360.0);
+        ui.heading(pick("New folder", "Nueva carpeta"));
+        if !view.is_empty() {
+            crate::today::muted(ui, &format!("{} {view}", pick("Inside", "Dentro de")));
+        }
+        ui.add_space(6.0);
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut name)
+                .hint_text(pick("Folder name", "Nombre de la carpeta"))
+                .desired_width(f32::INFINITY),
+        );
+        crate::widgets::text_label(&r, pick("Folder name", "Nombre de la carpeta"));
+        if !r.has_focus() && name.is_empty() {
+            r.request_focus();
+        }
+        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            done = true;
+        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui.add_enabled(!name.trim().is_empty(), egui::Button::new(pick("Create", "Crear"))).clicked() {
+                done = true;
+            }
+            if ui.button(pick("Cancel", "Cancelar")).clicked() {
+                cancel = true;
+            }
+        });
+    });
+    if resp.should_close() {
+        cancel = true;
+    }
+    if done && !name.trim().is_empty() {
+        if let Some(f) = app.session.create_note_folder(view, &name) {
+            app.session.set_notes_folder_view(&f);
+        }
+    } else if !cancel {
+        app.pim.new_folder = Some(name);
     }
 }

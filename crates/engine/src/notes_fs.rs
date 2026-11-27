@@ -6,6 +6,9 @@
 //! - **Formato**: `# Título`, línea en blanco y el cuerpo. Solo si la nota tiene etiquetas o está
 //!   fijada lleva antes un bloque YAML (`tags`, `pinned`), que IureEditor conserva tal cual.
 //! - **Nombre**: el título saneado (`Minuta con Ramírez.md`); si ya existe, `… (2).md`.
+//! - **Carpetas** (UX-30): las subcarpetas son carpetas de notas. El nombre de una nota es su ruta
+//!   relativa con `/` (`Reuniones/Minuta con Ramírez.md`); se recorren hasta [`MAX_DEPTH`] niveles,
+//!   sin carpetas ocultas, sin enlaces simbólicos y sin `img` (las imágenes de cada carpeta).
 //! - **Vigilancia por sondeo** (cada [`POLL`]): fecha de modificación y tamaño de cada `.md`. Se
 //!   eligió sondear y no `inotify`/`notify` porque las unidades de red (IureDav, WebDAV, SMB) no
 //!   avisan de los cambios y porque así no entra ninguna dependencia nueva. Un cambio se lee
@@ -32,6 +35,53 @@ pub const MAX_NOTE_FILE: u64 = 4 * 1024 * 1024;
 pub const MAX_FILES: usize = 5_000;
 /// Largo máximo del nombre (sin `.md`).
 const MAX_STEM_CHARS: usize = 80;
+/// UX-30: niveles de subcarpetas que se recorren.
+pub const MAX_DEPTH: usize = 6;
+/// UX-30: carpetas que se consideran como máximo.
+pub const MAX_FOLDERS: usize = 1_000;
+/// UX-30: carpeta de las imágenes de cada carpeta de notas (no es una carpeta de notas).
+pub const IMAGES_DIR: &str = "img";
+
+/// UX-30: la carpeta de una nota por su nombre (`Reuniones/Junta.md` → `Reuniones`; en la raíz, `""`).
+pub fn folder_of(name: &str) -> &str {
+    name.rsplit_once('/').map_or("", |(f, _)| f)
+}
+
+/// UX-30: el nombre del archivo sin la carpeta.
+pub fn base_name(name: &str) -> &str {
+    name.rsplit_once('/').map_or(name, |(_, b)| b)
+}
+
+/// UX-30: `carpeta/nombre` (o solo el nombre en la raíz).
+pub fn in_folder(folder: &str, name: &str) -> String {
+    if folder.is_empty() { name.to_string() } else { format!("{folder}/{name}") }
+}
+
+/// UX-30: una carpeta escrita por el usuario (o que llega de fuera) como ruta relativa segura:
+/// cada nivel saneado como un nombre de archivo, sin `.`/`..`, sin vacíos, sin `img` y como mucho
+/// [`MAX_DEPTH`] niveles. `""` = la raíz.
+pub fn clean_folder(folder: &str) -> String {
+    folder
+        .split(['/', '\\'])
+        .map(str::trim)
+        .filter(|p| !p.is_empty() && *p != "." && *p != "..")
+        .map(|p| {
+            let s = file_stem(p);
+            if s.eq_ignore_ascii_case(IMAGES_DIR) { format!("{s}_") } else { s }
+        })
+        .take(MAX_DEPTH)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// UX-30: ruta de `rel` (con `/`) dentro de `dir`. Solo componentes normales: lo demás se ignora.
+pub fn rel_path(dir: &Path, rel: &str) -> PathBuf {
+    let mut p = dir.to_path_buf();
+    for part in rel.split('/').filter(|x| !x.is_empty() && *x != "." && *x != "..") {
+        p.push(part);
+    }
+    p
+}
 
 /// Contenido de un archivo de nota ya interpretado.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -245,6 +295,8 @@ pub struct NotesDir {
     pending: HashMap<String, Stamp>,
     gone: HashSet<String>,
     first: bool,
+    /// UX-30: las subcarpetas (rutas relativas con `/`).
+    folders: Vec<String>,
 }
 
 fn stamp_of(meta: &std::fs::Metadata) -> Stamp {
@@ -270,6 +322,7 @@ impl NotesDir {
             pending: HashMap::new(),
             gone: HashSet::new(),
             first: true,
+            folders: Vec::new(),
         }
     }
 
@@ -277,9 +330,9 @@ impl NotesDir {
         &self.dir
     }
 
-    /// Ruta de un archivo de la carpeta.
+    /// Ruta de un archivo de la carpeta (`name` puede llevar subcarpetas con `/`).
     pub fn path_of(&self, name: &str) -> PathBuf {
-        self.dir.join(name)
+        rel_path(&self.dir, name)
     }
 
     /// `true` mientras quede algo esperando a dejar de cambiar.
@@ -287,24 +340,67 @@ impl NotesDir {
         !self.pending.is_empty() || !self.gone.is_empty()
     }
 
-    fn list(&self) -> std::io::Result<Vec<(String, Stamp)>> {
+    /// Las notas (con su ruta relativa) y las carpetas, recorriendo las subcarpetas (UX-30).
+    fn list(&self) -> std::io::Result<(Vec<(String, Stamp)>, Vec<String>)> {
         let mut out = Vec::new();
-        for entry in std::fs::read_dir(&self.dir)? {
-            let Ok(entry) = entry else { continue };
-            let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
-            if !is_note_file(&name) {
-                continue;
-            }
-            let Ok(meta) = std::fs::metadata(entry.path()) else { continue };
-            if !meta.is_file() {
-                continue;
-            }
-            out.push((name, stamp_of(&meta)));
-            if out.len() >= MAX_FILES {
-                break;
+        let mut folders = Vec::new();
+        // (carpeta relativa, nivel); la raíz tiene que poder leerse.
+        let mut queue = std::collections::VecDeque::from([(String::new(), 0usize)]);
+        while let Some((folder, depth)) = queue.pop_front() {
+            let entries = match std::fs::read_dir(rel_path(&self.dir, &folder)) {
+                Ok(e) => e,
+                Err(e) if folder.is_empty() => return Err(e),
+                Err(_) => continue,
+            };
+            for entry in entries {
+                let Ok(entry) = entry else { continue };
+                let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
+                // Sin seguir enlaces simbólicos a carpetas: no hay ciclos ni se sale de la carpeta.
+                let Ok(kind) = entry.file_type() else { continue };
+                if kind.is_dir() {
+                    let skip = name.starts_with('.') || name.eq_ignore_ascii_case(IMAGES_DIR) || depth + 1 > MAX_DEPTH;
+                    if !skip && folders.len() < MAX_FOLDERS {
+                        let rel = in_folder(&folder, &name);
+                        folders.push(rel.clone());
+                        queue.push_back((rel, depth + 1));
+                    }
+                    continue;
+                }
+                if !is_note_file(&name) || out.len() >= MAX_FILES {
+                    continue;
+                }
+                let Ok(meta) = std::fs::metadata(entry.path()) else { continue };
+                if !meta.is_file() {
+                    continue;
+                }
+                out.push((in_folder(&folder, &name), stamp_of(&meta)));
             }
         }
-        Ok(out)
+        folders.sort();
+        Ok((out, folders))
+    }
+
+    /// UX-30: las carpetas de la última vuelta (y las creadas desde entonces).
+    pub fn folders(&self) -> &[String] {
+        &self.folders
+    }
+
+    /// UX-30: crea una carpeta (relativa; se sanea). Devuelve su nombre final.
+    pub fn make_folder(&mut self, folder: &str) -> std::io::Result<String> {
+        let f = clean_folder(folder);
+        if f.is_empty() {
+            return Ok(f);
+        }
+        std::fs::create_dir_all(rel_path(&self.dir, &f))?;
+        let mut acc = String::new();
+        for part in f.split('/') {
+            acc = in_folder(&acc, part);
+            if !self.folders.contains(&acc) {
+                self.folders.push(acc.clone());
+            }
+        }
+        self.folders.sort();
+        Ok(f)
     }
 
     /// Una vuelta: lo que cambió desde la anterior. En la primera vuelta todo se lee enseguida (el
@@ -313,7 +409,8 @@ impl NotesDir {
         if !self.dir.is_dir() {
             return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "la carpeta de notas no está"));
         }
-        let listing = self.list()?;
+        let (listing, folders) = self.list()?;
+        self.folders = folders;
         let first = std::mem::replace(&mut self.first, false);
         let mut changed = Vec::new();
         let mut present = HashSet::new();
@@ -373,9 +470,10 @@ impl NotesDir {
         Ok(out)
     }
 
-    fn unique_name(&self, stem: &str, current: Option<&str>) -> String {
+    fn unique_name(&self, folder: &str, stem: &str, current: Option<&str>) -> String {
         for i in 1..=999u32 {
-            let name = if i == 1 { format!("{stem}.md") } else { format!("{stem} ({i}).md") };
+            let file = if i == 1 { format!("{stem}.md") } else { format!("{stem} ({i}).md") };
+            let name = in_folder(folder, &file);
             if Some(name.as_str()) == current {
                 return name;
             }
@@ -384,11 +482,12 @@ impl NotesDir {
                 return name;
             }
         }
-        format!("{stem} ({}).md", Utc::now().timestamp_millis())
+        in_folder(folder, &format!("{stem} ({}).md", Utc::now().timestamp_millis()))
     }
 
     /// ¿El nombre actual ya corresponde al título (`stem.md` o `stem (n).md`)?
     fn name_fits(current: &str, stem: &str) -> bool {
+        let current = base_name(current);
         let Some(base) = current.strip_suffix(".md").or_else(|| current.strip_suffix(".MD")) else { return false };
         if base == stem {
             return true;
@@ -401,10 +500,12 @@ impl NotesDir {
 
     /// Escribe una nota. `current`: su archivo actual; `base`: la huella que tenía la última vez
     /// (si el disco ya no la tiene, alguien lo cambió fuera: [`WriteOutcome::Conflict`]). Si el
-    /// título cambió, el archivo se renombra.
+    /// título cambió, el archivo se renombra. `folder` (UX-30): la carpeta a la que va; `None` = la
+    /// que ya tiene (la raíz si es nueva).
     pub fn write(
         &mut self,
         current: Option<&str>,
+        folder: Option<&str>,
         stem: &str,
         content: &str,
         base: Option<&str>,
@@ -429,13 +530,16 @@ impl NotesDir {
                 }
             }
         }
+        let here = current.map(folder_of).unwrap_or("");
+        let there = folder.map(clean_folder).unwrap_or_else(|| here.to_string());
         let target = match current {
-            Some(cur) if Self::name_fits(cur, stem) => cur.to_string(),
-            _ => self.unique_name(stem, current),
+            Some(cur) if there == here && Self::name_fits(cur, stem) => cur.to_string(),
+            _ => self.unique_name(&there, stem, current),
         };
+        std::fs::create_dir_all(rel_path(&self.dir, &there))?;
         let path = self.path_of(&target);
         // Primero a un temporal oculto y luego se renombra: un lector nunca ve medio archivo.
-        let tmp = self.path_of(&format!(".{target}.iuredesk-tmp"));
+        let tmp = self.path_of(&in_folder(&there, &format!(".{}.iuredesk-tmp", base_name(&target))));
         std::fs::write(&tmp, content.as_bytes())?;
         if let Err(e) = std::fs::rename(&tmp, &path) {
             let _ = std::fs::remove_file(&tmp);
@@ -479,6 +583,8 @@ pub enum Cmd {
     Write {
         id: NoteId,
         current: Option<String>,
+        /// UX-30: carpeta de destino (`None` = la que ya tiene).
+        folder: Option<String>,
         stem: String,
         content: String,
         base: Option<String>,
@@ -488,6 +594,8 @@ pub enum Cmd {
         name: String,
         base: Option<String>,
     },
+    /// UX-30: crear una carpeta.
+    MakeFolder(String),
     /// Responde [`Evt::Flushed`] tras una vuelta completa.
     Flush(u64),
     Stop,
@@ -520,6 +628,13 @@ pub enum Evt {
     /// La carpeta no está (unidad sin montar, borrada…).
     Unavailable(String),
     Flushed(u64),
+    /// UX-30: las carpetas cambiaron.
+    Folders(Vec<String>),
+    /// UX-30: no se pudo crear una carpeta.
+    FolderFailed {
+        folder: String,
+        error: String,
+    },
 }
 
 /// Hilo que hace todo el trabajo de disco de la carpeta de notas.
@@ -555,11 +670,19 @@ impl Worker {
                 }
             };
             let mut unavailable = false;
+            let mut last_folders: Option<Vec<String>> = None;
             let mut scan = |nd: &mut NotesDir, tx: &Sender<Evt>| -> bool {
                 match nd.scan() {
                     Ok(evs) => {
-                        let news = !evs.is_empty() || unavailable;
+                        let folders_changed = last_folders.as_deref() != Some(nd.folders());
+                        let news = !evs.is_empty() || unavailable || folders_changed;
                         unavailable = false;
+                        if folders_changed {
+                            last_folders = Some(nd.folders().to_vec());
+                            if tx.send(Evt::Folders(nd.folders().to_vec())).is_err() {
+                                return false;
+                            }
+                        }
                         for e in evs {
                             if tx.send(Evt::Fs(e)).is_err() {
                                 return false;
@@ -599,8 +722,9 @@ impl Worker {
                         wake();
                         ok
                     }
-                    Ok(Cmd::Write { id, current, stem, content, base, updated }) => {
-                        let r = match nd.write(current.as_deref(), &stem, &content, base.as_deref()) {
+                    Ok(Cmd::Write { id, current, folder, stem, content, base, updated }) => {
+                        let r = match nd.write(current.as_deref(), folder.as_deref(), &stem, &content, base.as_deref())
+                        {
                             Ok(WriteOutcome::Written { name, hash }) => Evt::Written { id, name, hash, updated },
                             Ok(WriteOutcome::Conflict { name, content, hash }) => {
                                 Evt::Conflict { id, name, content, hash }
@@ -614,6 +738,15 @@ impl Worker {
                     Ok(Cmd::Remove { name, base }) => {
                         let _ = nd.remove(&name, base.as_deref());
                         true
+                    }
+                    Ok(Cmd::MakeFolder(f)) => {
+                        let ev = match nd.make_folder(&f) {
+                            Ok(_) => Evt::Folders(nd.folders().to_vec()),
+                            Err(e) => Evt::FolderFailed { folder: f, error: e.to_string() },
+                        };
+                        let ok = evt_tx.send(ev).is_ok();
+                        wake();
+                        ok
                     }
                 };
                 if !ok {
@@ -743,23 +876,25 @@ mod tests {
     fn create_rename_delete() {
         let tmp = tempfile::tempdir().unwrap();
         let mut nd = NotesDir::new(tmp.path().join("Notas"), Vec::new());
-        let WriteOutcome::Written { name, hash } = nd.write(None, "Ideas", "# Ideas\n", None).unwrap() else {
+        let WriteOutcome::Written { name, hash } = nd.write(None, None, "Ideas", "# Ideas\n", None).unwrap() else {
             panic!("conflicto")
         };
         assert_eq!(name, "Ideas.md");
         assert_eq!(std::fs::read_to_string(nd.path_of("Ideas.md")).unwrap(), "# Ideas\n");
-        let WriteOutcome::Written { name: n2, .. } = nd.write(None, "Ideas", "otra", None).unwrap() else { panic!() };
+        let WriteOutcome::Written { name: n2, .. } = nd.write(None, None, "Ideas", "otra", None).unwrap() else {
+            panic!()
+        };
         assert_eq!(n2, "Ideas (2).md");
         // Mismo título: mismo archivo.
         let WriteOutcome::Written { name: same, hash: h2 } =
-            nd.write(Some(&name), "Ideas", "# Ideas\n\nmás", Some(&hash)).unwrap()
+            nd.write(Some(&name), None, "Ideas", "# Ideas\n\nmás", Some(&hash)).unwrap()
         else {
             panic!()
         };
         assert_eq!(same, "Ideas.md");
         // Título nuevo: se renombra.
         let WriteOutcome::Written { name: renamed, hash: h3 } =
-            nd.write(Some(&same), "Plan", "# Plan\n", Some(&h2)).unwrap()
+            nd.write(Some(&same), None, "Plan", "# Plan\n", Some(&h2)).unwrap()
         else {
             panic!()
         };
@@ -777,7 +912,9 @@ mod tests {
     fn external_change_is_debounced_and_picked_up() {
         let tmp = tempfile::tempdir().unwrap();
         let mut nd = NotesDir::new(tmp.path().to_path_buf(), Vec::new());
-        let WriteOutcome::Written { name, .. } = nd.write(None, "Ideas", "# Ideas\n", None).unwrap() else { panic!() };
+        let WriteOutcome::Written { name, .. } = nd.write(None, None, "Ideas", "# Ideas\n", None).unwrap() else {
+            panic!()
+        };
         assert!(nd.scan().unwrap().is_empty(), "la primera vuelta ve lo propio");
         std::fs::write(nd.path_of(&name), "# Ideas\n\nescrito en IureEditor que es más largo\n").unwrap();
         assert!(nd.scan().unwrap().is_empty(), "aún puede estar guardándose");
@@ -832,14 +969,91 @@ mod tests {
     fn conflict_keeps_disk_version() {
         let tmp = tempfile::tempdir().unwrap();
         let mut nd = NotesDir::new(tmp.path().to_path_buf(), Vec::new());
-        let WriteOutcome::Written { name, hash } = nd.write(None, "Ideas", "v1", None).unwrap() else { panic!() };
+        let WriteOutcome::Written { name, hash } = nd.write(None, None, "Ideas", "v1", None).unwrap() else { panic!() };
         std::fs::write(nd.path_of(&name), "v2 de IureEditor").unwrap();
-        let r = nd.write(Some(&name), "Ideas", "v2 de IureDesk", Some(&hash)).unwrap();
+        let r = nd.write(Some(&name), None, "Ideas", "v2 de IureDesk", Some(&hash)).unwrap();
         assert!(matches!(r, WriteOutcome::Conflict { ref content, .. } if content == "v2 de IureEditor"));
         assert_eq!(std::fs::read_to_string(nd.path_of(&name)).unwrap(), "v2 de IureEditor");
         // Borrar tampoco pisa lo de fuera.
         assert!(!nd.remove(&name, Some(&hash)).unwrap());
         assert!(nd.path_of(&name).exists());
+    }
+
+    /// UX-30: carpetas saneadas: nunca salen de la carpeta de notas ni pisan `img/`.
+    #[test]
+    fn folders_are_safe_relative_paths() {
+        assert_eq!(clean_folder(" Reuniones / 2026 "), "Reuniones/2026");
+        assert_eq!(clean_folder("../../etc"), "etc");
+        assert_eq!(clean_folder("/abs\\win\\path"), "abs/win/path");
+        assert_eq!(clean_folder("a:b*c"), "a b c");
+        assert_eq!(clean_folder("img"), "img_");
+        assert_eq!(clean_folder(&"x/".repeat(20)).split('/').count(), MAX_DEPTH);
+        assert_eq!(clean_folder("  /  "), "");
+        assert_eq!(folder_of("A/B/n.md"), "A/B");
+        assert_eq!(base_name("A/B/n.md"), "n.md");
+        assert_eq!(folder_of("n.md"), "");
+        let root = Path::new("/notas");
+        assert_eq!(rel_path(root, "../x/./y.md"), Path::new("/notas/x/y.md"));
+    }
+
+    /// UX-30: las notas de las subcarpetas se leen con su ruta; mover una nota de carpeta (aquí o
+    /// fuera) la sigue; `img/`, ocultas y enlaces simbólicos no son carpetas de notas.
+    #[test]
+    fn subfolders_are_scanned_and_moves_follow_the_note() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("Reuniones/2026")).unwrap();
+        std::fs::create_dir_all(root.join("img")).unwrap();
+        std::fs::create_dir_all(root.join(".ocultas")).unwrap();
+        std::fs::write(root.join("Reuniones/2026/Junta.md"), "# Junta\n").unwrap();
+        std::fs::write(root.join("img/no.md"), "x").unwrap();
+        std::fs::write(root.join(".ocultas/no.md"), "x").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&root, root.join("Reuniones/bucle")).unwrap();
+        let mut nd = NotesDir::new(root.clone(), Vec::new());
+        let evs = nd.scan().unwrap();
+        let names: Vec<_> = evs
+            .iter()
+            .filter_map(|e| match e {
+                FsEvent::Changed { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, vec!["Reuniones/2026/Junta.md"]);
+        assert_eq!(nd.folders(), ["Reuniones", "Reuniones/2026"]);
+        // Escribir en una carpeta (nueva) y moverla a otra con el mismo título.
+        let WriteOutcome::Written { name, hash } =
+            nd.write(None, Some("Clientes/Acme"), "Plan", "# Plan\n", None).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(name, "Clientes/Acme/Plan.md");
+        assert!(root.join("Clientes/Acme/Plan.md").is_file());
+        let WriteOutcome::Written { name: moved, .. } =
+            nd.write(Some(&name), Some(""), "Plan", "# Plan\n", Some(&hash)).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(moved, "Plan.md");
+        assert!(!root.join("Clientes/Acme/Plan.md").exists() && root.join("Plan.md").is_file());
+        // Movida fuera a otra carpeta: es un renombrado (mismo contenido).
+        nd.scan().unwrap();
+        std::fs::rename(root.join("Reuniones/2026/Junta.md"), root.join("Reuniones/Junta.md")).unwrap();
+        let mut seen = Vec::new();
+        for _ in 0..3 {
+            seen.extend(nd.scan().unwrap());
+        }
+        assert!(
+            seen.contains(&FsEvent::Renamed {
+                from: "Reuniones/2026/Junta.md".into(),
+                to: "Reuniones/Junta.md".into()
+            }),
+            "{seen:?}"
+        );
+        // Crear carpeta: se sanea y queda en la lista aunque esté vacía.
+        assert_eq!(nd.make_folder("Nueva/../Sub").unwrap(), "Nueva/Sub");
+        assert!(root.join("Nueva/Sub").is_dir());
+        assert!(nd.folders().contains(&"Nueva/Sub".to_string()) && nd.folders().contains(&"Nueva".to_string()));
     }
 
     #[test]
@@ -849,6 +1063,7 @@ mod tests {
         w.send(Cmd::Write {
             id: NoteId(1),
             current: None,
+            folder: None,
             stem: "Hola".into(),
             content: "# Hola\n".into(),
             base: None,

@@ -539,6 +539,37 @@ fn main() -> Result<(), String> {
         app.session.notes_fs_flush(Duration::from_secs(10));
         app.session.notes_fs_flush(Duration::from_secs(10));
     }
+    // UX-31: `--recorded-meeting` simula una reunión de una cita ya grabada (con `--notes-dir`, la carpeta
+    // «Reuniones/…» con minuta, resumen y transcripción).
+    if args.iter().any(|a| a == "--recorded-meeting") {
+        use iuredesk_engine::iuredesk_integrations::{DocKind, GeneratedDoc};
+        let from = app.session.zone().day_start(app.session.today());
+        let occ = app
+            .session
+            .visible_occurrences(from, from + chrono::Duration::days(1))
+            .into_iter()
+            .find(|o| o.summary == "Comité de socios");
+        if let Some(occ) = occ {
+            let meeting = app.meeting_for_tests(&occ);
+            let doc =
+                |kind, content: &str| GeneratedDoc { kind, path: "/tmp/reunion.md".into(), content: content.into() };
+            app.meeting_transcript_for_tests(&iuredesk_engine::suite::MeetingResult {
+                title: occ.summary.clone(),
+                text: "[00:00:01] Buenos días a todos.\n[00:00:09] Revisemos el presupuesto.".into(),
+                audio: "/home/laura/Grabaciones/2026-10-21 09-00 Comité de socios.wav".into(),
+                open_link: Some("iuretranscribe://open?path=%2Fhome%2Flaura%2FGrabaciones%2Freunion.wav".into()),
+                summary: Some(doc(DocKind::Summary, "Se revisó el presupuesto del trimestre.")),
+                minutes: Some(doc(
+                    DocKind::Minutes,
+                    "## Acuerdos\n\n- Contratar perito para el caso Ramírez.\n- Enviar propuesta a Altamira el viernes.",
+                )),
+                docs_problem: None,
+                meeting,
+            });
+            app.session.notes_fs_flush(Duration::from_secs(10));
+            app.session.notes_fs_flush(Duration::from_secs(10));
+        }
+    }
     if args.iter().any(|a| a == "--task-editor") {
         let lists = app.session.task_lists();
         let pick_task = lists

@@ -449,12 +449,20 @@ fn preview_follows_the_file() {
 }
 
 /// S1.4: mientras se graba hay una barra visible con el título y el tiempo; «Detener» la quita
-/// (sin proceso que detener no se queda en «Guardando»). La transcripción llega como nota de minuta.
+/// (sin proceso que detener no se queda en «Guardando»). UX-31: la reunión de una cita llega como
+/// carpeta «Reuniones/AAAA-MM-DD Título» con minuta, resumen y transcripción (cada una con las
+/// ligas a IureTranscribe y a la cita), y la grabación queda en la cita.
 #[test]
 fn recording_pill_and_minutes_note() {
+    use iuredesk_engine::iuredesk_integrations::{DocKind, GeneratedDoc};
+    use iuredesk_engine::suite::MeetingResult;
     let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
-    let mut h = harness(app(dir.path()));
+    let notes = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    a.session.notes_fs_for_tests(notes.path().to_path_buf(), Duration::from_millis(30));
+    assert!(a.session.notes_fs_flush(Duration::from_secs(10)));
+    let mut h = harness(a);
     settle(&mut h);
     h.state_mut().set_recording_for_tests("Comité de socios", 724.0);
     h.run_steps(3);
@@ -469,16 +477,80 @@ fn recording_pill_and_minutes_note() {
     }
     h.run_steps(3);
     assert!(h.query_by_label_contains("Grabando ·").is_none(), "la barra se fue");
+
+    // La cita «Comité de socios» del ejemplo, como al pulsar «Grabar» en ella.
+    let from = Zone::utc().day_start(chrono::NaiveDate::from_ymd_opt(2026, 10, 21).unwrap());
+    let occ = h
+        .state_mut()
+        .session
+        .visible_occurrences(from, from + chrono::Duration::days(1))
+        .into_iter()
+        .find(|o| o.summary == "Comité de socios")
+        .unwrap();
+    let meeting = h.state().meeting_for_tests(&occ);
+    assert_eq!(meeting.meta.title, "Comité de socios");
+    assert!(meeting.meta.date.starts_with("2026-10-21"), "{}", meeting.meta.date);
+    let uid = meeting.event.as_ref().unwrap().uid.clone();
+    let doc = |kind, content: &str| GeneratedDoc { kind, path: "/tmp/reunion_x.md".into(), content: content.into() };
     let before = h.state().session.notes().len();
-    h.state_mut().meeting_transcript_for_tests("Comité de socios", "[00:00:01] Buenos días a todos.");
+    h.state_mut().meeting_transcript_for_tests(&MeetingResult {
+        title: "Comité de socios".into(),
+        text: "[00:00:01] Buenos días a todos.".into(),
+        audio: "/tmp/reunion.wav".into(),
+        open_link: Some("iuretranscribe://open?path=%2Ftmp%2Freunion.wav".into()),
+        summary: Some(doc(DocKind::Summary, "# Resumen\n\nSe revisó el presupuesto.")),
+        minutes: Some(doc(DocKind::Minutes, "# Minuta\n\n- Acuerdo: contratar perito.")),
+        docs_problem: None,
+        meeting,
+    });
     settle(&mut h);
+    assert!(h.state_mut().session.notes_fs_flush(Duration::from_secs(10)));
     let s = &h.state().session;
-    assert_eq!(s.notes().len(), before + 1);
+    assert_eq!(s.notes().len(), before + 3);
+    let folder = "Reuniones/2026-10-21 Comité de socios";
+    assert_eq!(s.notes_folder_view(), folder);
     let id = s.note_focus().unwrap();
     let n = s.notes().into_iter().find(|n| n.id == id).unwrap();
-    assert_eq!(n.title, "Minuta — Comité de socios");
-    assert!(n.body.contains("Buenos días a todos") && n.body.contains("/tmp/reunion.wav"), "{}", n.body);
+    assert_eq!(n.title, "Minuta — Comité de socios", "queda abierta la minuta");
+    assert!(n.body.contains("contratar perito") && n.body.contains("/tmp/reunion.wav"), "{}", n.body);
+    assert!(n.body.contains("(iuretranscribe://open?path=%2Ftmp%2Freunion.wav)"), "liga a IureTranscribe");
+    assert!(n.body.contains("(iuredesk://event/"), "liga a la cita");
+    assert_eq!(s.note_folder(&n), folder);
+    for f in ["Minuta — Comité de socios.md", "Resumen — Comité de socios.md", "Transcripción — Comité de socios.md"]
+    {
+        assert!(notes.path().join(folder).join(f).is_file(), "{f}");
+    }
     assert_eq!(s.module, Module::Notes);
+    let rec = s.event_recordings(&uid);
+    assert_eq!(rec.len(), 1);
+    assert_eq!(rec[0].notes_folder.as_deref(), Some(folder));
+    assert!(h.query_all_by_label_contains("Minuta, resumen y transcripción guardados en").next().is_some(), "el aviso");
+}
+
+/// UX-31: sin IA en IureTranscribe, la transcripción se guarda igual y el aviso dice por qué no hay
+/// minuta.
+#[test]
+fn meeting_without_minutes_says_why() {
+    use iuredesk_engine::suite::{MeetingInfo, MeetingResult};
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(app(dir.path()));
+    settle(&mut h);
+    h.state_mut().meeting_transcript_for_tests(&MeetingResult {
+        title: "Llamada".into(),
+        text: "hola".into(),
+        audio: "/tmp/llamada.wav".into(),
+        open_link: None,
+        summary: None,
+        minutes: None,
+        docs_problem: Some(iuredesk_engine::lang::Text::new("Set your key.", "Configura tu llave de OpenRouter.")),
+        meeting: MeetingInfo::default(),
+    });
+    settle(&mut h);
+    let s = &h.state().session;
+    let n = s.notes().into_iter().find(|n| Some(n.id) == s.note_focus()).unwrap();
+    assert_eq!(n.title, "Transcripción — Llamada");
+    assert!(h.query_all_by_label_contains("Sin minuta: Configura tu llave de OpenRouter.").next().is_some());
 }
 
 /// IureEditor en las notas: Ctrl+clic en `[[Título]]` abre esa nota; si no existe, la crea con ese

@@ -333,9 +333,17 @@ impl DeskApp {
         self.suite.hub.recording().is_some()
     }
 
-    /// S1.4: llegó la transcripción de una reunión grabada (pruebas).
-    pub fn meeting_transcript_for_tests(&mut self, title: &str, text: &str) {
-        crate::recording_ui::on_transcript(self, title, text, std::path::Path::new("/tmp/reunion.wav"));
+    /// S1.4/UX-31: llegó la reunión grabada (pruebas).
+    pub fn meeting_transcript_for_tests(&mut self, m: &iuredesk_engine::suite::MeetingResult) {
+        crate::recording_ui::on_transcript(self, m);
+    }
+
+    /// UX-31: los datos de reunión de una cita, como al pulsar «Grabar» en ella (pruebas).
+    pub fn meeting_for_tests(
+        &self,
+        occ: &iuredesk_engine::calendar::Occurrence,
+    ) -> iuredesk_engine::suite::MeetingInfo {
+        crate::recording_ui::meeting_for(self, occ)
     }
 
     /// S1.24: lo mismo que pulsar un nodo con enlace de un diagrama (pruebas).

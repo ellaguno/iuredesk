@@ -55,6 +55,8 @@ pub use iuredesk_mcp;
 pub use iuredesk_pim_sync::SeriesScope;
 /// F5.3: reglas, Sieve, posponer, seguimiento, Enfocados/Otros.
 pub use iuredesk_rules;
+/// UX-31: grabación de una reunión guardada en su cita.
+pub use iuredesk_store::EventRecording;
 pub use iuredesk_sync;
 pub use lang::{Text, pick};
 pub use prefs::{ContextLayout, DensityPref, MicrosoftOrg, MindmapLayout, Prefs, ShortcutScheme, StartPref, ThemePref};

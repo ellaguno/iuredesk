@@ -1313,7 +1313,10 @@ impl Session {
             }
             "contacts.edit" => Ok(Outcome::Assist("contacts.edit".into())),
             // «Nuevo» en Notas es una nota.
-            "mail.new" | "notes.new" if self.module == Module::Notes || base == "notes.new" => self.new_note(),
+            "mail.new" | "notes.new" if self.module == Module::Notes || base == "notes.new" => {
+                let folder = self.notes_folder_view().to_string();
+                self.new_note_in(&folder)
+            }
             "mail.new" => {
                 let account = match self.folder {
                     FolderSel::Folder(f) => self.folder(f).map(|f| f.account),

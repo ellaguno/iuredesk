@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use iuredesk_model::{Note, NoteFile, NoteId};
 
 use super::notes::{NoteUndo, note_title};
-use super::{Inverse, Notice, NoticeKind, Session, store_err};
+use super::{Inverse, Notice, NoticeKind, Outcome, Session, store_err};
 use crate::Result;
 use crate::lang::{Text, pick};
 use crate::notes_fs::{self, Cmd, Evt, FsEvent, Worker};
@@ -33,6 +33,13 @@ pub(crate) struct NotesFs {
     copies: HashMap<NoteId, NoteId>,
     /// Pruebas: vuelta más rápida.
     poll: Option<Duration>,
+    /// UX-30: carpeta a la que va cada nota que se movió (o se creó en una carpeta) y aún no se
+    /// escribió allí.
+    moves: HashMap<NoteId, String>,
+    /// UX-30: las subcarpetas de la carpeta de notas.
+    folders: Vec<String>,
+    /// UX-30: la carpeta que se está viendo (ahí van las notas nuevas).
+    view: String,
 }
 
 /// Resultado de guardar desde el editor de la app.
@@ -170,6 +177,9 @@ impl Session {
             Evt::Fs(ev) => self.apply_fs_event(ev),
             Evt::Written { id, name, hash, updated } => {
                 self.notes_fs.inflight.remove(&id);
+                if self.notes_fs.moves.get(&id).is_some_and(|f| f == notes_fs::folder_of(&name)) {
+                    self.notes_fs.moves.remove(&id);
+                }
                 match self.store.get_note(id).ok().flatten() {
                     Some(mut n) => {
                         n.file = Some(NoteFile { name, hash, synced: updated });
@@ -215,6 +225,20 @@ impl Session {
                 self.data_gen = self.data_gen.wrapping_add(1);
             }
             Evt::Flushed(_) => {}
+            Evt::Folders(v) => {
+                if self.notes_fs.folders != v {
+                    self.notes_fs.folders = v;
+                    self.data_gen = self.data_gen.wrapping_add(1);
+                }
+            }
+            Evt::FolderFailed { folder, error } => {
+                self.notes_fs.folders.retain(|f| f != &folder);
+                self.data_gen = self.data_gen.wrapping_add(1);
+                self.notices.push(Notice::error(Text::new(
+                    format!("The folder «{folder}» could not be created ({error})."),
+                    format!("No se pudo crear la carpeta «{folder}» ({error})."),
+                )));
+            }
         }
     }
 
@@ -361,13 +385,17 @@ impl Session {
             return;
         }
         for n in self.store.notes().unwrap_or_default().into_iter().take(10_000) {
-            if !is_dirty(&n) || !has_text(&n) || self.notes_fs.inflight.contains(&n.id) {
+            let folder = self.notes_fs.moves.get(&n.id).cloned();
+            let moving =
+                folder.as_deref().is_some_and(|f| n.file.as_ref().is_none_or(|x| notes_fs::folder_of(&x.name) != f));
+            if !(is_dirty(&n) || moving) || !has_text(&n) || self.notes_fs.inflight.contains(&n.id) {
                 continue;
             }
             self.notes_fs.inflight.insert(n.id);
             let cmd = Cmd::Write {
                 id: n.id,
                 current: n.file.as_ref().map(|f| f.name.clone()),
+                folder,
                 stem: notes_fs::file_stem(&note_title(&n)),
                 content: render_note(&n),
                 base: n.file.as_ref().map(|f| f.hash.clone()),
@@ -439,7 +467,88 @@ impl Session {
         }
         let n = self.store.get_note(id).ok().flatten()?;
         let f = n.file.filter(|f| f.synced >= n.updated)?;
-        Some(dir.join(f.name))
+        Some(notes_fs::rel_path(&dir, &f.name))
+    }
+
+    /// UX-30: la carpeta en disco de una nota (donde están sus imágenes, `img/`).
+    pub fn note_dir_of(&self, id: NoteId) -> Option<PathBuf> {
+        let dir = self.notes_dir()?;
+        let n = self.store.get_note(id).ok().flatten()?;
+        Some(notes_fs::rel_path(&dir, &self.note_folder(&n)))
+    }
+
+    /// UX-30: la carpeta de una nota (`""` = la raíz): a la que se está moviendo o la de su archivo.
+    pub fn note_folder(&self, n: &Note) -> String {
+        match self.notes_fs.moves.get(&n.id) {
+            Some(f) => f.clone(),
+            None => n.file.as_ref().map(|f| notes_fs::folder_of(&f.name).to_string()).unwrap_or_default(),
+        }
+    }
+
+    /// UX-30: todas las carpetas de notas (las de disco, las de las notas y las que se están
+    /// creando), ordenadas y sin repetir.
+    pub fn note_folders(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.notes_fs.folders.clone();
+        for n in self.store.notes().unwrap_or_default().iter().take(10_000) {
+            let f = self.note_folder(n);
+            let mut acc = String::new();
+            for part in f.split('/').filter(|p| !p.is_empty()) {
+                acc = notes_fs::in_folder(&acc, part);
+                v.push(acc.clone());
+            }
+        }
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    /// UX-30: la carpeta de notas que se está viendo (`""` = la raíz).
+    pub fn notes_folder_view(&self) -> &str {
+        &self.notes_fs.view
+    }
+
+    /// UX-30: entra en una carpeta de notas (ahí irán las notas nuevas).
+    pub fn set_notes_folder_view(&mut self, folder: &str) {
+        self.notes_fs.view = notes_fs::clean_folder(folder);
+    }
+
+    /// UX-30: crea una carpeta de notas (`parent` = dónde; `name` se sanea). Devuelve su ruta.
+    pub fn create_note_folder(&mut self, parent: &str, name: &str) -> Option<String> {
+        let f = notes_fs::clean_folder(&notes_fs::in_folder(parent, name));
+        if f.is_empty() || self.notes_fs.worker.is_none() {
+            return None;
+        }
+        if !self.notes_fs.folders.contains(&f) {
+            self.notes_fs.folders.push(f.clone());
+            self.notes_fs.folders.sort();
+        }
+        self.send_notes(Cmd::MakeFolder(f.clone()));
+        self.data_gen = self.data_gen.wrapping_add(1);
+        Some(f)
+    }
+
+    /// UX-30: mueve una nota a otra carpeta (con deshacer). El archivo se mueve al escribirse.
+    pub fn move_note_to_folder(&mut self, id: NoteId, folder: &str) -> Result<Outcome> {
+        let n = self.store.get_note(id).map_err(store_err)?.ok_or(crate::EngineError::NoSelection)?;
+        let from = self.note_folder(&n);
+        let to = notes_fs::clean_folder(folder);
+        if from == to {
+            return Ok(Outcome::Done);
+        }
+        self.set_note_folder(id, &to);
+        let text = Text::new(
+            format!("Moved to {}", if to.is_empty() { "Notes".to_string() } else { to.clone() }),
+            format!("Movida a {}", if to.is_empty() { "Notas".to_string() } else { to.clone() }),
+        );
+        self.push_undo(text.clone(), vec![(Inverse::Note(Box::new(NoteUndo::Folder { id, folder: from })), None)]);
+        Ok(Outcome::Notice(Notice { kind: NoticeKind::Success, text, undo: true, secs: None }))
+    }
+
+    /// UX-30: pone la carpeta de destino de una nota (sin deshacer; lo usan mover y deshacer).
+    pub(crate) fn set_note_folder(&mut self, id: NoteId, folder: &str) {
+        self.notes_fs.moves.insert(id, notes_fs::clean_folder(folder));
+        self.data_gen = self.data_gen.wrapping_add(1);
+        self.notes_reconcile();
     }
 }
 
