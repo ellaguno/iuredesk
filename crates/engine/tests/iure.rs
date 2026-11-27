@@ -89,6 +89,7 @@ fn route(f: &Fake, req: &str) -> (u16, String) {
         "/api/plugins/tickets/t1/comments" => (201, r#"{"comment":{"id":"k1","content":"x","is_internal":true}}"#.into()),
         "/api/notifications" => (200, r#"{"notifications":[{"id":"n1","type":"deadline","title":"Plazo","is_read":false,"created_at":"2026-10-21T10:00:00Z"}],"unread_count":1}"#.into()),
         "/api/calendar-events" => (200, r#"{"events":[{"id":"e1","title":"Audiencia","start_datetime":"2026-10-22T16:00:00Z","end_datetime":"2026-10-22T17:00:00Z","event_type":"court"}],"total":1}"#.into()),
+        "/api/system-settings/terminology" => (200, r#"{"terminology":{"case":"expediente","cases":"expedientes","client":"cliente","clients":"clientes"}}"#.into()),
         "/api/tasks" => (200, r#"{"tasks":[{"id":"k5","title":"Escrito","status":"pending","due_date":"2026-10-23"}],"pagination":{"total":1}}"#.into()),
         _ => (404, r#"{"error":"no existe"}"#.into()),
     }
@@ -285,4 +286,20 @@ fn without_iurefficient_the_panel_is_hidden() {
     let id = some_message(&mut s);
     assert_eq!(*s.iure_status(), IureStatus::Disabled);
     assert!(!s.iure_panel(id).visible());
+}
+
+/// UX-32: la interfaz llama a los casos como la instancia («Expediente»); sin instancia,
+/// «Proyecto».
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn case_terms_come_from_the_instance() {
+    iuredesk_engine::lang::set_lang(iuredesk_engine::lang::Lang::Es);
+    let port = serve(Arc::new(Fake::default())).await;
+    let dir = tempfile::tempdir().unwrap();
+    tokio::task::block_in_place(|| {
+        let mut s = session(dir.path());
+        assert_eq!(s.case_terms(), ("Proyecto".to_string(), "Proyectos".to_string()), "sin instancia");
+        start(&mut s, port);
+        wait(&mut s, "terminología", |s| s.case_terms().0 == "Expediente");
+        assert_eq!(s.case_terms().1, "Expedientes");
+    });
 }

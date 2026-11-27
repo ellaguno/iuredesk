@@ -197,7 +197,9 @@ impl Handler for Fake {
                     return Err(CallError::Tool(anyhow::anyhow!("Ya hay una grabación en curso.")));
                 }
                 *r = Some(false);
-                Ok(Reply::Data(json!({"path": "/tmp/grabaciones/reunion.wav", "active": true})))
+                // Como la 0.8.7: el audio se llama como la reunión.
+                let name = if s(a, "title").is_empty() { "reunion".to_string() } else { s(a, "title").to_string() };
+                Ok(Reply::Data(json!({"path": format!("/tmp/grabaciones/{name}.wav"), "active": true})))
             }
             "recording_status" => {
                 let r = *self.recording.lock().unwrap_or_else(|e| e.into_inner());

@@ -494,8 +494,8 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
     c(
         "tasks.view.case",
-        "Tasks: by case",
-        "Tareas: por caso",
+        "Tasks: by project",
+        "Tareas: por proyecto",
         "outline",
         Group::App,
         "tasks case project tareas caso proyecto plan agrupar",

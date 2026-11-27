@@ -469,7 +469,10 @@ fn projects_card_shows_your_cases() {
     settle(&mut h);
     assert_eq!(h.state().session.module, Module::Tasks);
     assert_eq!(h.state().session.task_view(), TaskView::ByCase);
-    assert!(h.query_all_by_label("Por caso").next().is_some(), "la vista «Por caso»");
+    assert!(
+        h.query_all_by_label("Por proyecto").next().is_some(),
+        "la vista «Por proyecto» (sin terminología de la instancia)"
+    );
 
     // Sin IureProject: los casos se ven, sin botón.
     let dir2 = tempfile::tempdir().unwrap();

@@ -77,8 +77,8 @@ fn fake_suite(app: SisterApp) -> Suite {
 #[test]
 fn grabar_una_reunion() {
     let s = fake_suite(SisterApp::Transcribe);
-    let mut rec = s.start_recording().unwrap().ready().unwrap();
-    assert_eq!(rec.path, Path::new("/tmp/grabaciones/reunion.wav"));
+    let mut rec = s.start_recording("Junta").unwrap().ready().unwrap();
+    assert_eq!(rec.path, Path::new("/tmp/grabaciones/Junta.wav"), "el audio se llama como la reunión");
     let st = rec.status().unwrap();
     assert!(st.active && !st.paused && st.elapsed_secs > 12.0);
     assert_eq!(st.mic_level, 1.0, "niveles acotados a 0–1");
@@ -87,7 +87,7 @@ fn grabar_una_reunion() {
     let done = rec.stop().unwrap();
     assert_eq!(done.path, Path::new("/tmp/grabaciones/reunion.wav"));
     assert_eq!(done.duration_secs, 12.5);
-    assert!(matches!(Suite::empty().start_recording().unwrap(), Outcome::NotInstalled(_)));
+    assert!(matches!(Suite::empty().start_recording("x").unwrap(), Outcome::NotInstalled(_)));
 }
 
 /// BUG-RECOLD (dueño 2026-11-26): «Grabar» con IureTranscribe 0.8.5, que aún no graba por MCP,
@@ -95,7 +95,7 @@ fn grabar_una_reunion() {
 #[test]
 fn grabar_con_iuretranscribe_sin_grabacion_pide_actualizarlo() {
     let s = Suite::empty().with_app(SisterApp::Transcribe, FAKE).with_mcp_options(opts(Some("no-recording")));
-    let Outcome::NotAvailable(t) = s.start_recording().unwrap() else { panic!("debería no estar disponible") };
+    let Outcome::NotAvailable(t) = s.start_recording("Junta").unwrap() else { panic!("debería no estar disponible") };
     assert!(t.get(true).contains("Actualiza IureTranscribe") && t.get(true).contains("0.0.1"), "{}", t.get(true));
 }
 

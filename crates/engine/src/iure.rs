@@ -546,7 +546,7 @@ impl TargetKind {
     /// Nombre para la interfaz.
     pub fn label(self) -> Text {
         match self {
-            TargetKind::Case => Text::new("Case", "Caso"),
+            TargetKind::Case => Text::new("Project", "Proyecto"),
             TargetKind::Client => Text::new("Client", "Cliente"),
             TargetKind::Lead => Text::new("Lead", "Lead"),
             TargetKind::Opportunity => Text::new("Opportunity", "Oportunidad"),
@@ -559,8 +559,8 @@ impl TargetKind {
     pub fn link_effect(self) -> Text {
         match self {
             TargetKind::Case => Text::new(
-                "Saves a copy of the email (text) as a document of the case.",
-                "Guarda una copia del correo (texto) como documento del caso.",
+                "Saves a copy of the email (text) as a document of the project.",
+                "Guarda una copia del correo (texto) como documento del proyecto.",
             ),
             TargetKind::Client => Text::new(
                 "Saves a copy of the email (text) as a document of the client.",
@@ -978,6 +978,48 @@ pub async fn fetch_feed(sess: &Session) -> Result<Feed, IureError> {
 }
 
 /// Marca leído un aviso o una mención.
+/// UX-33: sube una nota (Markdown) a un proyecto (documento) o a una oportunidad (adjunto).
+pub async fn upload_note(
+    sess: &Session,
+    target: &LinkTarget,
+    title: &str,
+    file_name: &str,
+    bytes: Vec<u8>,
+) -> Result<(), IureError> {
+    match target.kind {
+        TargetKind::Case => {
+            let o = UploadOptions {
+                title: Some(clip(title, 200)),
+                document_type: Some("other".into()),
+                tags: vec!["nota".into()],
+                case_id: Some(target.id.clone()),
+                ..Default::default()
+            };
+            call(api::upload_document_bytes(sess, bytes, file_name, &o)).await?;
+        }
+        TargetKind::Opportunity => {
+            call(api::crm_attach_bytes(sess, CrmKind::Opportunity, &target.id, bytes, file_name)).await?;
+        }
+        _ => {
+            return Err(IureError::Server(Text::new(
+                "A note can only be uploaded to a project or an opportunity.",
+                "Una nota solo se puede subir a un proyecto o a una oportunidad.",
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// UX-32: cómo llama la instancia a los casos (singular, plural), acotado y sin vacíos.
+pub async fn case_terms(sess: &Session) -> Result<(String, String), IureError> {
+    let t = call(api::terminology(sess)).await?;
+    let clean = |s: &str, d: &str| {
+        let s: String = s.trim().chars().filter(|c| !c.is_control()).take(40).collect();
+        if s.is_empty() { d.to_string() } else { s }
+    };
+    Ok((clean(&t.case, "proyecto"), clean(&t.cases, "proyectos")))
+}
+
 pub async fn mark_read(sess: &Session, mention: bool, id: &str) -> Result<(), IureError> {
     if mention {
         call(pim::mark_mention_read(sess, id)).await

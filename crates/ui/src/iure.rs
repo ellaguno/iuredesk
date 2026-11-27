@@ -16,10 +16,32 @@ use crate::app::DeskApp;
 
 /// Diálogo abierto.
 pub enum Dialog {
-    Link { msg: MessageId, query: String, picked: Option<LinkTarget>, opts: LinkOptions },
-    Lead { msg: MessageId, form: Option<LeadForm>, picked: usize },
-    Ticket { msg: MessageId, form: TicketForm },
-    Task { msg: MessageId, form: TaskForm, due_text: String },
+    Link {
+        msg: MessageId,
+        query: String,
+        picked: Option<LinkTarget>,
+        opts: LinkOptions,
+    },
+    Lead {
+        msg: MessageId,
+        form: Option<LeadForm>,
+        picked: usize,
+    },
+    Ticket {
+        msg: MessageId,
+        form: TicketForm,
+    },
+    Task {
+        msg: MessageId,
+        form: TaskForm,
+        due_text: String,
+    },
+    /// UX-33: subir una nota a un proyecto u oportunidad.
+    Note {
+        note: iuredesk_model::NoteId,
+        query: String,
+        picked: Option<LinkTarget>,
+    },
 }
 
 /// Estado de la interfaz de Iurefficient.
@@ -246,7 +268,7 @@ pub fn panel(app: &mut DeskApp, ui: &mut Ui, id: MessageId, p: &IurePanel) {
             let plans = crate::today_projects::plans_for_case(app, &case.id);
             card(ui, |ui| {
                 ui.horizontal(|ui| {
-                    badge(ui, pick("Case", "Caso"), BadgeKind::Accent);
+                    badge(ui, &app.session.case_terms().0, BadgeKind::Accent);
                     ui.add(egui::Label::new(RichText::new(&case.title).strong().color(c.text)).truncate());
                 });
                 if let Some(s) = &case.subtitle {
@@ -379,6 +401,7 @@ pub fn dialogs(app: &mut DeskApp, ctx: &Context) {
         Dialog::Lead { .. } => pick("Create lead", "Crear lead"),
         Dialog::Ticket { .. } => pick("Create ticket", "Crear ticket"),
         Dialog::Task { .. } => pick("Create task", "Crear tarea"),
+        Dialog::Note { .. } => pick("Upload to Iurefficient", "Subir a Iurefficient"),
     };
     egui::Window::new(title)
         .id(egui::Id::unique("iure-dialog"))
@@ -391,7 +414,7 @@ pub fn dialogs(app: &mut DeskApp, ctx: &Context) {
             let c = theme::colors(ui);
             match &mut d {
                 Dialog::Link { msg, query, picked, opts } => {
-                    let l = ui.label(RichText::new(pick("Search a case, client, lead, opportunity or ticket", "Busca un caso, cliente, lead, oportunidad o ticket")).color(c.text_muted));
+                    let l = ui.label(RichText::new(pick("Search a project, client, lead, opportunity or ticket", "Busca un proyecto, cliente, lead, oportunidad o ticket")).color(c.text_muted));
                     let r = ui.add(egui::TextEdit::singleline(query).desired_width(f32::INFINITY).hint_text("241/2026, Acme, TK-…")).labelled_by(l.id);
                     if r.changed() {
                         app.session.iure_search_targets(query);
@@ -533,6 +556,84 @@ pub fn dialogs(app: &mut DeskApp, ctx: &Context) {
                         }
                     });
                 }
+                Dialog::Note { note, query, picked } => {
+                    let (one, _) = app.session.case_terms();
+                    let l = ui.label(
+                        RichText::new(format!(
+                            "{} {} {}",
+                            pick("Search a", "Busca un"),
+                            one.to_lowercase(),
+                            pick("or an opportunity", "o una oportunidad")
+                        ))
+                        .color(c.text_muted),
+                    );
+                    let r = ui
+                        .add(egui::TextEdit::singleline(query).desired_width(f32::INFINITY).hint_text("241/2026, Acme…"))
+                        .labelled_by(l.id);
+                    if r.changed() {
+                        app.session.iure_search_targets(query);
+                    }
+                    let (_, found, busy) = app.session.iure_targets();
+                    let found: Vec<LinkTarget> = found
+                        .iter()
+                        .filter(|t| matches!(t.kind, TargetKind::Case | TargetKind::Opportunity))
+                        .cloned()
+                        .collect();
+                    if busy {
+                        ui.add(egui::Spinner::new());
+                    }
+                    egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                        for t in &found {
+                            let sel = picked.as_ref().is_some_and(|p| p.id == t.id && p.kind == t.kind);
+                            let kind = if t.kind == TargetKind::Case { one.clone() } else { t.kind.label().get().to_string() };
+                            let r = ui.selectable_label(sel, format!("{kind} · {}", t.label));
+                            if let Some(dt) = &t.detail {
+                                ui.label(small(ui, dt));
+                            }
+                            if r.clicked() {
+                                *picked = Some(t.clone());
+                            }
+                        }
+                        if found.is_empty() && query.trim().chars().count() >= 2 && !busy {
+                            ui.label(small(ui, pick("Nothing found.", "No se encontró nada.")));
+                        }
+                    });
+                    if let Some(t) = picked.clone() {
+                        ui.separator();
+                        let effect = if t.kind == TargetKind::Case {
+                            format!(
+                                "{} {}.",
+                                pick("Uploads the note (Markdown) as a document of the", "Sube la nota (Markdown) como documento del"),
+                                one.to_lowercase()
+                            )
+                        } else {
+                            pick(
+                                "Attaches the note (Markdown) to the opportunity.",
+                                "Adjunta la nota (Markdown) a la oportunidad.",
+                            )
+                            .to_string()
+                        };
+                        ui.label(RichText::new(effect).color(c.text));
+                        ui.label(small(
+                            ui,
+                            pick(
+                                "Sent to your Iurefficient instance: the title and text of the note.",
+                                "Se envía a tu instancia de Iurefficient: el título y el texto de la nota.",
+                            ),
+                        ));
+                        ui.horizontal(|ui| {
+                            if ui.button(pick("Upload", "Subir")).clicked() {
+                                match app.session.iure_upload_note(*note, t.clone()) {
+                                    Ok(()) => close = true,
+                                    Err(e) => err = Some(e),
+                                }
+                            }
+                            if ui.button(pick("Cancel", "Cancelar")).clicked() {
+                                close = true;
+                            }
+                        });
+                    }
+                }
                 Dialog::Task { msg, form, due_text } => {
                     field(ui, pick("Title", "Título"), &mut form.title);
                     let l = ui.label(RichText::new(pick("Notes", "Notas")).color(c.text_muted));
@@ -564,7 +665,7 @@ pub fn dialogs(app: &mut DeskApp, ctx: &Context) {
                     }
                     if form.case_id.is_some() {
                         let mut keep = true;
-                        ui.checkbox(&mut keep, pick("In the case of this email", "En el caso de este correo"));
+                        ui.checkbox(&mut keep, pick("In the project of this email", "En el proyecto de este correo"));
                         if !keep {
                             form.case_id = None;
                         }

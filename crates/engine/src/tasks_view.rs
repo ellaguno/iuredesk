@@ -37,7 +37,7 @@ impl TaskView {
         match self {
             TaskView::List => pick("List", "Lista"),
             TaskView::Board => pick("Board", "Tablero"),
-            TaskView::ByCase => pick("By case", "Por caso"),
+            TaskView::ByCase => pick("By project", "Por proyecto"),
         }
     }
 }

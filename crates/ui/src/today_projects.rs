@@ -322,10 +322,13 @@ pub fn card(app: &mut DeskApp, ui: &mut Ui) {
     };
     let mut act = None;
     let follows = has_project && !app.session.prefs.projects.is_empty();
+    // UX-32: como la instancia llama a los casos («Proyecto» si no se sabe).
+    let terms = app.session.case_terms();
+    let by_case = crate::pim::by_case_label(app);
     let action = if follows {
         Some(pick("Open IureProject", "Abrir IureProject"))
     } else if !cases.is_empty() {
-        Some(pick("By case", "Por caso"))
+        Some(by_case.as_str())
     } else {
         None
     };
@@ -349,7 +352,7 @@ pub fn card(app: &mut DeskApp, ui: &mut Ui) {
         let c = theme::colors(ui);
         if !cases.is_empty() {
             ui.label(
-                RichText::new(pick("YOUR CASES", "TUS CASOS"))
+                RichText::new(format!("{} {}", pick("YOUR", "TUS"), terms.1.to_uppercase()))
                     .font(theme::semibold_font(ui.ctx(), theme::density(ui.ctx()).small_size()))
                     .color(c.text_muted),
             );
@@ -380,7 +383,11 @@ pub fn card(app: &mut DeskApp, ui: &mut Ui) {
                                         .truncate()
                                         .sense(egui::Sense::click()),
                                 )
-                                .on_hover_text(pick("See its tasks by case", "Ver sus tareas por caso"));
+                                .on_hover_text(format!(
+                                    "{} {}",
+                                    pick("See its tasks by", "Ver sus tareas por"),
+                                    terms.0.to_lowercase()
+                                ));
                             iurefficient_ui::a11y::button(&name, &l.case.title);
                             if name.hovered() {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -393,7 +400,13 @@ pub fn card(app: &mut DeskApp, ui: &mut Ui) {
                 });
             }
             if cases.len() > CASE_ROWS {
-                let more = format!("+{} {}", cases.len() - CASE_ROWS, pick("more cases", "casos más"));
+                let n = cases.len() - CASE_ROWS;
+                let many = terms.1.to_lowercase();
+                let more = if iuredesk_engine::lang::spanish() {
+                    format!("+{n} {many} más")
+                } else {
+                    format!("+{n} more {many}")
+                };
                 if ui.add(egui::Button::new(RichText::new(more).color(c.accent)).frame(false)).clicked() {
                     act = Some(Act::ByCase);
                 }

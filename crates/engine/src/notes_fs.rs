@@ -41,6 +41,13 @@ pub const MAX_DEPTH: usize = 6;
 pub const MAX_FOLDERS: usize = 1_000;
 /// UX-30: carpeta de las imágenes de cada carpeta de notas (no es una carpeta de notas).
 pub const IMAGES_DIR: &str = "img";
+/// UX-30: carpeta donde IureEditor guarda las imágenes pegadas (tampoco es de notas).
+pub const EDITOR_ASSETS_DIR: &str = "assets";
+
+/// ¿Es una carpeta de imágenes (`img/` de IureDesk, `assets/` de IureEditor)?
+pub fn is_images_dir(name: &str) -> bool {
+    name.eq_ignore_ascii_case(IMAGES_DIR) || name.eq_ignore_ascii_case(EDITOR_ASSETS_DIR)
+}
 
 /// UX-30: la carpeta de una nota por su nombre (`Reuniones/Junta.md` → `Reuniones`; en la raíz, `""`).
 pub fn folder_of(name: &str) -> &str {
@@ -67,7 +74,7 @@ pub fn clean_folder(folder: &str) -> String {
         .filter(|p| !p.is_empty() && *p != "." && *p != "..")
         .map(|p| {
             let s = file_stem(p);
-            if s.eq_ignore_ascii_case(IMAGES_DIR) { format!("{s}_") } else { s }
+            if is_images_dir(&s) { format!("{s}_") } else { s }
         })
         .take(MAX_DEPTH)
         .collect::<Vec<_>>()
@@ -358,7 +365,7 @@ impl NotesDir {
                 // Sin seguir enlaces simbólicos a carpetas: no hay ciclos ni se sale de la carpeta.
                 let Ok(kind) = entry.file_type() else { continue };
                 if kind.is_dir() {
-                    let skip = name.starts_with('.') || name.eq_ignore_ascii_case(IMAGES_DIR) || depth + 1 > MAX_DEPTH;
+                    let skip = name.starts_with('.') || is_images_dir(&name) || depth + 1 > MAX_DEPTH;
                     if !skip && folders.len() < MAX_FOLDERS {
                         let rel = in_folder(&folder, &name);
                         folders.push(rel.clone());
@@ -987,6 +994,7 @@ mod tests {
         assert_eq!(clean_folder("/abs\\win\\path"), "abs/win/path");
         assert_eq!(clean_folder("a:b*c"), "a b c");
         assert_eq!(clean_folder("img"), "img_");
+        assert_eq!(clean_folder("Assets"), "Assets_");
         assert_eq!(clean_folder(&"x/".repeat(20)).split('/').count(), MAX_DEPTH);
         assert_eq!(clean_folder("  /  "), "");
         assert_eq!(folder_of("A/B/n.md"), "A/B");
@@ -1007,6 +1015,8 @@ mod tests {
         std::fs::create_dir_all(root.join(".ocultas")).unwrap();
         std::fs::write(root.join("Reuniones/2026/Junta.md"), "# Junta\n").unwrap();
         std::fs::write(root.join("img/no.md"), "x").unwrap();
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        std::fs::write(root.join("assets/tampoco.md"), "x").unwrap();
         std::fs::write(root.join(".ocultas/no.md"), "x").unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(&root, root.join("Reuniones/bucle")).unwrap();

@@ -230,3 +230,27 @@ fn notes_sidebar_has_folders() {
     assert_eq!(h.state().session.notes_folder_view(), "");
     assert!(h.query_by_label("Reuniones").is_some(), "la carpeta en la principal");
 }
+
+/// UX-33: una nota se sube a un proyecto (o a una oportunidad) de Iurefficient desde su cabecera:
+/// la búsqueda solo ofrece proyectos y oportunidades, y al subirla llega el aviso.
+#[test]
+fn note_uploads_to_an_iurefficient_project() {
+    let _g = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = app(dir.path());
+    a.session.module = Module::Notes;
+    let mut h = harness(a);
+    settle(&mut h);
+    h.get_by_label("Subir a Iurefficient").click();
+    settle(&mut h);
+    h.get_by_label("Busca un proyecto o una oportunidad").click();
+    h.event(egui::Event::Text("altamira".into()));
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("Constructora Altamira S.A.").is_none(), "un cliente no se ofrece");
+    h.get_by_label_contains("Proyecto · 241/2026").click();
+    h.run_steps(2);
+    assert!(h.query_by_label_contains("como documento del proyecto").is_some());
+    h.get_by_label("Subir").click();
+    settle(&mut h);
+    assert!(h.query_all_by_label_contains("Nota subida a proyecto 241/2026").next().is_some(), "el aviso");
+}

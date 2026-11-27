@@ -122,10 +122,16 @@ Not available in the beta yet. If your company uses Microsoft 365, use "Sign in 
   isn't mounted, IureDesk takes you to IureDav.
 - **Record a meeting** (if you have IureTranscribe): click «● Record» on your next appointment in
   My day or search «Record meeting» in the palette (Ctrl+K). A bar at the top always shows it's
-  recording, with pause and «Stop»; when you stop, the recording is transcribed on your computer
-  and saved as a minutes note.
-- **Projects in My day**: with Iurefficient, at the top are **your cases** (those of your pending
-  tasks, overdue ones in red); click one to go to Tasks → «By case», at that case, and its
+  recording, with pause and «Stop». The audio is named after the meeting; when you stop,
+  IureTranscribe transcribes it on your computer and writes a summary and minutes, which arrive
+  in Notes in the folder «Meetings/date title», with links to the recording and the event (the
+  event remembers it too).
+- **Note folders**: the subfolders of your notes folder are folders; create one with the folder
+  icon, move notes with «Move to folder» (right click) and upload a note to an Iurefficient project
+  or opportunity with the cloud icon.
+- **Projects in My day**: with Iurefficient, at the top are **your projects** (named as your
+  instance names them; those of your pending tasks, overdue ones in red); the Iurefficient symbol
+  opens it on the web; click one to go to Tasks → «By project», at that project, and its
   «IureProject» button opens it there (its plan if you follow it; otherwise the case). If you have
   IureProject, follow your plans to see their progress, late tasks and next milestone without
   opening it; click a plan to open it there.

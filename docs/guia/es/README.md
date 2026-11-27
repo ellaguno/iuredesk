@@ -128,10 +128,15 @@ Microsoft».
   como adjunto. Si la unidad no está montada, IureDesk te lleva a IureDav.
 - **Grabar una reunión** (si tienes IureTranscribe): pulsa «● Grabar» en tu próxima cita de Mi
   día o busca «Grabar reunión» en la paleta (Ctrl+K). Arriba verás siempre que se está grabando,
-  con pausa y «Detener»; al detener, la grabación se transcribe en tu equipo y queda como nota
-  de minuta.
-- **Proyectos en Mi día**: con Iurefficient, arriba están **tus casos** (los de tus tareas
-  pendientes, con las vencidas en rojo); al pulsar uno vas a Tareas → «Por caso», a ese caso, y su
+  con pausa y «Detener». El audio se llama como la reunión; al detener, IureTranscribe lo
+  transcribe en tu equipo y redacta resumen y minuta, que llegan a Notas en la carpeta
+  «Reuniones/fecha título», con ligas a la grabación y a la cita (la cita también la recuerda).
+- **Carpetas de notas**: las subcarpetas de tu carpeta de notas son carpetas; crea una con el icono
+  de carpeta, mueve notas con «Mover a carpeta» (clic derecho) y sube una nota a un proyecto u
+  oportunidad de Iurefficient con el icono de la nube.
+- **Proyectos en Mi día**: con Iurefficient, arriba están **tus proyectos** (con el nombre que use
+  tu instancia; los de tus tareas pendientes, con las vencidas en rojo); el símbolo de Iurefficient
+  lo abre en la web; al pulsar uno vas a Tareas → «Por proyecto», a ese proyecto, y su
   botón «IureProject» lo abre allí (su plan, si lo sigues; si no, el expediente). Si tienes
   IureProject, sigue tus planes y verás su avance, las tareas atrasadas y el próximo hito sin
   abrirlo; al pulsar un plan se abre allí.

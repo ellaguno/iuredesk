@@ -52,8 +52,8 @@ fn f64_of(v: &Value, k: &str) -> f64 {
 
 impl Suite {
     /// Empieza a grabar con los ajustes de IureTranscribe. La grabación sigue mientras viva el
-    /// [`Recording`].
-    pub fn start_recording(&self) -> Result<Outcome<Recording>> {
+    /// [`Recording`]. `title` (UX-31): el nombre de la reunión; desde la 0.8.7 el audio se llama así.
+    pub fn start_recording(&self, title: &str) -> Result<Outcome<Recording>> {
         let mut client = match self.connect_mcp(SisterApp::Transcribe)? {
             Outcome::Ready(c) => c,
             Outcome::NotInstalled(h) => return Ok(Outcome::NotInstalled(h)),
@@ -72,7 +72,9 @@ impl Suite {
                 ),
             )));
         }
-        let data = client.call_tool("start_recording", json!({}), Some(TIMEOUT))?.into_ok()?.data().unwrap_or_default();
+        let title: String = title.trim().chars().take(300).collect();
+        let args = if title.is_empty() { json!({}) } else { json!({ "title": title }) };
+        let data = client.call_tool("start_recording", args, Some(TIMEOUT))?.into_ok()?.data().unwrap_or_default();
         let path = data.get("path").and_then(Value::as_str).map(PathBuf::from).unwrap_or_default();
         Ok(Outcome::Ready(Recording { client, path }))
     }

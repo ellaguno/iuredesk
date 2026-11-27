@@ -397,7 +397,7 @@ impl SuiteHub {
                             "Ya estás grabando.",
                         )))];
                     }
-                    match suite.start_recording() {
+                    match suite.start_recording(&title) {
                         Ok(SuiteOutcome::Ready(r)) => {
                             *lock(&recording) = Some(r);
                             *lock(&rec_state) = Some(RecordingState { title, meeting, ..Default::default() });

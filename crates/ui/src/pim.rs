@@ -682,6 +682,8 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
     let notes_dir = app.session.notes_dir();
     let dir_problem = app.session.notes_dir_problem().map(str::to_string);
     let editing = app.pim.note_editing;
+    let can_upload = app.session.iure_can_write();
+    let mut upload: Option<NoteId> = None;
     split::center(ui, PaneKind::Detail, |ui| {
         let c = theme::colors(ui);
         let Some(edit) = app.pim.note_edit.as_mut() else {
@@ -703,6 +705,18 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                 if icons::icon_button(ui, Icon::Trash, pick("Delete note", "Eliminar nota"), true).clicked() {
                     act = Some("notes.delete");
+                }
+                // UX-33: subir la nota a un proyecto u oportunidad de Iurefficient.
+                if can_upload
+                    && icons::icon_button(
+                        ui,
+                        Icon::CloudUp,
+                        pick("Upload to Iurefficient", "Subir a Iurefficient"),
+                        true,
+                    )
+                    .clicked()
+                {
+                    upload = Some(edit.id);
                 }
                 // S1.12: escribir aquí (Markdown con estilo) o ver la nota.
                 let toggle = if editing { pick("View", "Ver") } else { pick("Edit here", "Editar aquí") };
@@ -956,6 +970,10 @@ pub fn notes(app: &mut DeskApp, ui: &mut Ui) {
             app.run(&ctx, id);
         }
     });
+    if let Some(note) = upload {
+        flush_note(app);
+        app.iure.dialog = Some(crate::iure::Dialog::Note { note, query: String::new(), picked: None });
+    }
 }
 
 /// UX-12: «Nueva nota» desde la interfaz: se crea con un título (para que tenga su archivo) y se
@@ -1087,7 +1105,7 @@ pub fn tasks(app: &mut DeskApp, ui: &mut Ui) {
                 app,
                 ui,
                 &ctx,
-                pick("By case", "Por caso"),
+                &by_case_label(app),
                 pick("pending tasks of all lists", "tareas pendientes de todas las listas"),
             );
             ui.add_space(8.0);
@@ -1510,4 +1528,10 @@ fn new_folder_dialog(app: &mut DeskApp, ctx: &egui::Context, view: &str) {
     } else if !cancel {
         app.pim.new_folder = Some(name);
     }
+}
+
+/// UX-32: «Por proyecto» (o con el nombre que la instancia da a los casos).
+pub(crate) fn by_case_label(app: &DeskApp) -> String {
+    let one = app.session.case_terms().0.to_lowercase();
+    format!("{} {one}", pick("By", "Por"))
 }

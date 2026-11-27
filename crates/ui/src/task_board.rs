@@ -427,17 +427,22 @@ pub(crate) fn by_case(app: &mut DeskApp, ui: &mut Ui) -> Vec<BoardAct> {
                 .body(pick("Nothing pending.", "No hay nada pendiente."))
                 .show(ui);
         }
+        let terms = app.session.case_terms();
         for key in keys {
             let Some(items) = groups.get(&key) else { continue };
             ui.add_space(10.0);
             let head = ui.horizontal(|ui| {
                 match &key {
                     Some(case) => {
-                        badge(ui, pick("Case", "Caso"), BadgeKind::Accent);
+                        badge(ui, &terms.0, BadgeKind::Accent);
                         ui.label(RichText::new(&case.title).strong().color(c.text));
                     }
                     None => {
-                        ui.label(RichText::new(pick("No case", "Sin caso")).strong().color(c.text));
+                        ui.label(
+                            RichText::new(format!("{} {}", pick("No", "Sin"), terms.0.to_lowercase()))
+                                .strong()
+                                .color(c.text),
+                        );
                     }
                 }
                 ui.label(RichText::new(items.len().to_string()).color(c.text_muted));

@@ -68,7 +68,7 @@ Generated from IureDesk's commands; don't edit by hand. Choose the scheme in Set
 |---|---|---|---|
 | Tasks: list | `Ctrl+Shift+1` | `Ctrl+Shift+1` | `Ctrl+Shift+1` |
 | Tasks: board | `Ctrl+Shift+2` | `Ctrl+Shift+2` | `Ctrl+Shift+2` |
-| Tasks: by case | `Ctrl+#` | `Ctrl+#` | `Ctrl+#` |
+| Tasks: by project | `Ctrl+#` | `Ctrl+#` | `Ctrl+#` |
 | Edit note here / view it | `Ctrl+Shift+E` | `Ctrl+Shift+E` | `Ctrl+Shift+E` |
 
 ## Mail

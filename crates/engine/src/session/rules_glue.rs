@@ -111,7 +111,7 @@ impl IureKind {
         match self {
             IureKind::Contact => Text::new("Contact", "Contacto"),
             IureKind::Client => Text::new("Client", "Cliente"),
-            IureKind::Case => Text::new("Case", "Caso"),
+            IureKind::Case => Text::new("Project", "Proyecto"),
             IureKind::Opportunity => Text::new("Opportunity", "Oportunidad"),
             IureKind::Lead => Text::new("Lead", "Lead"),
             IureKind::Ticket => Text::new("Ticket", "Ticket"),

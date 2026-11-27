@@ -706,6 +706,15 @@ fn editor_body(app: &mut DeskApp, ui: &mut Ui, f: &mut Full) {
             link = out.link;
         });
     });
+    // Al editar, un clic pone el cursor: las ligas se abren con Ctrl+clic (de solo lectura, con un
+    // clic). Se dice solo si hay ligas.
+    if !read_only && text.contains("](") {
+        ui.label(
+            RichText::new(pick("Ctrl+click a link to open it.", "Ctrl+clic en una liga para abrirla."))
+                .color(c.text_muted)
+                .size(theme::density(ui.ctx()).small_size()),
+        );
+    }
     if let Some(l) = link {
         let lower = l.to_ascii_lowercase();
         if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") {

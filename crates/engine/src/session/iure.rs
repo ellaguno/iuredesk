@@ -156,16 +156,40 @@ enum LoginMsg {
 }
 
 enum Msg {
-    Connected { status: IurefficientStatus, session: Option<Arc<Remote>> },
-    Context { key: String, result: Result<IureContext, IureError> },
-    Targets { query: String, result: Result<Vec<LinkTarget>, IureError> },
+    Connected {
+        status: IurefficientStatus,
+        session: Option<Arc<Remote>>,
+    },
+    Context {
+        key: String,
+        result: Result<IureContext, IureError>,
+    },
+    Targets {
+        query: String,
+        result: Result<Vec<LinkTarget>, IureError>,
+    },
     Feed(Result<Feed, IureError>),
-    Agenda { result: Result<Agenda, IureError>, user: Option<String> },
-    Done { message_id: String, result: Result<Vec<EmailLink>, IureError>, done: Text },
-    Leads { message: MessageId, result: Result<Vec<LeadForm>, IureError> },
+    Agenda {
+        result: Result<Agenda, IureError>,
+        user: Option<String>,
+    },
+    Done {
+        message_id: String,
+        result: Result<Vec<EmailLink>, IureError>,
+        done: Text,
+    },
+    Leads {
+        message: MessageId,
+        result: Result<Vec<LeadForm>, IureError>,
+    },
     Login(LoginMsg),
-    Reply { message: MessageId, result: Result<Option<CrmReplyAddress>, IureError> },
+    Reply {
+        message: MessageId,
+        result: Result<Option<CrmReplyAddress>, IureError>,
+    },
     Plain(Result<Text, IureError>),
+    /// UX-32: cómo llama la instancia a los casos («proyecto», «expediente»…).
+    Terms(Result<(String, String), IureError>),
 }
 
 /// Parte Iurefficient de la sesión.
@@ -199,6 +223,8 @@ pub(crate) struct Iure {
     /// UX-5: tareas abiertas de la lista «Iurefficient» (título, texto en minúsculas) por
     /// generación de datos, para la cápsula de los correos que mencionan.
     task_refs: Option<(u64, Vec<(String, String)>)>,
+    /// UX-32: el nombre de los casos en la instancia (singular, plural), si ya se leyó.
+    terms: Option<(String, String)>,
 }
 
 /// F7.1: ritmo de la consulta previa de contexto (sin red; probado aparte).
@@ -276,6 +302,7 @@ impl Default for Iure {
             pending_compose: Vec::new(),
             prefetch: Prefetch::default(),
             task_refs: None,
+            terms: None,
         }
     }
 }
@@ -496,6 +523,61 @@ impl Session {
         self.iure.feed_failures = 0;
         self.iure.contexts.retain(|_, e| matches!(e, CtxEntry::Ready(..)));
         self.iure.prefetch.reset();
+        if let Backend::Live(s) = &self.iure.backend {
+            let s = Arc::clone(s);
+            self.iure_spawn(async move { Msg::Terms(iure::case_terms(&s).await) });
+        }
+    }
+
+    /// UX-33: sube una nota a un proyecto o a una oportunidad de Iurefficient (como archivo
+    /// Markdown). El resultado llega como aviso.
+    pub fn iure_upload_note(&mut self, id: iuredesk_model::NoteId, target: LinkTarget) -> Result<(), Text> {
+        if !matches!(target.kind, iure::TargetKind::Case | iure::TargetKind::Opportunity) {
+            return Err(Text::new(
+                "A note can only be uploaded to a project or an opportunity.",
+                "Una nota solo se puede subir a un proyecto o a una oportunidad.",
+            ));
+        }
+        let Some(n) = self.store.get_note(id).ok().flatten() else {
+            return Err(Text::new("The note no longer exists.", "La nota ya no existe."));
+        };
+        let title = super::notes::note_title(&n);
+        let file_name = format!("{}.md", crate::notes_fs::file_stem(&title));
+        let bytes = format!("# {title}\n\n{}\n", n.body.trim_end()).into_bytes();
+        let kind = target.kind.label();
+        let done = Text::new(
+            format!("Note uploaded to {} {}", kind.en.to_lowercase(), target.label),
+            format!("Nota subida a {} {}", kind.es.to_lowercase(), target.label),
+        );
+        match self.iure.backend.clone() {
+            Backend::Sample => {
+                self.notices.push(Notice { kind: super::NoticeKind::Success, text: done, undo: false, secs: None });
+                Ok(())
+            }
+            Backend::Live(s) => {
+                self.iure_spawn(async move {
+                    Msg::Plain(iure::upload_note(&s, &target, &title, &file_name, bytes).await.map(|()| done))
+                });
+                Ok(())
+            }
+            Backend::None => Err(self.iure.status.label()),
+        }
+    }
+
+    /// UX-32: cómo se llaman los casos (singular, plural), con mayúscula inicial: lo que usa la
+    /// instancia de Iurefficient si se sabe; si no, «Proyecto/Proyectos» («Project/Projects»).
+    pub fn case_terms(&self) -> (String, String) {
+        let cap = |s: &str| {
+            let mut c = s.chars();
+            c.next().map(|f| f.to_uppercase().chain(c).collect::<String>()).unwrap_or_default()
+        };
+        match &self.iure.terms {
+            Some((one, many)) if crate::lang::spanish() => (cap(one), cap(many)),
+            _ => (
+                crate::lang::pick("Project", "Proyecto").to_string(),
+                crate::lang::pick("Projects", "Proyectos").to_string(),
+            ),
+        }
     }
 
     // ------------------------------------------------------------------ panel contextual
@@ -1369,6 +1451,14 @@ impl Session {
                     self.iure_on_success();
                 }
                 self.iure_open_reply(message, result);
+            }
+            Msg::Terms(r) => {
+                if let Ok(t) = r
+                    && self.iure.terms.as_ref() != Some(&t)
+                {
+                    self.iure.terms = Some(t);
+                    self.data_gen = self.data_gen.wrapping_add(1);
+                }
             }
             Msg::Plain(r) => match r {
                 Ok(t) => {
