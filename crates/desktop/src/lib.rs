@@ -8,6 +8,8 @@
 //!   `HKCU\…\Run`; macOS: `~/Library/LaunchAgents`).
 //! - [`launch`]: abrir enlaces y programas sin el entorno del AppImage.
 //! - [`memory`]: memoria del proceso en Windows y macOS (en Linux la lee la UI de `/proc`).
+//! - [`store`]: instalada desde Microsoft Store (MSIX): sin actualizaciones propias ni escrituras
+//!   en el registro, StartupTask y alias de ejecución.
 //!
 //! Todo con las bibliotecas del SO por enlaces en Rust (sin C ni `unsafe` propio; el de macOS
 //! vive en `iuredesk-macos-events`); lo que un
@@ -25,6 +27,7 @@ pub mod autostart;
 pub mod launch;
 pub mod memory;
 pub mod notify;
+pub mod store;
 
 /// Identificador de la app: id de AppStream y de Flatpak, `CFBundleIdentifier` en macOS y
 /// `AppUserModelID` en Windows (el acceso directo del instalador debe llevar este mismo).

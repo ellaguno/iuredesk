@@ -102,6 +102,14 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
     Ok(Args { os, tag, target })
 }
 
+/// `cargo xtask msix-version`: la versión del paquete MSIX para la versión del workspace.
+pub fn print_msix_version() -> Res {
+    let m = metadata(None)?;
+    let version = packages(&m).find(|p| s(p, "name") == "iuredesk").map(|p| s(p, "version")).unwrap_or("");
+    println!("{}", crate::msi::msix_version(version)?);
+    Ok(())
+}
+
 pub fn package(raw: Vec<String>) -> Res {
     let args = parse_args(&raw)?;
     let m = metadata(None)?;
@@ -786,6 +794,51 @@ mod tests {
             assert_eq!(d.get("CFBundleTypeRole").and_then(plist::Value::as_string), Some("Viewer"), "{ext}");
             // No se apropia del tipo (Mail, Calendario y Contactos siguen siendo los dueños).
             assert_eq!(d.get("LSHandlerRank").and_then(plist::Value::as_string), Some("Alternate"), "{ext}");
+        }
+    }
+
+    /// El manifiesto MSIX: XML que Windows acepta (sin «--» dentro de un comentario), el nombre
+    /// reservado en Partner Center, lo mismo que registra el instalador (protocolos, archivos),
+    /// el alias y la StartupTask que usa la app, y sin `unvirtualizedResources` (la Store lo niega).
+    #[test]
+    fn msix_manifest() {
+        let text = std::fs::read_to_string(root().join("packaging/msix/AppxManifest.xml")).unwrap_or_default();
+        let mut rest = text.as_str();
+        while let Some(i) = rest.find("<!--") {
+            let after = &rest[i + 4..];
+            let end = after.find("-->").unwrap_or(after.len());
+            assert!(!after[..end].contains("--"), "«--» dentro de un comentario: {}", &after[..end]);
+            rest = &after[end..];
+        }
+        for want in [
+            "<DisplayName>IureDesk</DisplayName>",
+            "DisplayName=\"IureDesk\"",
+            "Name=\"@IDENTITY_NAME@\"",
+            "Publisher=\"@PUBLISHER@\"",
+            "Version=\"@VERSION@\"",
+            "<uap3:Protocol Name=\"iuredesk\"",
+            "<uap3:Protocol Name=\"mailto\"",
+            "<uap:FileType>.eml</uap:FileType>",
+            "<uap:FileType>.ics</uap:FileType>",
+            "<uap:FileType>.vcf</uap:FileType>",
+            "<desktop:ExecutionAlias Alias=\"iuredesk.exe\" />",
+            "TaskId=\"IureDeskInicio\"",
+            "<rescap:Capability Name=\"runFullTrust\" />",
+            "<Capability Name=\"internetClient\" />",
+            "<Resource Language=\"es-MX\" />",
+        ] {
+            assert!(text.contains(want), "falta {want} en el manifiesto");
+        }
+        assert!(!text.contains("Name=\"unvirtualizedResources\""));
+        assert!(!text.contains("Name=\"microphone\""), "IureDesk no graba");
+        for f in [
+            "Square150x150Logo.png",
+            "Square44x44Logo.png",
+            "StoreLogo.png",
+            "Square44x44Logo.targetsize-16_altform-unplated.png",
+            "Square44x44Logo.targetsize-256_altform-unplated.png",
+        ] {
+            assert!(root().join("packaging/msix/Assets").join(f).is_file(), "falta {f}");
         }
     }
 

@@ -29,6 +29,8 @@ iuredesk-assistant = { workspace = true }
 iuredesk-integrations = { workspace = true }
 iuredesk-import = { workspace = true }
 iuredesk-mcp = { workspace = true }
+# Instalada desde Microsoft Store (MSIX): sin aviso de versiones nuevas (las da la Store).
+iuredesk-desktop = { workspace = true }
 anyhow = { workspace = true }
 # F2.4: invitaciones iTIP en el correo.
 iuredesk-dav = { workspace = true }

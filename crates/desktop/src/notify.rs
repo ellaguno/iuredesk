@@ -9,6 +9,8 @@
 //!   puente (una sola instancia). Para eso el instalador registra el protocolo `iuredesk` y el
 //!   acceso directo lleva el mismo AUMID; además, al arrancar se registra el AUMID en
 //!   `HKCU\Software\Classes\AppUserModelId\…` para que los avisos salgan aun sin acceso directo.
+//!   Instalada desde Microsoft Store (MSIX) no se escribe nada en el registro: el aviso usa la
+//!   identidad del paquete (`CreateToastNotifier` sin id) y el protocolo lo declara el manifiesto.
 //! - **macOS**: `UNUserNotificationCenter` (objc2), solo si la app corre dentro de su `.app`
 //!   (fuera de un paquete el sistema lo rechaza). El enlace va en el `userInfo` del aviso
 //!   (`iuredesk_macos_events::set_notification_link`); el clic lo recibe el delegado que pone
@@ -74,7 +76,9 @@ pub fn system_notifier(open_label: &str, on_click: OnClick) -> Option<Notify> {
     }
     #[cfg(windows)]
     {
-        windows_register_aumid();
+        if !crate::store::packaged() {
+            windows_register_aumid();
+        }
         Some(Arc::new(|title: &str, body: &str, link: Option<&str>| {
             let xml = toast_xml(title, body, link);
             let _ = std::thread::Builder::new().name("iuredesk-notify".into()).spawn(move || {
@@ -143,7 +147,12 @@ fn windows_show(xml: &str) -> windows::core::Result<()> {
     let doc = XmlDocument::new()?;
     doc.LoadXml(&HSTRING::from(xml))?;
     let toast = ToastNotification::CreateToastNotification(&doc)?;
-    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(crate::APP_ID))?.Show(&toast)
+    let notifier = if crate::store::packaged() {
+        ToastNotificationManager::CreateToastNotifier()?
+    } else {
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(crate::APP_ID))?
+    };
+    notifier.Show(&toast)
 }
 
 #[cfg(target_os = "macos")]

@@ -209,7 +209,7 @@ notify-rust = { version = "4.18", default-features = false, features = ["z"] }
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
 # R1.2: integración con el sistema (enlaces del SO, Rust puro; solo en su plataforma).
 # Windows: avisos de WinRT (ToastNotificationManager) y registro (HKCU Run, AppUserModelId).
-windows = { version = "0.62", default-features = false, features = ["std", "UI_Notifications", "Data_Xml_Dom"] }
+windows = { version = "0.62", default-features = false, features = ["std", "UI_Notifications", "Data_Xml_Dom", "ApplicationModel", "ApplicationModel_Activation"] }
 windows-registry = "0.6"
 # macOS: UserNotifications por objc2 (enlaces a los frameworks del sistema; sin Objective-C).
 objc2 = "0.6"

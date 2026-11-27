@@ -1,6 +1,10 @@
 //! «Abrir IureDesk al iniciar sesión» (opcionalmente minimizado):
 //! - Linux: `$XDG_CONFIG_HOME/autostart/iuredesk.desktop` (XDG Autostart; GNOME, KDE, XFCE…).
 //! - Windows: valor `IureDesk` en `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+//!   Instalada desde Microsoft Store (MSIX) la clave `Run` no sirve: se usa la StartupTask
+//!   [`crate::store::STARTUP_TASK`] del paquete, que el usuario también ve y apaga en
+//!   Configuración → Aplicaciones → Inicio. La StartupTask no pasa argumentos: «minimizado» se
+//!   recuerda en [`MINIMIZED_MARKER`] y lo lee [`start_minimized_by_system`].
 //! - macOS: `~/Library/LaunchAgents/com.iurefficient.IureDesk.plist` (`RunAtLoad`).
 //!
 //! El contenido se arma con funciones puras ([`desktop_entry`], [`launch_agent`],
@@ -16,6 +20,10 @@ pub const DESKTOP_FILE: &str = "iuredesk.desktop";
 pub const RUN_VALUE: &str = "IureDesk";
 /// Clave del registro de Windows (bajo `HKEY_CURRENT_USER`).
 pub const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+
+/// Archivo (en la carpeta de configuración de IureDesk, la del paquete si está empaquetada)
+/// que indica que la StartupTask debe abrir IureDesk minimizado.
+pub const MINIMIZED_MARKER: &str = "autostart-minimized";
 
 /// Estado actual.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -197,6 +205,9 @@ pub fn set_at(path: &Path, program: &Path, enabled: bool, minimized: bool) -> Re
 pub fn state() -> State {
     #[cfg(windows)]
     {
+        if crate::store::packaged() {
+            return task::state();
+        }
         windows_state()
     }
     #[cfg(not(windows))]
@@ -207,6 +218,10 @@ pub fn state() -> State {
 
 /// Activa o desactiva el inicio con la sesión.
 pub fn set(enabled: bool, minimized: bool) -> Result<(), DesktopError> {
+    #[cfg(windows)]
+    if crate::store::packaged() {
+        return task::set(enabled, minimized);
+    }
     let program = current_program().ok_or(DesktopError::Unsupported("ejecutable"))?;
     #[cfg(windows)]
     {
@@ -216,6 +231,72 @@ pub fn set(enabled: bool, minimized: bool) -> Result<(), DesktopError> {
     {
         let path = file_path().ok_or(DesktopError::Unsupported("carpeta de inicio"))?;
         set_at(&path, &program, enabled, minimized)
+    }
+}
+
+/// ¿Hay que abrir minimizado porque lo abrió la StartupTask del paquete con «minimizado»
+/// marcado? (Fuera del paquete, la sesión pasa `--minimized` en la orden.)
+pub fn start_minimized_by_system() -> bool {
+    crate::store::launched_by_startup_task() && marker_path().is_some_and(|p| p.is_file())
+}
+
+fn marker_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("iuredesk").join(MINIMIZED_MARKER))
+}
+
+/// Recuerda (o borra) la marca de «minimizado» de la StartupTask.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn write_marker(minimized: bool) -> Result<(), DesktopError> {
+    let Some(path) = marker_path() else { return Ok(()) };
+    write_file(&path, minimized.then_some("1\n"))
+}
+
+/// `Windows.ApplicationModel.StartupTask` (solo dentro del paquete MSIX). Las operaciones
+/// asíncronas se esperan en un hilo aparte (no en el de la interfaz, que es STA).
+#[cfg(windows)]
+mod task {
+    use windows::ApplicationModel::{StartupTask, StartupTaskState};
+    use windows::core::HSTRING;
+
+    use super::{State, marker_path, write_marker};
+    use crate::DesktopError;
+
+    fn on_thread<T: Send + 'static>(
+        f: impl FnOnce() -> windows::core::Result<T> + Send + 'static,
+    ) -> Result<T, DesktopError> {
+        std::thread::spawn(f)
+            .join()
+            .map_err(|_| DesktopError::System("StartupTask".into()))?
+            .map_err(|e| DesktopError::System(e.message()))
+    }
+
+    fn get() -> windows::core::Result<StartupTask> {
+        StartupTask::GetAsync(&HSTRING::from(crate::store::STARTUP_TASK))?.join()
+    }
+
+    pub(super) fn state() -> State {
+        let enabled = on_thread(|| get()?.State())
+            .is_ok_and(|s| s == StartupTaskState::Enabled || s == StartupTaskState::EnabledByPolicy);
+        State { enabled, minimized: enabled && marker_path().is_some_and(|p| p.is_file()) }
+    }
+
+    pub(super) fn set(enabled: bool, minimized: bool) -> Result<(), DesktopError> {
+        if !enabled {
+            on_thread(|| get()?.Disable())?;
+            return write_marker(false);
+        }
+        match on_thread(|| get()?.RequestEnableAsync()?.join())? {
+            StartupTaskState::Enabled | StartupTaskState::EnabledByPolicy => write_marker(minimized),
+            StartupTaskState::DisabledByUser => Err(DesktopError::System(
+                "desactivado en Configuración de Windows → Aplicaciones → Inicio / \
+                 turned off in Windows Settings → Apps → Startup"
+                    .into(),
+            )),
+            StartupTaskState::DisabledByPolicy => {
+                Err(DesktopError::System("directiva del equipo / group policy".into()))
+            }
+            other => Err(DesktopError::System(format!("StartupTask {}", other.0))),
+        }
     }
 }
 

@@ -4325,6 +4325,7 @@ dependencies = [
  "iuredesk-compose",
  "iuredesk-crypto",
  "iuredesk-dav",
+ "iuredesk-desktop",
  "iuredesk-graph",
  "iuredesk-imap",
  "iuredesk-import",

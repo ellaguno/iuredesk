@@ -1881,9 +1881,10 @@ impl Session {
 
     /// R3.2: busca una versión nueva de IureDesk. Responde con [`Event::Custom`] y un
     /// [`crate::update::UpdateResult`]. `None` si está apagado en Ajustes (salvo que lo pida el
-    /// usuario) o en el buzón de ejemplo (sin red).
+    /// usuario), en el buzón de ejemplo (sin red) o instalada desde Microsoft Store (la actualiza
+    /// la Store).
     pub fn request_update_check(&mut self, manual: bool) -> Option<JobId> {
-        if self.sample || !(manual || self.prefs.update_check) {
+        if self.sample || crate::update::store_managed() || !(manual || self.prefs.update_check) {
             return None;
         }
         Some(self.bg.spawn(async move {

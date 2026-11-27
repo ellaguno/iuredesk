@@ -119,8 +119,12 @@ impl SisterApp {
         }
     }
 
-    /// Página de descarga (última versión publicada).
+    /// Página de descarga (última versión publicada). Instalada IureDesk desde Microsoft Store,
+    /// la búsqueda de la app en la Store: no se remite a instaladores de fuera de ella.
     pub fn download_url(self) -> String {
+        if iuredesk_desktop::store::packaged() {
+            return iuredesk_desktop::store::store_search_url(self.name());
+        }
         format!("https://github.com/{}/releases/latest", self.repo())
     }
 
@@ -495,6 +499,9 @@ fn locate(app: SisterApp) -> Option<PathBuf> {
             }
         }
         candidates.extend(which(&exe));
+        // Instalada desde Microsoft Store: su alias de ejecución (corre con su propia identidad
+        // de paquete, también cuando la lanza IureDesk empaquetada).
+        candidates.extend(iuredesk_desktop::store::sister_alias(&exe.to_ascii_lowercase()));
     } else {
         candidates.extend(which(b.linux));
         candidates.push(PathBuf::from("/usr/bin").join(b.linux));

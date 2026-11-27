@@ -142,6 +142,14 @@ iureapps cuando la API limita las consultas anónimas.
 2. `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. Revisar el Release y probar la instalación desde iureapps (`iureapps instalar iuredesk`).
 
+### Microsoft Store (MSIX)
+El job de Windows deja además los artefactos `msix-store` (el `.msix` sin firmar que se sube a
+Partner Center) y `msix-prueba` (firmado con un certificado de prueba, con su `.cer`), después de
+instalar la copia de prueba en el runner y probarla. No van al Release. Manifiesto en
+`packaging/msix/AppxManifest.xml`, versión con `cargo xtask msix-version`; detalles en la sección
+«Microsoft Store (MSIX)» de [`README.es.md`](../README.es.md#microsoft-store-msix) y política de
+privacidad en [`PRIVACY.md`](../PRIVACY.md).
+
 ## Firmas para iureapps
 iureapps verifica cada instalador con la firma minisign `<archivo>.sig` y la clave pública del
 catálogo (`pubkey` de su `AppDef`), igual que el actualizador de Tauri: el `.sig` es el texto de la
