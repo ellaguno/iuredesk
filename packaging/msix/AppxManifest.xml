@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Paquete MSIX de IureDesk para Microsoft Store. release.yml sustituye los @…@:
+    @IDENTITY_NAME@, @PUBLISHER@, @PUBLISHER_DISPLAY_NAME@: los de Partner Center
+      (Administración de productos, Identidad del producto), en las variables del repo
+      MSIX_IDENTITY_NAME, MSIX_PUBLISHER y MSIX_PUBLISHER_DISPLAY_NAME.
+    @VERSION@: `cargo xtask msix-version` (la de Cargo.toml con el primer número más 1, la
+      preliminar en el tercero y el cuarto en 0: 0.1.0-beta.12 a 1.1.312.0, 0.1.0 a 1.1.999.0).
+
+  El DisplayName tiene que ser exactamente el nombre reservado en Partner Center («IureDesk»).
+
+  Registra lo mismo que el instalador (packaging/windows/default-apps.nsh), pero declarado aquí
+  en vez de escrito en el registro: el protocolo iuredesk: (enlaces de las notificaciones y de las
+  demás apps de la suite), mailto: y los archivos .eml, .ics y .vcf como opción en «Aplicaciones
+  predeterminadas» y «Abrir con» (el usuario elige), el alias de ejecución iuredesk.exe (la línea
+  de comandos y el servidor MCP que se registra en Claude Desktop y VS Code) y la StartupTask
+  «IureDeskInicio» (apagada hasta que el usuario la activa en Ajustes, General, o en
+  Configuración de Windows, Aplicaciones, Inicio).
+
+  Sin unvirtualizedResources: lo que la app escribe en AppData (el almacén de correo,
+  preferencias, cachés) queda dentro del paquete y se borra al desinstalarla. Las contraseñas y
+  tokens van al Administrador de credenciales de Windows, que no se virtualiza.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 desktop rescap">
+
+  <Identity
+    Name="@IDENTITY_NAME@"
+    Publisher="@PUBLISHER@"
+    Version="@VERSION@"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>IureDesk</DisplayName>
+    <PublisherDisplayName>@PUBLISHER_DISPLAY_NAME@</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="es-MX" />
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Applications>
+    <Application Id="IureDesk" Executable="iuredesk.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="IureDesk"
+        Description="Correo, calendario, contactos, notas y tareas, integrado con Iurefficient"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <!-- iuredesk://message/…, …/event/…, …/compose?…: clic en una notificación y enlaces de
+             las demás apps de la suite. -->
+        <uap3:Extension Category="windows.protocol" Executable="iuredesk.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:Protocol Name="iuredesk" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>IureDesk</uap:DisplayName>
+          </uap3:Protocol>
+        </uap3:Extension>
+        <!-- mailto: como opción en Aplicaciones predeterminadas (no se impone). -->
+        <uap3:Extension Category="windows.protocol" Executable="iuredesk.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:Protocol Name="mailto" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>IureDesk</uap:DisplayName>
+          </uap3:Protocol>
+        </uap3:Extension>
+        <uap3:Extension Category="windows.fileTypeAssociation" Executable="iuredesk.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:FileTypeAssociation Name="eml" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>E-mail message</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.eml</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap3:FileTypeAssociation>
+        </uap3:Extension>
+        <uap3:Extension Category="windows.fileTypeAssociation" Executable="iuredesk.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:FileTypeAssociation Name="ics" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>iCalendar file</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.ics</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap3:FileTypeAssociation>
+        </uap3:Extension>
+        <uap3:Extension Category="windows.fileTypeAssociation" Executable="iuredesk.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:FileTypeAssociation Name="vcf" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>vCard contact</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.vcf</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap3:FileTypeAssociation>
+        </uap3:Extension>
+        <!-- `iuredesk` en la terminal (el servidor MCP, `iuredesk mailto:…`) y la ruta estable
+             que se registra en Claude Desktop y VS Code como servidor MCP. -->
+        <uap3:Extension Category="windows.appExecutionAlias" Executable="iuredesk.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="iuredesk.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+        <!-- «Abrir IureDesk al iniciar sesión». La app la enciende y apaga con
+             Windows.ApplicationModel.StartupTask (crates/desktop/src/autostart.rs). -->
+        <desktop:Extension Category="windows.startupTask" Executable="iuredesk.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="IureDeskInicio" Enabled="false" DisplayName="IureDesk" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

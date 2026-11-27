@@ -40,6 +40,19 @@ Headless screenshots: `cargo run -p iuredesk-ui --example ui_shot -- /tmp/shot.p
 Quality gate: `cargo xtask ci`. The plan is in [`PLAN.md`](PLAN.md) and the work list in
 [`docs/gaps.md`](docs/gaps.md).
 
+## Microsoft Store (MSIX)
+
+The Windows job of `.github/workflows/release.yml` also builds the MSIX package for the Microsoft
+Store (artifacts `msix-store`, unsigned, for Partner Center, and `msix-prueba`, signed with a test
+certificate; neither goes to the release). It contains the same files as the `.exe`/`.msi`
+installers, declares `runFullTrust` and `internetClient`, the `iuredesk:` and `mailto:` protocols,
+`.eml`/`.ics`/`.vcf`, the `iuredesk.exe` execution alias (registered in Claude Desktop and VS Code)
+and the `IureDeskInicio` StartupTask. Installed from the Store, IureDesk never updates itself nor
+checks GitHub for new versions, and writes nothing to the registry. Package version: the `.msi`
+`ProductVersion` with the first number plus one and a trailing `.0` (`0.1.0-beta.12` →
+`1.1.312.0`, `0.1.0` → `1.1.999.0`). Details (in Spanish): [README.es.md](README.es.md#microsoft-store-msix).
+Privacy policy: [`PRIVACY.md`](PRIVACY.md).
+
 ## License
 
 [Apache-2.0](LICENSE.md),

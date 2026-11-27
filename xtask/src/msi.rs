@@ -84,6 +84,21 @@ pub fn product_version(v: &str) -> Result<String, String> {
     Ok(format!("{major}.{minor}.{build}"))
 }
 
+/// Versión del paquete MSIX (Microsoft Store): la [`product_version`] con el primer número más 1
+/// (la Store no acepta un primer número 0) y el cuarto en 0 (lo exige la Store). Crece con cada
+/// preliminar y con la final: `0.1.0-beta.11` → `1.1.311.0` < `0.1.0-beta.12` → `1.1.312.0` <
+/// `0.1.0-rc.1` → `1.1.601.0` < `0.1.0` → `1.1.999.0` < `0.1.1` → `1.1.1999.0` < `0.2.0` →
+/// `1.2.999.0`; la 1.0.0 será `2.0.999.0`.
+pub fn msix_version(v: &str) -> Result<String, String> {
+    let pv = product_version(v)?;
+    let mut it = pv.split('.');
+    let (Some(major), Some(minor), Some(build)) = (it.next(), it.next(), it.next()) else {
+        return Err(format!("versión «{v}»"));
+    };
+    let major: u32 = major.parse().map_err(|_| format!("versión «{v}»"))?;
+    Ok(format!("{}.{minor}.{build}.0", major + 1))
+}
+
 /// Un archivo que instala el paquete.
 pub struct MsiFile {
     /// Nombre largo en la carpeta de instalación.
@@ -628,6 +643,32 @@ mod tests {
         assert!(product_version("0.1.0-gamma.1").is_err());
         assert!(product_version("0.1.66-alpha.1").is_err());
         assert!(product_version("x").is_err());
+    }
+
+    #[test]
+    fn msix_versions_grow_with_every_beta_and_the_final() {
+        let v = |s: &str| msix_version(s).unwrap();
+        assert_eq!(v("0.1.0-beta.12"), "1.1.312.0");
+        assert_eq!(v("0.1.0-beta.11"), "1.1.311.0");
+        assert_eq!(v("0.1.0"), "1.1.999.0");
+        assert_eq!(v("0.1.1"), "1.1.1999.0");
+        assert_eq!(v("1.0.0"), "2.0.999.0");
+        let key = |s: &str| v(s).split('.').map(|p| p.parse::<u32>().unwrap()).collect::<Vec<_>>();
+        let order = [
+            "0.1.0-alpha.13",
+            "0.1.0-beta.1",
+            "0.1.0-beta.11",
+            "0.1.0-beta.12",
+            "0.1.0-rc.1",
+            "0.1.0",
+            "0.1.1-beta.1",
+            "0.1.1",
+            "0.2.0",
+            "1.0.0",
+        ];
+        assert!(order.windows(2).all(|w| key(w[0]) < key(w[1])), "{order:?}");
+        // El primer número nunca es 0 y el cuarto siempre lo es (reglas de la Store).
+        assert!(order.iter().all(|s| !v(s).starts_with("0.") && v(s).ends_with(".0")));
     }
 
     #[test]

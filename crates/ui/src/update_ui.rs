@@ -1,7 +1,8 @@
 //! R3.2: aviso de versión nueva. Se consulta al arrancar y luego cada día (si está encendido en
 //! Ajustes → General); «Buscar actualizaciones» (paleta, CLI, MCP) lo pide a mano y entonces
 //! también avisa si ya está al día o si no hubo conexión. La versión nueva sale en un aviso con
-//! «Ver» y en Ajustes; la instala iureapps o el usuario con el instalador.
+//! «Ver» y en Ajustes; la instala iureapps o el usuario con el instalador. Instalada desde
+//! Microsoft Store no se consulta nada: la actualiza la Store (y Ajustes solo lo dice).
 
 use std::time::Instant;
 
@@ -39,7 +40,7 @@ impl DeskApp {
 /// Lanza la consulta automática cuando toca.
 pub(crate) fn tick(app: &mut DeskApp) {
     let u = &app.update;
-    if u.fetching || !app.session.prefs.update_check {
+    if u.fetching || !app.session.prefs.update_check || update::store_managed() {
         return;
     }
     let wait = if u.failed { update::RETRY } else { update::CHECK_EVERY };
@@ -51,6 +52,15 @@ pub(crate) fn tick(app: &mut DeskApp) {
 
 fn request(app: &mut DeskApp, manual: bool) {
     app.update.last = Some(Instant::now());
+    if update::store_managed() {
+        if manual {
+            app.notice(Notice::info(
+                "Microsoft Store keeps IureDesk up to date.",
+                "Microsoft Store mantiene IureDesk al día.",
+            ));
+        }
+        return;
+    }
     app.update.fetching = app.session.request_update_check(manual).is_some();
     if manual && !app.update.fetching {
         app.notice(Notice::info(
@@ -120,6 +130,17 @@ pub(crate) fn settings(app: &mut DeskApp, ui: &mut Ui) {
         RichText::new(format!("{} {}", pick("You have version", "Tienes la versión"), update::CURRENT))
             .color(c.text_muted),
     );
+    if update::store_managed() {
+        ui.label(
+            RichText::new(pick(
+                "Installed from Microsoft Store: the Store updates it.",
+                "Instalada desde Microsoft Store: la actualiza la Store.",
+            ))
+            .small()
+            .color(c.text_muted),
+        );
+        return;
+    }
     let mut on = app.session.prefs.update_check;
     if ui.checkbox(&mut on, pick("Check for new versions every day", "Buscar versiones nuevas cada día")).changed() {
         app.session.prefs.update_check = on;

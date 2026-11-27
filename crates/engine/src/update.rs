@@ -3,6 +3,8 @@
 //! `0.1.0-alpha.12` < `0.1.0-alpha.13` < `0.1.0-beta.1` < `0.1.0`. Solo avisa: la instalación la
 //! hace iureapps o el usuario con el instalador. La petición no lleva datos del usuario (solo el
 //! `User-Agent` con la versión).
+//!
+//! Instalada desde Microsoft Store no se consulta nunca ([`store_managed`]): la actualiza la Store.
 
 use std::cmp::Ordering;
 use std::time::Duration;
@@ -24,6 +26,11 @@ pub const RETRY: Duration = Duration::from_secs(6 * 3600);
 const TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_JSON: usize = 512 * 1024;
 const USER_AGENT: &str = concat!("IureDesk/", env!("CARGO_PKG_VERSION"), " (update check)");
+
+/// ¿La actualiza Microsoft Store? Entonces no se buscan ni se anuncian versiones nuevas.
+pub fn store_managed() -> bool {
+    iuredesk_desktop::store::packaged()
+}
 
 /// R4.2: guía de uso (en el repositorio público; se lee en el navegador).
 pub fn guide_url(spanish: bool) -> String {

@@ -18,6 +18,8 @@
 //!   cargo-packager (`.deb` + AppImage, NSIS, `.app` + `.dmg`) en `dist/` (ver `package.rs` y
 //!   `docs/publicacion.md`); los nombres siguen el esquema que espera iureapps
 //!   (`IureDesk_<versión>-<plataforma>.<ext>`).
+//! - `msix-version`: imprime la versión del paquete MSIX de Microsoft Store que corresponde a la
+//!   del workspace (`0.1.0-beta.12` → `1.1.312.0`; ver `msi::msix_version`).
 //! - `sign <archivos…>`: firma minisign `<archivo>.sig` (formato de Tauri, lo verifica iureapps) con
 //!   la clave de `IUREDESK_MINISIGN_KEY` (ver `sign.rs`).
 //! - `keygen <secreta> <pública>`: par minisign nuevo (la secreta con permisos 600, nunca se imprime).
@@ -68,6 +70,8 @@ fn main() -> ExitCode {
         "dist" => dist(std::env::args().skip(2).collect()),
         "icons" => icons::icons(),
         "package" => package::package(std::env::args().skip(2).collect()),
+        // Versión del paquete MSIX de Microsoft Store (la usa release.yml).
+        "msix-version" => package::print_msix_version(),
         "bench" => bench(std::env::args().skip(2).collect()),
         "sign" => sign::sign(std::env::args().skip(2).collect()),
         "keygen" => sign::keygen(std::env::args().skip(2).collect()),

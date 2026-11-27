@@ -7,7 +7,10 @@
 # firmas que verifica iureapps; macOS: DEVELOPER_ID_P12_BASE64, DEVELOPER_ID_PASSWORD,
 # KEYCHAIN_PASSWORD, APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID y ASC_PRIVATE_KEY (Developer ID +
 # notarización); los de firma de Windows y SUITE_REPOS_TOKEN.
-# Ver docs/publicacion.md.
+# Windows también arma el paquete MSIX para Microsoft Store (artefactos `msix-store`, sin firmar,
+# para Partner Center, y `msix-prueba`, firmado con un certificado de prueba, que se instala y se
+# prueba en el runner); no va a la release. A mano (Run workflow) compila y prueba todo sin
+# publicar nada. Ver docs/publicacion.md y «Microsoft Store (MSIX)» en el README.
 name: Publicación
 
 on:
@@ -208,6 +211,156 @@ jobs:
           if (Test-Path 'Registry::HKEY_CLASSES_ROOT\iuredesk\shell\open\command') { throw 'la desinstalación dejó el protocolo' }
           if ((Get-ItemProperty 'HKLM:\Software\Iurefficient\IureDesk' -ErrorAction SilentlyContinue).Version) { throw 'la desinstalación dejó la clave de la suite' }
           Write-Host 'instalador .msi: instalar y desinstalar — ok'
+      # Paquete para Microsoft Store (la Store lo firma), con lo mismo que instala el .exe/.msi
+      # (iuredesk.exe, iuredesk.ico, LICENSE.md, NOTICE, README.txt, THIRD-PARTY-NOTICES.txt). La
+      # identidad sale de Partner Center (Identidad del producto) y va en variables del repo; sin
+      # ellas se usan valores de prueba. Además, una copia firmada con un certificado de prueba que
+      # se instala, se prueba y se desinstala aquí mismo. Ninguno de los dos va a la release (el
+      # job «Release» solo descarga los artefactos `iuredesk-*`). Ver «Microsoft Store (MSIX)» en
+      # el README.
+      - name: Paquete MSIX (Microsoft Store)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        env:
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:MSIX_IDENTITY_NAME -or -not $env:MSIX_PUBLISHER -or -not $env:MSIX_PUBLISHER_DISPLAY_NAME) {
+            Write-Output "::warning::Faltan las variables MSIX_IDENTITY_NAME, MSIX_PUBLISHER o MSIX_PUBLISHER_DISPLAY_NAME: el .msix lleva una identidad de prueba y Partner Center lo rechazará."
+          }
+          $identity = if ($env:MSIX_IDENTITY_NAME) { $env:MSIX_IDENTITY_NAME } else { 'Iurefficient.IureDesk' }
+          $publisher = if ($env:MSIX_PUBLISHER) { $env:MSIX_PUBLISHER } else { 'CN=Iurefficient' }
+          $display = if ($env:MSIX_PUBLISHER_DISPLAY_NAME) { $env:MSIX_PUBLISHER_DISPLAY_NAME } else { 'Iurefficient' }
+          $cargo = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
+            Where-Object { $_.name -eq 'iuredesk' } | ForEach-Object { $_.version }
+          # La Store no acepta un primer número 0 y exige el cuarto en 0; la preliminar va en el
+          # tercero para que cada beta y la final crezcan: 0.1.0-beta.12 → 1.1.312.0, 0.1.0 → 1.1.999.0.
+          $version = (cargo xtask msix-version).Trim()
+          if ($version -notmatch '^[1-9]\d*\.\d+\.\d+\.0$') { throw "versión MSIX inválida: $version" }
+          Write-Output "IureDesk $cargo → paquete $version"
+          # Los valores van dentro de atributos XML.
+          $identityXml = [System.Security.SecurityElement]::Escape($identity)
+          $publisherXml = [System.Security.SecurityElement]::Escape($publisher)
+          $displayXml = [System.Security.SecurityElement]::Escape($display)
+
+          $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory |
+            Where-Object { $_.Name -match '^10\.' -and (Test-Path "$($_.FullName)\x64\makeappx.exe") } |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          $tools = "$($sdk.FullName)\x64"
+          Write-Output "Windows SDK: $tools"
+
+          $root = 'msix\paquete'
+          New-Item -ItemType Directory -Force $root, msix\store, msix\prueba | Out-Null
+          Copy-Item -Recurse packaging\msix\Assets "$root\Assets"
+          $stage = "target\packager\${{ matrix.target }}"
+          Copy-Item "target\${{ matrix.target }}\dist\iuredesk.exe", assets\icons\iuredesk.ico $root
+          foreach ($f in 'LICENSE.md', 'NOTICE', 'README.txt', 'THIRD-PARTY-NOTICES.txt') { Copy-Item "$stage\$f" $root }
+
+          $manifest = Get-Content packaging\msix\AppxManifest.xml -Raw
+          $manifest = $manifest.Replace('@IDENTITY_NAME@', $identityXml).Replace('@PUBLISHER@', $publisherXml)
+          $manifest = $manifest.Replace('@PUBLISHER_DISPLAY_NAME@', $displayXml).Replace('@VERSION@', $version)
+          if ($manifest -match '@[A-Z_]+@') { throw "quedó un marcador sin sustituir: $($Matches[0])" }
+          # XML bien formado antes de empaquetar (p. ej. nada de «--» dentro de un comentario).
+          try { $xml = [xml]$manifest } catch { throw "AppxManifest.xml no es XML válido: $_" }
+          if ($xml.Package.Properties.DisplayName -ne 'IureDesk' -or $xml.Package.Applications.Application.VisualElements.DisplayName -ne 'IureDesk') {
+            throw 'el DisplayName debe ser exactamente «IureDesk»'
+          }
+          Set-Content "$root\AppxManifest.xml" $manifest -Encoding utf8
+
+          # resources.pri: idiomas e íconos sin fondo (altform-unplated) de la barra de tareas.
+          & "$tools\makepri.exe" createconfig /cf msix\priconfig.xml /dq es-MX_en-US /o
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$tools\makepri.exe" new /pr $root /cf msix\priconfig.xml /mn "$root\AppxManifest.xml" /of "$root\resources.pri" /o
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $msix = "IureDesk_$cargo-windows-x64.msix"
+          & "$tools\makeappx.exe" pack /d $root /p "msix\store\$msix" /o
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Copia de prueba: certificado autofirmado con el mismo Publisher.
+          $cert = New-SelfSignedCertificate -Type Custom -Subject $publisher -KeyUsage DigitalSignature `
+            -FriendlyName 'IureDesk (prueba)' -CertStoreLocation Cert:\CurrentUser\My `
+            -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
+          $pass = ConvertTo-SecureString -String 'prueba' -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath msix\prueba.pfx -Password $pass | Out-Null
+          Export-Certificate -Cert $cert -FilePath msix\prueba\IureDesk-prueba.cer | Out-Null
+          $prueba = "msix\prueba\IureDesk_$cargo-windows-x64-prueba.msix"
+          Copy-Item "msix\store\$msix" $prueba
+          & "$tools\signtool.exe" sign /fd SHA256 /f msix\prueba.pfx /p prueba $prueba
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item msix\prueba.pfx
+
+          # Prueba: instalar la copia firmada y, dentro del paquete (por el alias `iuredesk`): la
+          # versión, el servidor MCP (initialize) y abrir la ventana; luego desinstalar.
+          Import-Certificate -FilePath msix\prueba\IureDesk-prueba.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
+          Add-AppxPackage -Path $prueba
+          $pkg = Get-AppxPackage | Where-Object { $_.Name -eq $identity } | Select-Object -First 1
+          if (-not $pkg) { throw 'el paquete no quedó instalado' }
+          Write-Output "Instalado: $($pkg.PackageFullName) en $($pkg.InstallLocation)"
+          $alias = "$env:LOCALAPPDATA\Microsoft\WindowsApps\iuredesk.exe"
+          $fallas = @()
+          if (-not (Test-Path $alias)) { $fallas += 'no apareció el alias de ejecución iuredesk.exe' }
+          # iuredesk.exe es de subsistema «windows»: con la salida redirigida a archivos escribe ahí.
+          $out = Join-Path $env:RUNNER_TEMP 'iuredesk-salida.txt'
+          $err = Join-Path $env:RUNNER_TEMP 'iuredesk-error.txt'
+          $p = Start-Process -FilePath $alias -ArgumentList '--version' -NoNewWindow -PassThru `
+            -RedirectStandardOutput $out -RedirectStandardError $err
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); $fallas += '--version no terminó en 60 s' }
+          $texto = ("$(Get-Content $out -Raw)" + "$(Get-Content $err -Raw)").Trim()
+          Write-Output "iuredesk --version → [$($p.ExitCode)] $texto"
+          if ($texto -notmatch [regex]::Escape("iuredesk $cargo")) { $fallas += 'la versión no respondió dentro del paquete' }
+          if ($texto -notmatch 'Microsoft Store \(MSIX\): s') { $fallas += 'la app no se detecta empaquetada (seguiría buscando actualizaciones)' }
+
+          # Servidor MCP por stdio: `initialize` y debe contestar con serverInfo.
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = $alias
+          $psi.Arguments = '--mcp'
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardInput = $true
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError = $true
+          $mcp = [System.Diagnostics.Process]::Start($psi)
+          $mcp.StandardInput.WriteLine('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}')
+          $mcp.StandardInput.Flush()
+          $linea = $mcp.StandardOutput.ReadLineAsync()
+          if ($linea.Wait(60000)) { $resp = $linea.Result } else { $resp = '(sin respuesta en 60 s)' }
+          $mcp.StandardInput.Close()
+          if (-not $mcp.WaitForExit(30000)) { $mcp.Kill() }
+          Write-Output "iuredesk --mcp initialize → $resp"
+          if ("$resp" -notmatch '"serverInfo"') { $fallas += 'el servidor MCP no respondió a initialize dentro del paquete' }
+
+          # La ventana: se abre como desde el menú Inicio y debe seguir viva a los 15 s.
+          Start-Process explorer.exe "shell:AppsFolder\$($pkg.PackageFamilyName)!IureDesk"
+          Start-Sleep -Seconds 15
+          $vivo = Get-Process iuredesk -ErrorAction SilentlyContinue
+          if ($vivo) {
+            Write-Output "La ventana sigue abierta: $($vivo.Path)"
+            $vivo | Stop-Process -Force
+          } else {
+            Write-Output "::warning::IureDesk no siguió abierto 15 s después de abrirlo desde el paquete (puede ser el runner sin GPU ni escritorio)"
+          }
+          Start-Sleep -Seconds 2
+          Remove-AppxPackage -Package $pkg.PackageFullName
+          if (Get-AppxPackage | Where-Object { $_.Name -eq $identity }) { $fallas += 'la desinstalación dejó el paquete' }
+          if ($fallas) { $fallas | ForEach-Object { Write-Output "::error::MSIX: $_" }; exit 1 }
+          Get-ChildItem msix\store, msix\prueba | ForEach-Object { Write-Output ("{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB)) }
+
+      - name: Subir el MSIX para la Store
+        if: matrix.os == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: msix-store
+          if-no-files-found: error
+          path: msix/store/*
+
+      - name: Subir el MSIX de prueba
+        if: matrix.os == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: msix-prueba
+          if-no-files-found: error
+          path: msix/prueba/*
       # Una sola notarización, la del .dmg: el ticket cubre también el .app que lleva dentro, así que
       # se engrapa en los dos y se rehace el .app.tar.gz (lo que instala iureapps) con el .app ya
       # engrapado. Luego se comprueba todo como lo haría un Mac recién instalado. Va antes de
@@ -295,9 +448,12 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      # Solo los paquetes (`iuredesk-<triple>`): los MSIX (`msix-store`, `msix-prueba`) se suben a
+      # mano a Partner Center y no van a la release.
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: iuredesk-*
           merge-multiple: true
       - name: latest.json (alternativa de iureapps cuando la API de GitHub limita las consultas)
         if: github.ref_type == 'tag'

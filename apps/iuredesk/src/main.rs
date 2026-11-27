@@ -12,7 +12,10 @@
 //! - **macOS** (R1.4): el sistema no pasa enlaces ni archivos por argumento sino como Apple Events
 //!   (`kAEGetURL`, `kAEOpenDocuments`); `iuredesk-macos-events` los recoge desde antes del primer
 //!   cuadro y entran por el mismo camino que los argumentos.
-//! - `--minimized`: arranca minimizado (lo usa «Abrir IureDesk al iniciar sesión»).
+//! - `--minimized`: arranca minimizado (lo usa «Abrir IureDesk al iniciar sesión»). Instalada
+//!   desde Microsoft Store la abre la StartupTask del paquete, que no pasa argumentos: entonces
+//!   decide la marca de `iuredesk_desktop::autostart::start_minimized_by_system`.
+//! - `--version`: versión y si corre como paquete MSIX (Microsoft Store), y termina.
 //! - `--mcp`: servidor MCP por stdio (Claude, Copilot). Si la ventana está abierta, cada llamada
 //!   corre dentro de ella por el puente IPC; si no, abre el almacén solo durante la llamada.
 //! - `IUREDESK_DATA_DIR=/ruta` usa esa carpeta para todo (almacén, cuentas y preferencias): sirve
@@ -52,6 +55,7 @@ Uso: iuredesk [--sample] [--minimized] [mailto:… | archivo | iuredesk://…]
   --sample      buzón de ejemplo (no toca tus cuentas)
   --minimized   arranca minimizado
   --mcp         servidor MCP por stdio (Claude Desktop, VS Code/Copilot)
+  --version     versión (y si es la de Microsoft Store)
   --help        esta ayuda
   mailto:…      abre el redactor con los datos del enlace
   archivo       .eml (mensaje), .ics (evento o invitación), .vcf (contactos)
@@ -284,6 +288,10 @@ fn main() -> ExitCode {
         let dir = data_dir().join(if sample { "sample" } else { "store" });
         return ExitCode::from(u8::try_from(iuredesk_mcp::run_stdio(&dir).clamp(0, 255)).unwrap_or(1));
     }
+    if matches!(args.first().map(String::as_str), Some("--version" | "-V")) {
+        print!("{}", version_text(iuredesk_desktop::store::packaged()));
+        return ExitCode::SUCCESS;
+    }
     let cwd = std::env::current_dir().ok();
     let cli = parse_cli(&args, cwd.as_deref());
     if cli.help {
@@ -359,7 +367,7 @@ fn main() -> ExitCode {
         wgpu_options: wgpu_options(),
         ..Default::default()
     };
-    let minimize = cli.minimized;
+    let minimize = cli.minimized || iuredesk_desktop::autostart::start_minimized_by_system();
     let ctx_slot = Arc::clone(&wake.ctx);
     // R1.4: antes del bucle de eventos, para no perder el enlace o archivo con que se lanzó.
     apple_events(&wake);
@@ -375,6 +383,12 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `iuredesk --version`.
+fn version_text(packaged: bool) -> String {
+    let store = if packaged { "sí (la actualiza la Store)" } else { "no" };
+    format!("iuredesk {}\nMicrosoft Store (MSIX): {store}\n", env!("CARGO_PKG_VERSION"))
 }
 
 /// macOS: registra los manejadores de Apple Events (enlaces `mailto:`/`iuredesk://` y archivos
@@ -552,6 +566,14 @@ mod tests {
         // Acotado.
         let many: Vec<String> = (0..500).map(|i| format!("/tmp/{i}.ics")).collect();
         assert_eq!(parse_cli(&many, None).targets.len(), iuredesk_mcp::bridge::MAX_OPEN_ARGS);
+    }
+
+    #[test]
+    fn version() {
+        let v = version_text(false);
+        assert!(v.starts_with(&format!("iuredesk {}\n", env!("CARGO_PKG_VERSION"))), "{v}");
+        assert!(v.contains("Microsoft Store (MSIX): no"));
+        assert!(version_text(true).contains("Microsoft Store (MSIX): sí"));
     }
 
     #[test]
